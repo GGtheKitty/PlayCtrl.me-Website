@@ -1,0 +1,428 @@
+<% if (user) { %>
+<script>
+  const discoverToggle = document.getElementById("discoverToggle");
+  const discoverStatus = document.getElementById("discoverStatus");
+  const cmdStatus = document.getElementById("cmdStatus");
+
+  function setStatus(el, msg) {
+    el.textContent = msg || "";
+  }
+
+  discoverToggle.addEventListener("change", async () => {
+    setStatus(discoverStatus, "Saving...");
+    try {
+      const res = await fetch("/profile/discover", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          enabled: discoverToggle.checked ? "1" : "0"
+        }),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      setStatus(discoverStatus, discoverToggle.checked ? "Enabled." : "Disabled.");
+    } catch (e) {
+      setStatus(discoverStatus, "Failed to save: " + (e?.message || String(e)));
+      discoverToggle.checked = !discoverToggle.checked;
+    }
+  });
+
+  document.querySelectorAll("[data-cmd-toggle]").forEach((wrap) => {
+    const input = wrap.querySelector("input[type=checkbox]");
+    input.addEventListener("change", async () => {
+      setStatus(cmdStatus, "Saving...");
+      const cmd = wrap.getAttribute("data-cmd-toggle");
+      try {
+        const res = await fetch("/profile/commands", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            cmd,
+            enabled: input.checked ? "1" : "0"
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+        setStatus(cmdStatus, "Saved.");
+        setTimeout(() => setStatus(cmdStatus, ""), 1200);
+      } catch (e) {
+        setStatus(cmdStatus, "Failed to save: " + (e?.message || String(e)));
+        input.checked = !input.checked;
+      }
+    });
+  });
+
+  (function() {
+    const ELIGIBLE = <%= apiEligible ? "true" : "false" %>;
+    if (!ELIGIBLE) return;
+
+    const apiResetBtn = document.getElementById("apiResetBtn");
+    const apiCopyBtn = document.getElementById("apiCopyBtn");
+    const apiKeyBox = document.getElementById("apiKeyBox");
+    const apiKeyText = document.getElementById("apiKeyText");
+    const apiStatus = document.getElementById("apiStatus");
+
+    function setStatus(msg) {
+      apiStatus.textContent = msg || "";
+    }
+
+    async function revealCurrentKey() {
+      setStatus("Revealing...");
+      apiCopyBtn.disabled = true;
+
+      try {
+        const res = await fetch("/profile/api_key/view", {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+        apiKeyText.textContent = data.api_key;
+        apiKeyBox.setAttribute("data-revealed", "true");
+        apiCopyBtn.disabled = false;
+        setStatus("");
+      } catch (e) {
+        apiKeyText.textContent = "Hidden. Click “Reset key” to generate a new one.";
+        apiKeyBox.setAttribute("data-revealed", "true");
+        setStatus("Couldn’t reveal existing key (reset to generate a new one).");
+      }
+    }
+
+    apiKeyBox.addEventListener("click", () => {
+      if (apiKeyBox.getAttribute("data-revealed") === "true") return;
+      revealCurrentKey();
+    });
+
+    apiResetBtn.addEventListener("click", async () => {
+      if (!confirm("Reset API key? Your old key will stop working immediately.")) return;
+      setStatus("Generating...");
+      apiResetBtn.disabled = true;
+      apiCopyBtn.disabled = true;
+
+      try {
+        const res = await fetch("/profile/api_key/reset", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        apiKeyText.textContent = data.api_key;
+        apiKeyBox.setAttribute("data-revealed", "true");
+        apiCopyBtn.disabled = false;
+        setStatus("New key created. Copy it now.");
+      } catch (e) {
+        setStatus("Failed: " + (e?.message || String(e)));
+      } finally {
+        apiResetBtn.disabled = false;
+      }
+    });
+
+    apiCopyBtn.addEventListener("click", async () => {
+      const key = apiKeyText.textContent || "";
+      if (!key || key.startsWith("Hidden")) return;
+      try {
+        await navigator.clipboard.writeText(key);
+        setStatus("Copied.");
+        setTimeout(() => setStatus(""), 1200);
+      } catch (e) {
+        setStatus("Copy failed (your browser may block clipboard).");
+      }
+    });
+  })();
+
+  (function() {
+    const wlToggle = document.getElementById("whitelistToggle");
+    const wlStatus = document.getElementById("wlStatus");
+
+    const discoverToggle = document.getElementById("discoverToggle");
+    const discoverStatus = document.getElementById("discoverStatus");
+
+    const wlInput = document.getElementById("wlInput");
+    const wlAddBtn = document.getElementById("wlAddBtn");
+    const wlList = document.getElementById("wlList");
+
+    function setStatus(el, msg) {
+      el.textContent = msg || "";
+    }
+
+    wlToggle.addEventListener("change", async () => {
+      setStatus(wlStatus, "Saving...");
+      try {
+        const res = await fetch("/profile/whitelist/toggle", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            enabled: wlToggle.checked ? "1" : "0"
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+
+        setStatus(wlStatus, wlToggle.checked ? "Whitelist enabled." : "Whitelist disabled.");
+
+        if (wlToggle.checked) {
+          if (discoverToggle) {
+            discoverToggle.checked = false;
+            discoverToggle.disabled = true;
+            setStatus(discoverStatus, "Disabled (Whitelist enabled).");
+          }
+        } else {
+          if (discoverToggle) discoverToggle.disabled = false;
+        }
+      } catch (e) {
+        setStatus(wlStatus, "Failed to save: " + (e?.message || String(e)));
+        wlToggle.checked = !wlToggle.checked;
+      }
+    });
+
+    wlAddBtn.addEventListener("click", async () => {
+      const raw = String(wlInput.value || "");
+      const id = raw.trim().replace(/[<@!>]/g, "").replace(/\D/g, "");
+      if (!/^\d{17,19}$/.test(id)) {
+        setStatus(wlStatus, `Enter a valid Discord ID (numbers only).`);
+        return;
+      }
+      setStatus(wlStatus, "Adding...");
+      try {
+        const res = await fetch("/profile/whitelist/add", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            discord_id: id
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+
+        window.location.reload();
+      } catch (e) {
+        setStatus(wlStatus, "Failed: " + (e?.message || String(e)));
+      }
+    });
+
+    wlList.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-remove]");
+      if (!btn) return;
+      const id = btn.getAttribute("data-remove");
+      setStatus(wlStatus, "Removing...");
+      try {
+        const res = await fetch("/profile/whitelist/remove", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            discord_id: id
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+
+        window.location.reload();
+      } catch (e) {
+        setStatus(wlStatus, "Failed: " + (e?.message || String(e)));
+      }
+    });
+
+    if (wlToggle.checked && discoverToggle) {
+      discoverToggle.disabled = true;
+    }
+  })();
+
+  (function() {
+    let active = "favorites";
+    const tabFav = document.getElementById("tabFav");
+    const tabDis = document.getElementById("tabDis");
+    const tabAbout = document.getElementById("tabAbout");
+
+    const panelList = document.getElementById("panelList");
+    const panelAbout = document.getElementById("panelAbout");
+
+    const search = document.getElementById("listSearch");
+    const box = document.getElementById("listBox");
+    const items = Array.from(box.querySelectorAll(".li"));
+
+    const aboutText = document.getElementById("aboutText");
+    const aboutCount = document.getElementById("aboutCount");
+    const aboutSave = document.getElementById("aboutSave");
+    const aboutStatus = document.getElementById("aboutStatus");
+
+    function showPanel(which) {
+      panelList.setAttribute("data-show", which === "list" ? "true" : "false");
+      panelAbout.setAttribute("data-show", which === "about" ? "true" : "false");
+    }
+
+    function applySelectionClasses() {
+      for (const el of items) {
+        el.classList.remove("selFav", "selDis");
+        const fav = el.getAttribute("data-fav") === "1";
+        const dis = el.getAttribute("data-dis") === "1";
+        if (fav) el.classList.add("selFav");
+        if (dis) el.classList.add("selDis");
+      }
+    }
+
+    function setActive(which) {
+      tabFav.setAttribute("data-active", which === "favorites" ? "true" : "false");
+      tabDis.setAttribute("data-active", which === "dislikes" ? "true" : "false");
+      tabAbout.setAttribute("data-active", which === "about" ? "true" : "false");
+
+      if (which === "about") {
+        showPanel("about");
+      } else {
+        showPanel("list");
+      }
+
+      active = which;
+    }
+
+    function refilter() {
+      const q = (search.value || "").trim().toLowerCase();
+      for (const el of items) {
+        const ok = !q || (el.getAttribute("data-label") || "").includes(q) || (el.getAttribute("data-key") || "").includes(q);
+        el.style.display = ok ? "" : "none";
+      }
+    }
+
+    tabFav.addEventListener("click", () => setActive("favorites"));
+    tabDis.addEventListener("click", () => setActive("dislikes"));
+    tabAbout.addEventListener("click", () => setActive("about"));
+    search.addEventListener("input", refilter);
+
+    box.addEventListener("click", async (e) => {
+      if (active === "about") return;
+
+      const el = e.target.closest(".li");
+      if (!el) return;
+
+      const itemKey = el.getAttribute("data-key");
+      const attr = active === "favorites" ? "data-fav" : "data-dis";
+      const otherAttr = active === "favorites" ? "data-dis" : "data-fav";
+
+      const cur = el.getAttribute(attr) === "1";
+      const next = !cur;
+
+      el.setAttribute(attr, next ? "1" : "0");
+      if (next) el.setAttribute(otherAttr, "0");
+      applySelectionClasses();
+
+      try {
+        const res = await fetch("/profile/lists/toggle", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            listKey: active,
+            itemKey,
+            enabled: next ? "1" : "0"
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+
+        if (next) {
+          const otherListKey = active === "favorites" ? "dislikes" : "favorites";
+          const res2 = await fetch("/profile/lists/toggle", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({
+              listKey: otherListKey,
+              itemKey,
+              enabled: "0"
+            }),
+            credentials: "include"
+          });
+          const data2 = await res2.json().catch(() => null);
+          if (!res2.ok) throw new Error((data2 && data2.message) || ("HTTP " + res2.status));
+        }
+      } catch (err) {
+        el.setAttribute(attr, cur ? "1" : "0");
+        applySelectionClasses();
+        alert("Failed to save: " + (err && err.message ? err.message : String(err)));
+        window.location.reload();
+      }
+    });
+
+    function updateCount() {
+      const len = (aboutText.value || "").length;
+      aboutCount.textContent = String(len);
+    }
+
+    aboutText.addEventListener("input", updateCount);
+
+    aboutSave.addEventListener("click", async () => {
+      aboutStatus.textContent = "Saving...";
+      try {
+        const res = await fetch("/profile/aboutme", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            text: aboutText.value || ""
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+        aboutStatus.textContent = "Saved.";
+        setTimeout(() => aboutStatus.textContent = "", 1200);
+      } catch (e) {
+        aboutStatus.textContent = "Failed to save.";
+      }
+    });
+
+    applySelectionClasses();
+    refilter();
+    updateCount();
+    setActive("favorites");
+  })();
+</script>
+
+<% } %>

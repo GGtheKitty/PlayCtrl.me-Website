@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <link rel="stylesheet" href="/css/bl.css">
+  </head>
+
+  <body>
+    <div class="grid">
+
+      <div class="card">
+        <div class="cardHd">Allowlist (<span id="allowCount">…</span>)</div>
+        <div class="cardBd">
+          <div class="miniRow">
+            <input id="allowHost" placeholder="example.com" />
+            <button class="btnSm" id="allowAdd">Add</button>
+          </div>
+
+          <div class="miniRow" style="margin-top:10px;">
+            <input id="allowSearch" placeholder="Search allowlist…" />
+            <button class="btnSm" id="allowSearchBtn">Search</button>
+          </div>
+
+          <div class="listBox" id="allowBox" style="margin-top:12px;"></div>
+          <div class="miniRow" style="justify-content:space-between; margin-top:10px;">
+            <button class="btnSm" id="allowMore">Load more</button>
+            <div class="muted" id="allowMeta"></div>
+          </div>
+          <div class="muted" id="allowStatus" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardHd">Blocklist (<span id="blockCount">…</span>)</div>
+        <div class="cardBd">
+          <div class="miniRow">
+            <input id="blockHost" placeholder="badurl.com" />
+            <button class="btnSm" id="blockAdd">Add</button>
+          </div>
+
+          <div class="miniRow" style="margin-top:10px;">
+            <input id="blockSearch" placeholder="Search blocklist…" />
+            <button class="btnSm" id="blockSearchBtn">Search</button>
+          </div>
+
+          <div class="listBox" id="blockBox" style="margin-top:12px;"></div>
+          <div class="miniRow" style="justify-content:space-between; margin-top:10px;">
+            <button class="btnSm" id="blockMore">Load more</button>
+            <div class="muted" id="blockMeta"></div>
+          </div>
+          <div class="muted" id="blockStatus" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="cardHd">Verification Queue (<%= pending.length %>)</div>
+      <div class="cardBd">
+        <% if (pending.length) { %>
+            <% for (const r of pending) { %>
+                <div class="queueRow" data-host="<%= (r.host) %>">
+                    <div class="queueTop">
+                        <div class="host"><%= (r.host) %></div>
+                        <div style="display:flex; gap:10px;">
+                        <button class="btnSm" data-allow="<%= (r.host) %>">Allow</button>
+                        <button class="btnSm btnDanger" data-block="<%= (r.host) %>">Block</button>
+                        </div>
+                    </div>
+                    <div class="queueUrl"><%= (r.sample_url || "") %></div>
+                    <div class="queueMeta">
+                        Seen <%= Number(r.seen_count || 1)%>x • Last: <%= (new Date(r.last_seen_at).toLocaleString()) %>
+                    </div>
+                </div>
+            <% } %>
+        <% } else { %>
+            <div class="muted">No pending URLs.</div>
+        <% } %>
+      </div>
+    </div>
+  </body>
+
+  <%- include("bl_scripts") %>
+
+</html>

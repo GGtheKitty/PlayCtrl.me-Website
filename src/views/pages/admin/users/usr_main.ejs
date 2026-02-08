@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/users.css">
+</head>
+
+<body>
+
+  <div class="panel">
+    <div class="panelHd">
+      <h1>Admin Users</h1>
+      <a class="btn" href="/admin">Back</a>
+    </div>
+    <div class="panelBd">
+      <div class="toolbar">
+        <input id="q" placeholder="Search (name, id, paircode...)" value="<%= (q) %>" />
+        <select id="sort"><%- sortOptions %></select>
+        <select id="dir">
+          <option value="desc"<%= dir==="DESC" ? "selected" : "" %>>desc</option>
+          <option value="asc" <%= dir==="ASC" ? "selected" : "" %>>asc</option>
+        </select>
+
+        <select id="pageSel">
+            <%- pageOptions %>
+        </select>
+
+        <button class="btn" id="apply">Apply</button>
+        <span class="muted">Page <b><%= safePage %></b> / <b><%= pages %></b> — <%= total %> users</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="list">
+    <% if (rows.length) { %>
+        <% for (const u of rows) { %>
+          <div class="uCard" data-id="<%= (u.discord_id) %>">
+            <div class="uTop">
+              <div class="uLeft">
+                <img class="uAv" src="<%= discordAvatarUrl({ discord_id: u.discord_id, avatar: u.avatar }, 64) %>" alt="" />
+                <div style="min-width:0;">
+                  <div class="uName"><%= (u.global_name || u.username || u.discord_id) %></div>
+                  <div class="uMeta">
+                    <span class="mono">@<%= (u.username || "") %></span>
+                    <span class="dot">•</span>
+                    <span class="mono"><%= (u.discord_id) %></span>
+                  </div>
+                  <div class="uMeta">
+                    <span class="pill"><span class="k">pair</span><span class="v"><%= (u.pair_code || "(none)") %></span></span>
+                    <span class="pill"><span class="k">commands</span><span class="v"><%= Number(u.commands_sent_total || 0) %></span></span>
+                    <span class="pill"><span class="k">api limit</span><span class="v"><%= Number(u.api_rate_limit || 0) %></span></span>
+                  </div>
+                </div>
+              </div>
+    
+              <button class="miniBtn" type="button" data-edit="<%= (u.discord_id) %>">Edit commands</button>
+            </div>
+    
+            <div class="editRow" style="display:none;" data-edit-row="<%= (u.discord_id) %>">
+              <input class="editInput" type="number" min="0" step="1" value="<%= Number(u.commands_sent_total || 0) %>" />
+              <button class="btnSm" type="button" data-save="<%= (u.discord_id) %>">Save</button>
+              <button class="btnSm" type="button" data-cancel="<%= (u.discord_id) %>">Cancel</button>
+              <span class="muted" data-status="<%= (u.discord_id) %>"></span>
+            </div>
+          </div>
+        <% } %>
+    <% } else { %>
+        <div class="hint">No users match your filters.</div>
+    <% } %>
+  </div>
+
+  <div class="pager">
+    <a class="btn" href="/admin/users<%= qs(safePage - 1) %>" aria-disabled="<%= prevDisabled ? "true" : "false" %>">Prev</a>
+    <div class="toolbar" style="gap:10px;">
+      <select id="pageSel2"><%- pageOptions %></select>
+      <button class="btn" id="go2">Go</button>
+    </div>
+    <a class="btn" href="/admin/users<%= qs(safePage + 1) %>" aria-disabled="<%= nextDisabled ? "true" : "false" %>">Next</a>
+  </div>
+
+</body>
+
+<%- include("usr_scripts") %>
+
+</html>

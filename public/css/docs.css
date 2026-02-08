@@ -1,0 +1,119 @@
+.docs h1 {
+    margin: 0 0 6px;
+}
+
+.docs .muted {
+    opacity: .75;
+}
+
+.docs .toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 14px 0;
+}
+
+.docs .toc a {
+    text-decoration: none;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(0, 0, 0, .18);
+    color: #fff;
+    font-weight: 900;
+    font-size: 12px;
+}
+
+.docs h2 {
+    margin-top: 22px;
+}
+
+.docs .cardish {
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 16px;
+    background: rgba(0, 0, 0, .20);
+    padding: 14px;
+    margin-top: 12px;
+}
+
+.docs pre {
+    margin: 10px 0 0;
+    padding: 12px;
+    border-radius: 14px;
+    overflow: auto;
+    background: rgba(0, 0, 0, .35);
+    border: 1px solid rgba(255, 255, 255, .10);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.docs code {
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+}
+
+.docs table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    overflow: hidden;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .10);
+}
+
+.docs th,
+.docs td {
+    padding: 10px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+    vertical-align: top;
+}
+
+.docs th {
+    text-align: left;
+    font-weight: 900;
+    background: rgba(255, 255, 255, .06);
+}
+
+.docs tr:last-child td {
+    border-bottom: none;
+}
+
+.pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(0, 0, 0, .20);
+    opacity: .95;
+}
+
+.pill.get {
+    border-color: rgba(59, 130, 246, .55);
+    background: rgba(59, 130, 246, .12);
+}
+
+.pill.post {
+    border-color: rgba(34, 197, 94, .55);
+    background: rgba(34, 197, 94, .12);
+}
+
+.warn {
+    border: 1px solid rgba(239, 68, 68, .35);
+    background: rgba(239, 68, 68, .10);
+    border-radius: 16px;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.note {
+    border: 1px solid rgba(167, 139, 250, .35);
+    background: rgba(139, 92, 246, .10);
+    border-radius: 16px;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.k {
+    font-weight: 900;
+}

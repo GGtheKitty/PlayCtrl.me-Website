@@ -1,0 +1,32 @@
+<div class="drawerOverlay" id="drawerOverlay" aria-hidden="true"></div>
+
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Menu">
+    <div class="drawerHd">
+        <div style="font-weight:900;">Menu</div>
+        <button class="drawerClose" id="drawerClose" type="button" aria-label="Close menu">✕</button>
+    </div>
+
+    <div class="drawerUser">
+        <img class="drawerAv" src="<%= avatarUrl %>"
+                onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
+                alt="" />
+        <div>
+            <div class="drawerName"><%= displayName %></div>
+            <div class="drawerId"><%= user.discord_id %></div>
+        </div>
+    </div>
+
+    <div class="drawerBody">
+        <a class="drawerLink" href="/profile">Profile</a>
+        <a class="drawerLink" href="/discover">Discover</a>
+        <% if (isAdmin) { %><a class="drawerLink" href="/admin">Admin</a><% } %>
+    </div>
+
+    <div class="drawerFooter">
+        <form method="POST" action="/logout" style="margin:0;">
+            <button class="drawerLink" type="submit" style="width:100%; border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.10);">
+                Logout
+            </button>
+        </form>
+    </div>
+</aside>

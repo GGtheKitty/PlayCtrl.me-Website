@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/discover.css">
+</head>
+
+<body>
+
+  <%- include("../../common/discord_notice") %>
+
+  <div class="card" style="align-items:center;">
+    <div class="cardHd">
+      <h2>Discover</h2>
+      <p style="opacity:.75;margin-top:6px;">
+        Online users who opted in to be discovered.
+      </p>
+    </div>
+    <div class="cardBd">
+      <% if (onlineRows && onlineRows.length) { %>
+      <div class="uGrid" id="uGrid">
+        <% for (const u of onlineRows) { %>
+        <%- include("../../common/user_cards", {
+            display: u.global_name || u.username || u.discord_id,
+            handle: u.username || "",
+            avatar: discordAvatarUrl(u, 128),
+            code: u.code_plain
+          }) %>
+        <% } %>
+      </div>
+      <% } else { %>
+      <div class="empty">(No users are online right now.)</div>
+      <% } %>
+    </div>
+  </div>
+
+  
+</body>
+</html>

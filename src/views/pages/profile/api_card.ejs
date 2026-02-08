@@ -1,0 +1,50 @@
+  <div class="card">
+    <div class="cardHd">
+      <span>Developer API</span>
+      <% if (apiEligible) { %>
+        <span class="apiBadge apiBadge--unlocked">Unlocked</span>
+      <% } else { %>
+        <span class="apiBadge apiBadge--locked">Locked</span>
+      <% } %>      
+    </div>
+
+    <div class="cardBd">
+      <div style="margin-top:10px;">
+        <a class="btnLink" href="/api-docs">API Documentation</a>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Requires <b>500+</b> commands sent. You have <b><%= Number(commandsSentTotal) || 0 %></b>.
+      </div>
+
+      <div class="<%= apiEligible ? "" : "apiLocked" %>">
+        <div class="apiRow" style="margin-top:12px;">
+          <div>
+            <div class="switchLabel">API Key</div>
+            <div class="switchHint">
+              Hidden by default. Tap the key box to reveal.
+              <% if (apiMeta?.last_reset_at) { %>
+                  Last reset: <%= new Date(apiMeta.last_reset_at).toLocaleString() %>
+              <% } %> 
+            </div>
+          </div>
+
+          <div class="apiBtns">
+            <button id="apiResetBtn" class="btnMini btnMini--danger" type="button" title="Generate a new API key">
+              Reset key
+            </button>
+            <button id="apiCopyBtn" class="btnMini" type="button" disabled>
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div class="apiKeyBox" id="apiKeyBox" data-revealed="false" title="Click to reveal">
+          <div class="apiKeyBlur" id="apiKeyText">Hidden. Click to reveal.</div>
+          <div class="apiHintTap">Click to reveal</div>
+        </div>
+
+        <div id="apiStatus" class="muted" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>

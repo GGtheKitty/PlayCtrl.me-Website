@@ -1,0 +1,359 @@
+<% if (user) { %>
+<script>
+    const respBox = document.getElementById("respBox");
+    const clearBtn = document.getElementById("clearResp");
+    const pairCode = <%- JSON.stringify(pairCode) %>;
+  
+    function ts() {
+      return new Date().toISOString();
+    }
+  
+    function addLine(text, kind) {
+      const div = document.createElement("div");
+      div.className = "respLine";
+      div.textContent = "[" + ts() + "] " + (kind ? ("(" + kind + ") ") : "") + text;
+      respBox.appendChild(div);
+      respBox.scrollTop = respBox.scrollHeight;
+    }
+  
+    clearBtn.addEventListener("click", () => {
+      respBox.innerHTML = "";
+      addLine("Cleared.", "info");
+    });
+  
+    const COOLDOWN_APPLIES = <%-
+      JSON.stringify(!!cooldownApplies)
+    %>;
+    const COOLDOWN_MS = 3000;
+
+    const overlay = document.getElementById("cooldownOverlay");
+    const overlaySeconds = document.getElementById("cooldownSeconds");
+  
+    let nextAllowedAt = 0;
+    let countdownTimer = null;
+  
+    function showOverlay(msLeft) {
+      if (!overlay) return;
+      const s = Math.max(0, Math.ceil(msLeft / 1000));
+      overlaySeconds.textContent = String(s);
+      overlay.setAttribute("data-show", "true");
+      overlay.setAttribute("aria-hidden", "false");
+    }
+  
+    function hideOverlay() {
+      if (!overlay) return;
+      overlay.setAttribute("data-show", "false");
+      overlay.setAttribute("aria-hidden", "true");
+    }
+  
+    function setButtonsDisabled(disabled) {
+      document.querySelectorAll(".cmdForm button[type=submit]").forEach(btn => {
+        btn.disabled = !!disabled;
+        btn.style.opacity = disabled ? "0.65" : "";
+        btn.style.cursor = disabled ? "not-allowed" : "";
+      });
+    }
+  
+    function startCooldown() {
+      if (!COOLDOWN_APPLIES) return;
+  
+      const now = Date.now();
+      nextAllowedAt = Math.max(nextAllowedAt, now + COOLDOWN_MS);
+  
+      setButtonsDisabled(true);
+      showOverlay(nextAllowedAt - now);
+  
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdownTimer = setInterval(() => {
+        const left = nextAllowedAt - Date.now();
+        if (left <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          hideOverlay();
+          setButtonsDisabled(false);
+          return;
+        }
+        showOverlay(left);
+      }, 120);
+    }
+  
+    function isCoolingDown() {
+      return COOLDOWN_APPLIES && Date.now() < nextAllowedAt;
+    }
+  
+    function clearFormFields(form) {
+      form.querySelectorAll("input[type=text], input[type=url], input:not([type]), textarea").forEach(el => {
+        el.value = "";
+      });
+    }
+  
+    async function postForm(form) {
+      const action = form.getAttribute("action");
+      const cmd = form.dataset.cmd || "command";
+  
+      if (isCoolingDown()) {
+        startCooldown();
+        addLine("Please wait for cooldown.", "cooldown");
+        return;
+      }
+  
+      const params = new URLSearchParams(new FormData(form));
+  
+      clearFormFields(form);
+  
+      startCooldown();
+  
+      addLine("Sending " + cmd + "...", "send");
+  
+      let res, bodyText;
+      try {
+        res = await fetch(action, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          },
+          body: params.toString(),
+          credentials: "include"
+        });
+      } catch (e) {
+        addLine("Network error: " + (e && e.message ? e.message : String(e)), "error");
+        return;
+      }
+  
+      let data = null;
+      const ct = (res.headers.get("content-type") || "");
+      try {
+        if (ct.includes("application/json")) data = await res.json();
+        else bodyText = await res.text();
+      } catch (e) {
+        bodyText = bodyText || "(failed to parse response)";
+      }
+  
+      if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
+        const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
+        nextAllowedAt = Date.now() + Math.max(500, retryMs);
+        startCooldown();
+        addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
+        return;
+      }
+  
+      if (!res.ok) {
+        if (data && data.message) addLine(data.message, "error");
+        else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
+        return;
+      }
+  
+      if (data) {
+        addLine(data.message || ("OK (sent=" + (data.sent ?? "?") + ")"), "ok");
+      } else {
+        addLine(bodyText || "OK", "ok");
+      }
+    }
+  
+    document.querySelectorAll(".cmdForm").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        postForm(form);
+      });
+    });
+  
+    (function() {
+      const pill = document.getElementById("statusPill");
+      const txt = document.getElementById("statusText");
+      if (!pill || !txt) return;
+  
+      function setOnline(isOn) {
+        pill.classList.toggle("statusPill--on", !!isOn);
+        pill.classList.toggle("statusPill--off", !isOn);
+        txt.textContent = isOn ? "Online" : "Offline";
+      }
+  
+      async function tick() {
+        try {
+          const res = await fetch("/api/presence/" + encodeURIComponent(pairCode), {
+            headers: {
+              "Accept": "application/json"
+            },
+            credentials: "include"
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) return;
+  
+          setOnline(!!data.online);
+        } catch (e) {}
+      }
+  
+      tick();
+      setInterval(tick, 3000);
+    })();
+
+    (function(){
+      const favTab = document.getElementById("favTab");
+      const disTab = document.getElementById("disTab");
+      const aboutTab = document.getElementById("aboutTab");
+
+      const favBox = document.getElementById("favBox");
+      const disBox = document.getElementById("disBox");
+      const aboutBox = document.getElementById("aboutBox");
+
+      function set(which){
+        favTab.setAttribute("data-active", which==="fav" ? "true":"false");
+        disTab.setAttribute("data-active", which==="dis" ? "true":"false");
+        aboutTab.setAttribute("data-active", which==="about" ? "true":"false");
+
+        favBox.style.display = which==="fav" ? "" : "none";
+        disBox.style.display = which==="dis" ? "" : "none";
+        aboutBox.style.display = which==="about" ? "" : "none";
+      }
+
+      favTab.addEventListener("click", ()=>set("fav"));
+      disTab.addEventListener("click", ()=>set("dis"));
+      aboutTab.addEventListener("click", ()=>set("about"));
+      set("fav");
+    })();
+
+    (function(){
+      const viewerIsOwner = <%= JSON.stringify(!!viewerIsOwner) %>;
+      const pairCode = <%- JSON.stringify(pairCode) %>;
+      const ownerAvatar = "<%= discordAvatarUrl(ownerUser || { discord_id: ownerId, avatar: null }, 64) %>";
+
+      let messages = <%- JSON.stringify(boardMsgs || []) %>;
+      let latestCreatedAt = messages.length ? Number(messages[0].created_at || 0) : 0;
+
+      const listEl = document.getElementById("boardList");
+      const form = document.getElementById("boardForm");
+      const input = document.getElementById("boardInput");
+      const statusEl = document.getElementById("boardStatus");
+
+      function setStatus(t){ if (statusEl) statusEl.textContent = t || ""; }
+
+      function relTime(ms){
+        const s = Math.max(0, Math.floor((Date.now() - Number(ms || 0)) / 1000));
+        if (s < 60) return s + "s ago";
+        const m = Math.floor(s / 60);
+        if (m < 60) return m + "m ago";
+        const h = Math.floor(m / 60);
+        if (h < 24) return h + "h ago";
+        const d = Math.floor(h / 24);
+        return d + " day" + (d === 1 ? "" : "s") + " ago";
+      }
+
+      function render(){
+        if (!listEl) return;
+
+        listEl.innerHTML = "";
+
+        if (!messages || !messages.length){
+          const empty = document.createElement("div");
+          empty.className = "muted";
+          empty.textContent = "No messages yet.";
+          listEl.appendChild(empty);
+          return;
+        }
+
+        for (const msg of messages){
+          const row = document.createElement("div");
+          row.className = "boardRow";
+
+          const av = document.createElement("img");
+          av.className = "boardAvatar";
+          av.src = ownerAvatar;
+          av.alt = "";
+
+          const body = document.createElement("div");
+          body.className = "boardBody";
+
+          const bubble = document.createElement("div");
+          bubble.className = "boardBubble";
+          bubble.textContent = String(msg.body || "");
+
+          const meta = document.createElement("div");
+          meta.className = "boardMeta";
+          meta.textContent = relTime(msg.created_at);
+
+          body.appendChild(bubble);
+          body.appendChild(meta);
+
+          row.appendChild(av);
+          row.appendChild(body);
+
+          listEl.appendChild(row);
+        }
+      }
+
+      async function refresh(){
+        try{
+          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
+            headers: { "Accept":"application/json" },
+            credentials: "include"
+          });
+          const data = await res.json().catch(()=>null);
+          if (!res.ok || !data || !data.ok) {
+            console.warn("[board] refresh not ok", res.status, data);
+            return;
+          }
+
+          const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
+          const nextLatest = Number(
+            data.latest_created_at ||
+            (nextMsgs[0] && nextMsgs[0].created_at) ||
+            0
+          );
+
+          if (nextLatest && nextLatest === latestCreatedAt) return;
+
+          messages = nextMsgs;
+          latestCreatedAt = nextLatest;
+          render();
+        }catch(e){
+          console.warn("[board] refresh error", e);
+        }
+      }
+
+      if (viewerIsOwner && form && input){
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const body = (input.value || "").trim();
+          if (!body) return;
+
+          input.value = "";
+          setStatus("Posting...");
+
+          try{
+            const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
+              method: "POST",
+              headers: {
+                "Accept":"application/json",
+                "X-Requested-With":"XMLHttpRequest",
+                "Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"
+              },
+              body: new URLSearchParams({ body }).toString(),
+              credentials: "include"
+            });
+
+            const data = await res.json().catch(()=>null);
+            if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+
+            const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
+            messages = nextMsgs;
+            latestCreatedAt = Number((nextMsgs[0] && nextMsgs[0].created_at) || latestCreatedAt || 0);
+
+            render();
+            setStatus("Posted.");
+            setTimeout(()=>setStatus(""), 900);
+          }catch(err){
+            setStatus("Failed to post.");
+          }
+        });
+      }
+
+      render();
+
+      refresh();
+      setInterval(refresh, 2500);
+      setInterval(render, 15000);
+    })();
+  </script>
+<% } %>

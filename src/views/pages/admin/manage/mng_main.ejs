@@ -1,0 +1,40 @@
+<h1>Manage Admins</h1>
+
+<form method="POST" action="/admin/admins/add" style="margin:12px 0;">
+  <input name="discord_id" placeholder="Discord user id" style="width:320px;" />
+  <button type="submit">Add Admin</button>
+</form>
+
+<table border="1" cellpadding="8" cellspacing="0">
+  <thead>
+    <tr>
+      <th>Discord ID</th>
+      <th>Name</th>
+      <th>Added By</th>
+      <th>Created</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% for (const a of admins) { %>
+        <tr>
+          <td><code><%= a.discord_id %></code></td>
+          <td><%= a.global_name || a.username || "" %></td>
+          <td><%= a.added_by || "" %></td>
+          <td><%= new Date(a.created_at).toISOString() %></td>
+          <td>
+            <form method="POST" action="/admin/admins/remove" style="display:inline;">
+              <input
+                type="hidden"
+                name="discord_id"
+                value="<%= a.discord_id %>"
+              />
+              <button type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+      <% } %>      
+  </tbody>
+</table>
+
+<p style="margin-top:16px;"><a href="/admin">Back</a></p>

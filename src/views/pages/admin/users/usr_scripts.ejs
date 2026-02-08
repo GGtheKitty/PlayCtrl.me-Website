@@ -1,0 +1,99 @@
+<script>
+  (function() {
+    const qEl = document.getElementById('q');
+    const sortEl = document.getElementById('sort');
+    const dirEl = document.getElementById('dir');
+    const pageEl = document.getElementById('pageSel');
+    const pageEl2 = document.getElementById('pageSel2');
+    const applyBtn = document.getElementById('apply');
+    const go2 = document.getElementById('go2');
+
+    function apply(pageOverride) {
+      const params = new URLSearchParams(window.location.search);
+      const q = (qEl.value || '').trim();
+      const sort = (sortEl.value || '').trim();
+      const dir = (dirEl.value || 'desc').trim();
+
+      if (q) params.set('q', q);
+      else params.delete('q');
+      if (sort) params.set('sort', sort);
+      else params.delete('sort');
+      if (dir) params.set('dir', dir);
+      else params.delete('dir');
+
+      params.set('page', String(pageOverride || pageEl.value || 1));
+      window.location.search = params.toString();
+    }
+
+    applyBtn.addEventListener('click', () => apply(1));
+    pageEl.addEventListener('change', () => apply(pageEl.value));
+    pageEl2.addEventListener('change', () => apply(pageEl2.value));
+    go2.addEventListener('click', () => apply(pageEl2.value));
+
+    async function post(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams(body).toString(),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      return data;
+    }
+
+    document.addEventListener('click', async (e) => {
+      const editBtn = e.target.closest('[data-edit]');
+      const saveBtn = e.target.closest('[data-save]');
+      const cancelBtn = e.target.closest('[data-cancel]');
+
+      if (editBtn) {
+        const id = editBtn.getAttribute('data-edit');
+        const row = document.querySelector('[data-edit-row="' + CSS.escape(id) + '"]');
+        if (row) row.style.display = (row.style.display === 'none' || !row.style.display) ? 'flex' : 'none';
+        return;
+      }
+
+      if (cancelBtn) {
+        const id = cancelBtn.getAttribute('data-cancel');
+        const row = document.querySelector('[data-edit-row="' + CSS.escape(id) + '"]');
+        if (row) row.style.display = 'none';
+        return;
+      }
+
+      if (saveBtn) {
+        const id = saveBtn.getAttribute('data-save');
+        const row = document.querySelector('[data-edit-row="' + CSS.escape(id) + '"]');
+        if (!row) return;
+        const input = row.querySelector('input');
+        const status = row.querySelector('[data-status]');
+        const val = parseInt(input.value, 10);
+        if (!Number.isFinite(val) || val < 0) {
+          if (status) status.textContent = "Enter a valid number.";
+          return;
+        }
+        if (!confirm("Set commands sent for " + id + " to " + val + "?")) return;
+
+        if (status) status.textContent = "Saving...";
+        try {
+          await post("/admin/users/set-commands", {
+            discord_id: id,
+            commands_sent_total: String(val)
+          });
+          if (status) status.textContent = "Saved.";
+          setTimeout(() => {
+            if (status) status.textContent = "";
+          }, 900);
+
+          setTimeout(() => location.reload(), 250);
+        } catch (err) {
+          if (status) status.textContent = "Failed: " + (err && err.message ? err.message : String(err));
+        }
+      }
+    });
+  })();
+</script>

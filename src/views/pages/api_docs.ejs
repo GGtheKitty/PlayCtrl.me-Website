@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/docs.css">
+</head>
+
+<body>
+  <div class="docs">
+    <h1>PlayCtrl API Documentation</h1>
+    <div class="muted">Base URL: <code><%= base %></code></div>
+
+    <div class="toc">
+      <a href="#auth">Authentication</a>
+      <a href="#format">Response Format</a>
+      <a href="#endpoints">Endpoints</a>
+      <a href="#discover">Discover</a>
+      <a href="#user">User by Pair Code</a>
+      <a href="#commands">Send Command</a>
+      <a href="#errors">Error Codes</a>
+      <a href="#limits">Rate Limits</a>
+    </div>
+
+    <div class="cardish" id="auth">
+      <h2>Authentication</h2>
+      <div class="muted">All API requests require an API key using a Bearer token.</div>
+      <pre><code>Authorization: Bearer YOUR_API_KEY</code></pre>
+
+      <div class="note">
+        <div class="k">Where do I get my API key?</div>
+        <div class="muted">You can view/reset your API key from your Profile page on the website.</div>
+      </div>
+    </div>
+
+    <div class="cardish" id="format">
+      <h2>Response Format</h2>
+      <div class="muted">Successful responses generally include <code>ok: true</code>. Errors include <code>ok: false</code> and a <code>code</code>.</div>
+
+      <pre><code>// Success example
+{
+"ok": true,
+"code": "OK",
+"data": { ... }
+}
+
+// Error example
+{
+"ok": false,
+"code": "DEVICE_OFFLINE",
+"message": "Optional error message"
+}</code></pre>
+    </div>
+
+    <div class="cardish" id="endpoints">
+      <h2>Endpoints</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill get">GET</span></td>
+            <td><code>/discover</code></td>
+            <td>Get list of discoverable users (with online status).</td>
+          </tr>
+          <tr>
+            <td><span class="pill get">GET</span></td>
+            <td><code>/user/:pairCode</code></td>
+            <td>Get a single user by pairing code.</td>
+          </tr>
+          <tr>
+            <td><span class="pill post">POST</span></td>
+            <td><code>/commands</code></td>
+            <td>Send a command to a user using their <code>pairCode</code> inside JSON.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cardish" id="discover">
+      <h2><span class="pill get">GET</span> /discover</h2>
+      <div class="muted">Returns discoverable users including display name, username, discord id, pair code, avatar URL, and online status.</div>
+
+      <pre><code>curl "<%= base %>/discover" \\
+-H "Authorization: Bearer YOUR_API_KEY" \\
+-H "Accept: application/json"</code></pre>
+
+      <pre><code>// Response example
+{
+"ok": true,
+"code": "OK",
+"users": [
+  {
+    "displayName": "Example",
+    "username": "exampleuser",
+    "discordId": "123456789012345678",
+    "pairCode": "123456",
+    "avatarUrl": "https://cdn.discordapp.com/...",
+    "online": true
+  }
+]
+}</code></pre>
+    </div>
+
+    <div class="cardish" id="user">
+      <h2><span class="pill get">GET</span> /user/:pairCode</h2>
+      <div class="muted">Returns user data for a single user by pair code.</div>
+
+      <pre><code>curl "<%= base %>/user/123456" \\
+-H "Authorization: Bearer YOUR_API_KEY" \\
+-H "Accept: application/json"</code></pre>
+
+      <pre><code>// Response example
+{
+"ok": true,
+"code": "OK",
+"user": {
+  "displayName": "Example",
+  "username": "exampleuser",
+  "discordId": "123456789012345678",
+  "pairCode": "123456",
+  "avatarUrl": "https://cdn.discordapp.com/...",
+  "online": false
+}
+}</code></pre>
+    </div>
+
+    <div class="cardish" id="commands">
+      <h2><span class="pill post">POST</span> /commands</h2>
+      <div class="muted">
+        Send a command to a user by <code>pairCode</code>. The command name goes in <code>command</code>,
+        and all command-specific inputs go inside <code>parameters</code>.
+      </div>
+
+      <h3 style="margin-top:12px;">Request Body</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Type</th>
+            <th>Required</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>pairCode</code></td>
+            <td><code>string</code></td>
+            <td>✅</td>
+            <td>The target user’s pairing code (the number in their control page URL).</td>
+          </tr>
+          <tr>
+            <td><code>command</code></td>
+            <td><code>string</code></td>
+            <td>✅</td>
+            <td>One of: <code>popup</code>, <code>open_url</code>, <code>image_popup</code>, <code>set_wallpaper</code>.</td>
+          </tr>
+          <tr>
+            <td><code>parameters</code></td>
+            <td><code>object</code></td>
+            <td>✅</td>
+            <td>Command-specific parameters (see below).</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:12px;">Command Types</h3>
+      <table>
+        <thead>
+          <tr>
+            <th><code>command</code></th>
+            <th>Required <code>parameters</code></th>
+            <th>Example payload</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>popup</code></td>
+            <td><code>message</code></td>
+            <td><code>{"pairCode":"123456","command":"popup","parameters":{"message":"Hello!"}}</code></td>
+          </tr>
+          <tr>
+            <td><code>open_url</code></td>
+            <td><code>url</code></td>
+            <td><code>{"pairCode":"123456","command":"open_url","parameters":{"url":"https://example.com"}}</code></td>
+          </tr>
+          <tr>
+            <td><code>image_popup</code></td>
+            <td><code>url</code></td>
+            <td><code>{"pairCode":"123456","command":"image_popup","parameters":{"url":"https://example.com/image.png"}}</code></td>
+          </tr>
+          <tr>
+            <td><code>set_wallpaper</code></td>
+            <td><code>url</code></td>
+            <td><code>{"pairCode":"123456","command":"set_wallpaper","parameters":{"url":"https://example.com/wallpaper.jpg"}}</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <pre><code>curl -X POST "<%= base %>/commands" \
+-H "Authorization: Bearer YOUR_API_KEY" \
+-H "Accept: application/json" \
+-H "Content-Type: application/json" \
+--data-raw '{"pairCode":"123456","command":"popup","parameters":{"message":"Hello World"}}'</code></pre>
+
+      <pre><code>// Success response example
+{
+"ok": true,
+"message": "Command sent successfully",
+"command": "popup",
+"parameters": { "message": "Hello World" },
+"dispatchedTo": "123456"
+}</code></pre>
+
+      <pre><code>// Example error response
+{
+"ok": false,
+"code": "DEVICE_OFFLINE"
+}</code></pre>
+    </div>
+
+    <div class="cardish" id="errors">
+      <h2>Error Codes</h2>
+      <div class="muted">Not all endpoints return all codes. This is the general list.</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>HTTP</th>
+            <th>code</th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>400</td>
+            <td><code>BAD_REQUEST</code></td>
+            <td>Missing/invalid fields, unknown command type, etc.</td>
+          </tr>
+          <tr>
+            <td>400</td>
+            <td><code>BAD_JSON</code></td>
+            <td>Body could not be parsed as JSON.</td>
+          </tr>
+          <tr>
+            <td>401</td>
+            <td><code>UNAUTHORIZED</code></td>
+            <td>Missing/invalid API key.</td>
+          </tr>
+          <tr>
+            <td>403</td>
+            <td><code>NOT_WHITELISTED</code></td>
+            <td>Target has whitelist enabled and you are not allowed.</td>
+          </tr>
+          <tr>
+            <td>403</td>
+            <td><code>COMMAND_DISABLED</code></td>
+            <td>Target disabled that command in their settings.</td>
+          </tr>
+          <tr>
+            <td>404</td>
+            <td><code>USER_NOT_FOUND</code></td>
+            <td>No user exists for that pair code.</td>
+          </tr>
+          <tr>
+            <td>409</td>
+            <td><code>DEVICE_OFFLINE</code></td>
+            <td>No paired devices currently online.</td>
+          </tr>
+          <tr>
+            <td>429</td>
+            <td><code>RATE_LIMITED</code></td>
+            <td>Burst or quota limit reached.</td>
+          </tr>
+          <tr>
+            <td>500</td>
+            <td><code>INTERNAL_ERROR</code></td>
+            <td>Unexpected server error.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cardish" id="limits">
+      <h2>Rate Limits</h2>
+      <div class="muted">
+        Your API key is rate-limited to 10,000 requests per hour. If you exceed limits you will receive <code>429 RATE_LIMITED</code>.<br>
+        Rate limit info is included in response headers: <strong>X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset</strong>
+      </div>
+
+      <pre><code>// Typical 429 response
+{
+"ok": false,
+"code": "RATE_LIMITED",
+"message": "Too many requests"
+}</code></pre>
+
+      <div class="muted" style="margin-top:10px;">
+        If you need higher limits for legit use-cases, contact support/admin.
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

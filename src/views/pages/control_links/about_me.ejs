@@ -1,0 +1,51 @@
+
+<div class="card gridCard">
+  <div class="cardHd"><%= LISTS.favorites.label %> / <%= LISTS.dislikes.label %> / About Me</div>
+  <div class="cardBd">
+
+    <div class="pillTabs">
+      <button class="pillTab" id="favTab" type="button" data-active="true"><%= LISTS.favorites.label %></button>
+      <button class="pillTab pillTab--danger" id="disTab" type="button" data-active="false"><%= LISTS.dislikes.label %></button>
+      <button class="pillTab pillTab--info" id="aboutTab" type="button" data-active="false">About Me</button>
+    </div>
+
+    <div class="pillBox" id="favBox">
+      <% if (favKeys.length) { %>
+          <div class="pillWrap">
+              <% for (const k of favKeys) { %>
+                <div class="pill pill--fav" title="<%= k %>">
+                  <span><%= labelByKey.get(k) || k %></span>
+                </div>
+              <% } %>
+          </div>
+      <% } else { %> 
+          <div class="muted">No <%= LISTS.favorites.label.toLowerCase() %> selected.</div>
+      <% } %>
+    </div>
+
+    <div class="pillBox" id="disBox" style="display:none;">
+      <% if (disKeys.length) { %>
+          <div class="pillWrap">
+              <% for (const k of disKeys) { %>
+                <div class="pill pill--dis" title="<%= k %>">
+                  <span><%= labelByKey.get(k) || k %></span>
+                </div>
+              <% } %>
+          </div>
+      <% } else { %>              
+          <div class="muted">No <%= LISTS.dislikes.label.toLowerCase() %> selected.</div>
+      <% } %>
+    </div>
+
+    <div class="pillBox" id="aboutBox" style="display:none; height:auto;">
+      <div class="aboutDisplay">
+        <% if ((aboutMe || "").trim()) { %>
+            <%= aboutMe %>
+        <% } else { %>
+            <span class="muted">This user hasn’t added an About Me yet.</span>
+        <% } %>
+      </div>
+    </div>
+
+  </div>
+</div>

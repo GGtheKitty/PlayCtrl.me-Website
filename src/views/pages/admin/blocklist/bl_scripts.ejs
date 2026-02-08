@@ -1,0 +1,190 @@
+<script>
+  (function() {
+      async function post(path, body) {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams(body).toString(),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+        return data;
+      }
+
+      async function fetchPage(which, q, offset, limit) {
+        const url = "/admin/url-blocklist/list" +
+          "?which=" + encodeURIComponent(which) +
+          "&q=" + encodeURIComponent(q || "") +
+          "&offset=" + encodeURIComponent(offset || 0) +
+          "&limit=" + encodeURIComponent(limit || 200);
+
+        const res = await fetch(url, {
+          headers: {
+            "Accept": "application/json"
+          },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) throw new Error("Failed to load " + which + "list");
+        return data;
+      }
+
+      function renderRows(box, which, items, append) {
+        if (!append) box.innerHTML = "";
+        if (!items.length && !append) {
+          box.innerHTML = '<div class="muted">Empty.</div>';
+          return;
+        }
+
+        for (const h of items) {
+          const row = document.createElement("div");
+          row.className = "hostRow";
+          row.innerHTML = `
+            <div class="host"></div>
+            <button class="btnSm btnDanger" type="button" data-rm="${h}" data-which="${which}">Remove</button>
+          `;
+          row.querySelector(".host").textContent = h;
+          box.appendChild(row);
+        }
+      }
+    
+      function makeList(which){
+        const countEl = document.getElementById(which + "Count");
+        const box = document.getElementById(which + "Box");
+        const searchEl = document.getElementById(which + "Search");
+        const searchBtn = document.getElementById(which + "SearchBtn");
+        const moreBtn = document.getElementById(which + "More");
+        const metaEl = document.getElementById(which + "Meta");
+        const statusEl = document.getElementById(which + "Status");
+    
+        let q = "";
+        let offset = 0;
+        let total = 0;
+        const limit = 200;
+    
+        function setStatus(msg){ if (statusEl) statusEl.textContent = msg || ""; }
+    
+        async function load(reset){
+          try{
+            if (reset){ offset = 0; }
+            setStatus("Loading...");
+            const data = await fetchPage(which, q, offset, limit);
+    
+            total = Number(data.total || 0);
+            if (countEl) countEl.textContent = String(total);
+    
+            const items = Array.isArray(data.items) ? data.items : [];
+            renderRows(box, which, items, !reset);
+    
+            offset = Number(data.offset || 0) + items.length;
+    
+            if (metaEl) metaEl.textContent = `${Math.min(offset, total)}/${total}`;
+            if (moreBtn) moreBtn.disabled = offset >= total;
+    
+            setStatus("");
+          }catch(e){
+            setStatus("Failed to load.");
+          }
+        }
+    
+        searchBtn.addEventListener("click", () => {
+          q = (searchEl.value || "").trim();
+          load(true);
+        });
+    
+        moreBtn.addEventListener("click", () => load(false));
+    
+        return {
+          reload: () => load(true),
+          loadMore: () => load(false),
+          setStatus
+        };
+      }
+    
+      const allowUI = makeList("allow");
+      const blockUI = makeList("block");
+    
+      allowUI.reload();
+      blockUI.reload();
+    
+      document.getElementById("allowAdd").addEventListener("click", async () => {
+        const input = document.getElementById("allowHost");
+        const host = (input.value || "").trim();
+        if (!host) return;
+        if (!confirm("Add to allowlist?")) return;
+    
+        allowUI.setStatus("Saving...");
+        try{
+          await post("/admin/url-blocklist/allow/add", { host });
+          input.value = "";
+          await allowUI.reload();
+          allowUI.setStatus("Added.");
+          setTimeout(()=>allowUI.setStatus(""), 900);
+        }catch(e){
+          allowUI.setStatus("Failed to add.");
+        }
+      });
+    
+      document.getElementById("blockAdd").addEventListener("click", async () => {
+        const input = document.getElementById("blockHost");
+        const host = (input.value || "").trim();
+        if (!host) return;
+        if (!confirm("Add to blocklist?")) return;
+    
+        blockUI.setStatus("Saving...");
+        try{
+          await post("/admin/url-blocklist/block/add", { host });
+          input.value = "";
+          await blockUI.reload();
+          blockUI.setStatus("Added.");
+          setTimeout(()=>blockUI.setStatus(""), 900);
+        }catch(e){
+          blockUI.setStatus("Failed to add.");
+        }
+      });
+    
+      document.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-rm][data-which]");
+        if (!btn) return;
+    
+        const host = btn.getAttribute("data-rm") || "";
+        const which = btn.getAttribute("data-which") || "";
+        if (!host || (which !== "allow" && which !== "block")) return;
+    
+        if (!confirm("Remove " + host + " from " + which + "list?")) return;
+    
+        try{
+          await post(
+            which === "allow" ? "/admin/url-blocklist/allow/remove" : "/admin/url-blocklist/block/remove",
+            { host }
+          );
+          btn.closest(".hostRow")?.remove();
+
+          if (which === "allow") allowUI.reload();
+          else blockUI.reload();
+        }catch(e){
+          alert("Failed to remove.");
+        }
+      });
+    
+      document.addEventListener("click", async (e) => {
+        const allowBtn = e.target.closest("[data-allow]");
+        const blockBtn = e.target.closest("[data-block]");
+        if (!allowBtn && !blockBtn) return;
+    
+        const host = (allowBtn ? allowBtn.getAttribute("data-allow") : blockBtn.getAttribute("data-block")) || "";
+        const mode = allowBtn ? "allow" : "block";
+        if (!host) return;
+    
+        if (!confirm("Mark " + host + " as " + mode.toUpperCase() + "?")) return;
+    
+        await post("/admin/url-blocklist/queue/decide", { host, decision: mode });
+        location.reload();
+      });
+    })();
+</script>

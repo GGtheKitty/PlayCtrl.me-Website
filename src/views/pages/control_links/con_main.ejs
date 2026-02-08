@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" href="/css/control_link.css">
+</head>
+
+<body>
+
+  <%- include("../../common/commands_sent") %>
+
+  <div class="fullBleed">
+
+    <div class="controlGrid">
+
+      <div class="areaControls">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <div class="topRow">
+              <img class="deviceAvi" src="<%= discordAvatarUrl(ownerUser || { discord_id: ownerId, avatar: null }, 128) %>" alt="" />
+              <div class="name"><%= (ownerUser?.global_name || ownerUser?.username || ownerId) %></div>
+            </div>
+
+            <div id="statusPill" class="statusPill <%=anyOnline ? " statusPill--on" : "statusPill--off" %>" title="Live status">
+              <span class="statusDot"></span>
+              <span id="statusText"><%= anyOnline ? "Online" : "Offline" %></span>
+            </div>
+          </div>
+
+
+          <div class="cardBd">
+            <% if (anyCommandsEnabled) { %>
+            <div class="controlsWrap" id="controlsWrap">
+
+              <div class="cooldownOverlay" id="cooldownOverlay" data-show="false" aria-hidden="true">
+                <div class="cooldownBox">
+                  <div class="cooldownTitle">Please Wait</div>
+                  <div class="cooldownNum"><span id="cooldownSeconds">3</span>s</div>
+                  <div class="cooldownHint">
+                    New users can send one command every 3 seconds
+                  </div>
+                </div>
+              </div>
+
+              <div class="cmdGrid" id="cmdGrid">
+                <% if (canPopup) { %>
+                <%- include("../../functions/cmdCard", {
+                    title: "Send Message",
+                    body: `
+                    <form
+                        class="cmdForm"
+                        method="POST"
+                        action="/api/device/${encodeURIComponent(pairCode)}/popup"
+                        data-cmd="popup"
+                    >
+                        <textarea
+                        name="message"
+                        maxlength="2000"
+                        placeholder="Message"
+                        style="margin-top:8px;"
+                        ></textarea>
+                
+                        <div style="margin-top:10px;">
+                        <button type="submit">Send</button>
+                        </div>
+                    </form>
+                    `
+                }) %>
+                <% } %>
+
+
+                <% if (canOpenUrl) { %>
+                <%- include("../../functions/cmdCard", {
+                    title: "Open URL",
+                    body: `
+                        <form
+                        class="cmdForm"
+                        method="POST"
+                        action="/api/device/${encodeURIComponent(pairCode)}/open_url"
+                        data-cmd="open_url"
+                        >
+                        
+                        <input name="url" placeholder="https://example.com" />
+                
+                        <div style="margin-top:10px;">
+                            <button type="submit">Open</button>
+                        </div>
+                        </form>
+                    `
+                    }) %>
+                <% } %>
+
+                <% if (canImage) { %>
+                <%- include("../../functions/cmdCard", {
+                    title: "Send Image Popup",
+                    body: `
+                    <form
+                        class="cmdForm"
+                        method="POST"
+                        action="/api/device/${encodeURIComponent(pairCode)}/image_popup"
+                        data-cmd="image_popup"
+                    >
+                    
+                        <input name="url" placeholder="https://example.com/image.png" />
+                
+                        <div style="margin-top:10px;">
+                        <button type="submit">Send</button>
+                        </div>
+                    </form>
+                    `
+                }) %>
+                <% } %>
+
+                <% if (canSetWallpaper) { %>
+                <%- include("../../functions/cmdCard", {
+                    title: "Set Wallpaper",
+                    body: `
+                    <form
+                        class="cmdForm"
+                        method="POST"
+                        action="/api/device/${encodeURIComponent(pairCode)}/set_wallpaper"
+                        data-cmd="set_wallpaper"
+                    >
+                    
+                        <input name="url" placeholder="https://example.com/wallpaper.png" />
+                        <div class="muted" style="margin-top:8px;">
+                        Only .png or .jpg/.jpeg
+                        </div>
+                
+                        <div style="margin-top:10px;">
+                        <button type="submit">Set</button>
+                        </div>
+                    </form>
+                    `
+                }) %>
+                <% } %>
+              </div>
+            </div>
+            <% } else { %>
+            <div class="emptyState">
+              <div style="font-weight:900;">Nothing enabled</div>
+              <div class="muted" style="margin-top:6px;">
+                This user has disabled all commands on their profile.
+              </div>
+            </div>
+            <% } %>
+          </div>
+        </div>
+      </div>
+
+      <div class="areaResponses" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Responses</span>
+            <button id="clearResp" type="button">Clear</button>
+          </div>
+          <div class="cardBd">
+            <div id="respBox" class="respBox">
+              <div class="respLine">Ready.</div>
+            </div>
+            <div class="muted" style="margin-top:10px;">
+              Results and errors will appear here.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="areaFavorites" style="display:flex;flex-direction:column;gap:14px;">
+        <%- include("about_me") %>
+      </div>
+
+      <div class="areaBoard">
+        <%- include("message_board") %>
+      </div>
+
+    </div>
+
+  </div>
+
+  <%- include("con_scripts", { user }) %>
+
+</body>
+</html>

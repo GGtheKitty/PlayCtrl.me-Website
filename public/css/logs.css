@@ -1,0 +1,338 @@
+.logsWrap {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.logsLeft {
+    flex: 1 1 auto;
+    min-width: 520px;
+}
+
+.logsRight {
+    width: 360px;
+    flex: 0 0 360px;
+}
+
+.panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, .03);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.panelHd {
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.panelHd h1 {
+    margin: 0;
+    font-size: 16px;
+    letter-spacing: .3px;
+}
+
+.panelBd {
+    padding: 12px 14px;
+}
+
+.toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.toolbar input {
+    width: 420px;
+    max-width: 100%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(0, 0, 0, .25);
+    color: var(--text);
+    outline: none;
+    font-family: var(--mono);
+}
+
+.toolbar input::placeholder {
+    color: rgba(255, 255, 255, .45);
+}
+
+.muted {
+    color: var(--muted);
+    font-size: 12px;
+    opacity: .85;
+}
+
+.logCard {
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(0, 0, 0, .20));
+    padding: 12px 12px;
+    margin-bottom: 12px;
+}
+
+.logTop {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.logLeft {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(139, 92, 246, .45);
+    background: rgba(139, 92, 246, .16);
+    color: rgba(255, 255, 255, .92);
+    font-weight: 900;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.kvs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(255, 255, 255, .03);
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.kvs .k {
+    opacity: .6;
+}
+
+.kvs .v {
+    opacity: .95;
+}
+
+.miniBtn {
+    padding: 7px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(255, 255, 255, .04);
+    color: var(--text);
+    cursor: pointer;
+    font-weight: 900;
+}
+
+.miniBtn:hover {
+    border-color: rgba(167, 139, 250, .55);
+}
+
+.logUsers {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.uRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 320px;
+}
+
+.role {
+    width: 54px;
+    font-weight: 900;
+    opacity: .75;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.uChip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(0, 0, 0, .20);
+    cursor: pointer;
+    user-select: none;
+}
+
+.uChip:hover {
+    border-color: rgba(167, 139, 250, .55);
+}
+
+.uChip.muted {
+    opacity: .7;
+    border-style: dashed;
+    cursor: default;
+}
+
+.uAv {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+}
+
+.uNm {
+    font-weight: 900;
+}
+
+.uId {
+    font-family: var(--mono);
+    font-size: 12px;
+    opacity: .6;
+}
+
+.summary {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .18);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: rgba(255, 255, 255, .88);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+pre.payload {
+    margin: 10px 0 0 0;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .35);
+    color: rgba(255, 255, 255, .90);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow: auto;
+    max-height: 260px;
+    white-space: pre;
+}
+
+.typesBox {
+    max-height: 320px;
+    overflow: auto;
+    padding-right: 4px;
+}
+
+.chk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.chk input {
+    accent-color: var(--purple);
+}
+
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 12px;
+    gap: 10px;
+}
+
+.pager a.btn,
+.pager button.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(255, 255, 255, .04);
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 900;
+    min-width: 92px;
+}
+
+.pager .btn[aria-disabled="true"] {
+    opacity: .45;
+    pointer-events: none;
+}
+
+.jumpRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.jumpRow select,
+.jumpRow input {
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(0, 0, 0, .25);
+    color: var(--text);
+    font-family: var(--mono);
+    outline: none;
+}
+
+.jumpRow input {
+    width: 120px;
+}
+
+.jumpRow .miniBtn {
+    padding: 9px 10px;
+}
+
+.hint {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .18);
+    color: rgba(255, 255, 255, .80);
+    font-size: 12px;
+}
+
+.pillRow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(0, 0, 0, .20);
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.pill:hover {
+    border-color: rgba(167, 139, 250, .55);
+}

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+  <h1>Invites</h1>
+  <p><a href="/admin">Back</a></p>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="cardHd">Enrollment</div>
+    <div class="cardBd">
+      <div class="switchRow">
+        <div>
+          <div class="switchLabel">Open enrollment</div>
+          <div class="switchHint">
+            When OFF, only invited users can access. When ON, anyone can access.
+          </div>
+        </div>
+
+        <label class="switch" title="Toggle Enrollment">
+          <input id="enrollToggle" type="checkbox" ${enrollmentOpen ? "checked" : "" } />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div id="enrollStatus" class="muted" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <form method="POST" action="/admin/invites/new" style="margin:12px 0;display:flex;gap:10px;align-items:center;">
+    <input name="count" value="1" style="width:80px;padding:8px;" />
+    <button type="submit">Generate</button>
+    <span style="opacity:.7;">(One-time use)</span>
+  </form>
+
+  <h3 style="margin-top:18px;">Recent invite activity</h3>
+  <table border="1" cellpadding="8" cellspacing="0">
+    <thead>
+      <tr>
+        <th>Created</th>
+        <th>Created By</th>
+        <th>Used</th>
+        <th>Used By</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% for (const r of rows) { %>
+      <tr>
+        <td><%= new Date(r.created_at).toISOString() %></td>
+        <td style="font-family:monospace;"><%= (r.created_by || "") %></td>
+        <td>
+          <% if (r.used_at) { %>
+          <%= new Date(r.used_at).toISOString() %>
+          <% } %>
+        </td>
+        <td style="font-family:monospace;"><%= (r.used_by || "") %></td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table>
+</body>
+
+<%- include("inv_scripts") %>
+
+</html>

@@ -1,0 +1,57 @@
+<header class="topbar">
+<a class="brand" href="/" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;">
+    <img
+    src="/favicon-96x96.png"
+    alt="PlayCtrl"
+    style="width:34px;height:34px;"
+    />
+    <div class="brandName">Play<span>Ctrl</span>.me</div>
+</a>
+
+<div class="navRight">
+    <% if (user) { %>
+    <button class="hamburger" id="hamburgerBtn" type="button" aria-label="Open menu" aria-haspopup="dialog" aria-expanded="false">
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+    </button>
+
+    <div class="navDesktop" style="display:flex;align-items:center;gap:10px;">
+        <% if (isAdmin) { %><a class="btn btn--ghost" href="/admin">Admin</a><% } %>
+        <a class="btn btn--ghost" href="/discover">Discover</a>
+        <a class="btn btn--ghost" href="/profile">Profile</a>
+
+        <div class="dd" id="dd">
+        <button class="ddBtn" id="ddBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <img class="avatar" src="<%= avatarUrl %>"
+                onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
+                alt="" />
+            <span><%= displayName %></span>
+            <span class="caret">▾</span>
+        </button>
+
+        <div class="ddMenu" id="ddMenu" role="menu" aria-label="User menu">
+            <div class="ddItem">
+            <div>
+                <div style="font-weight:900;"><%= displayName %></div>
+                <div class="muted mono" style="font-size:12px;"><%= user.discord_id %></div>
+            </div>
+            </div>
+
+            <button class="ddLink" role="menuitem" onclick="location.href='/profile'">Profile</button>
+            <button class="ddLink" role="menuitem" onclick="location.href='/discover'">Discover</button>
+            <% if (isAdmin) { %>
+            <button class="ddLink" role="menuitem" onclick="location.href='/admin'">Admin</button>
+            <% } %>
+
+            <form method="POST" action="/logout" style="margin:0;">
+            <button class="ddLink" role="menuitem" type="submit">Logout</button>
+            </form>
+        </div>
+        </div>
+    </div>
+    <% } else { %>
+    <a class="btn" href="/auth/discord">Login with Discord</a>
+    <% } %>
+</div>
+</header>

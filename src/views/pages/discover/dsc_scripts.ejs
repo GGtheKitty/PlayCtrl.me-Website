@@ -1,0 +1,79 @@
+<script>
+  (function() {
+    function fnv1a32(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      }
+      return h >>> 0;
+    }
+
+    function windowIdNow10m() {
+      return Math.floor(Date.now() / (10 * 60 * 1000));
+    }
+
+    const grid = document.getElementById("uGrid");
+    if (!grid) return;
+
+    function setDot(card, online) {
+      const dot = card.querySelector('.statusDot');
+      if (!dot) return;
+      dot.classList.toggle("statusDot--online", !!online);
+      dot.classList.toggle("statusDot--offline", !online);
+      dot.title = online ? "Online" : "Offline";
+    }
+
+    function reorderDeterministic() {
+      const winId = windowIdNow10m();
+      const cards = Array.from(grid.children);
+      cards.sort((a, b) => {
+        const ak = fnv1a32(String(winId) + ":" + String(a.getAttribute("data-pair") || ""));
+        const bk = fnv1a32(String(winId) + ":" + String(b.getAttribute("data-pair") || ""));
+        return ak - bk;
+      });
+      const frag = document.createDocumentFragment();
+      for (const c of cards) frag.appendChild(c);
+      grid.appendChild(frag);
+    }
+
+    reorderDeterministic();
+
+    let lastWin = windowIdNow10m();
+    setInterval(() => {
+      const nowWin = windowIdNow10m();
+      if (nowWin !== lastWin) {
+        lastWin = nowWin;
+        reorderDeterministic();
+      }
+    }, 5000);
+
+    async function tick() {
+      try {
+        const res = await fetch("/api/presence/discover", {
+          headers: {
+            "Accept": "application/json"
+          },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) return;
+
+        const cards = Array.from(grid.querySelectorAll('.uCard[data-pair]'));
+        for (const card of cards) {
+          const code = card.getAttribute("data-pair");
+          const st = data.map && data.map[code];
+          if (!st) continue;
+
+          const online = !!st.online;
+          setDot(card, online);
+
+          card.style.display = online ? "" : "none";
+        }
+      } catch (e) {}
+    }
+
+    tick();
+    setInterval(tick, 5000);
+  })();
+</script>

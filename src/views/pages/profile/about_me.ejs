@@ -1,0 +1,170 @@
+<style>
+  .tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .tab {
+    padding: 10px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .32);
+    background: rgba(0, 0, 0, .20);
+    font-weight: 900;
+    cursor: pointer;
+    color: #fff
+  }
+
+  .tab[data-active="true"] {
+    border-color: rgba(167, 139, 250, .55);
+    background: rgba(139, 92, 246, .18);
+  }
+
+  .tab--danger[data-active="true"] {
+    border-color: rgba(239, 68, 68, .55);
+    background: rgba(239, 68, 68, .14);
+  }
+
+  .tab--info[data-active="true"] {
+    border-color: rgba(59, 130, 246, .55);
+    background: rgba(59, 130, 246, .12);
+  }
+
+  .panel {
+    display: none;
+  }
+
+  .panel[data-show="true"] {
+    display: block;
+  }
+
+  .listSearch {
+    margin-bottom: 10px;
+  }
+
+  .listBox {
+    height: 300px;
+    overflow: auto;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(0, 0, 0, .18);
+    padding: 10px;
+  }
+
+  .li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .22);
+    margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .li:last-child {
+    margin-bottom: 0;
+  }
+
+  .li .label {
+    font-weight: 900;
+  }
+
+  .li .key {
+    font-family: var(--mono);
+    font-size: 12px;
+    opacity: .55;
+  }
+
+  .li.selFav {
+    border-color: rgba(167, 139, 250, .55);
+    background: rgba(139, 92, 246, .16);
+  }
+
+  .li.selDis {
+    border-color: rgba(239, 68, 68, .55);
+    background: rgba(239, 68, 68, .12);
+  }
+
+  .aboutBox {
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(0, 0, 0, .18);
+    padding: 12px;
+  }
+
+  .aboutBox textarea {
+    width: 100%;
+    min-height: 160px;
+    resize: vertical;
+    background: rgba(255, 255, 255, .06);
+    border: 1px solid rgba(255, 255, 255, .10);
+    color: #fff;
+    border-radius: 12px;
+    padding: 10px 10px;
+    outline: none;
+  }
+
+  .aboutFooter {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .counter {
+    font-family: var(--mono);
+    font-size: 12px;
+    opacity: .75;
+  }
+</style>
+
+<div class="card" style="margin-top:18px;">
+  <div class="cardHd"><%= LISTS.favorites.label %> / <%= LISTS.dislikes.label %> / About Me</div>
+  <div class="cardBd">
+    <div class="tabs">
+      <button class="tab" id="tabFav" type="button" data-active="true"><%= LISTS.favorites.label %></button>
+      <button class="tab tab--danger" id="tabDis" type="button" data-active="false"><%= LISTS.dislikes.label %></button>
+      <button class="tab tab--info" id="tabAbout" type="button" data-active="false">About Me</button>
+    </div>
+
+    <div class="panel" id="panelList" data-show="true">
+      <input class="listSearch" id="listSearch" placeholder="Search..." />
+
+      <div class="listBox" id="listBox">
+        <% for (const it of catalog) { 
+                 const favOn = selections.favorites && selections.favorites.has(it.key);
+                 const disOn = selections.dislikes && selections.dislikes.has(it.key);
+            %>
+        <div class="li" data-key="<%= it.key %>" data-label="<%= it.label.toLowerCase() %>" data-fav="<%= favOn ? "1" : "0" %>" data-dis="<%= disOn ? "1" : "0" %>">
+          <div>
+            <div class="label"><%= it.label %></div>
+          </div>
+        </div>
+        <% } %>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Click an item to toggle it for the selected tab.
+      </div>
+    </div>
+
+    <div class="panel" id="panelAbout" data-show="false">
+      <div class="aboutBox">
+        <div class="muted" style="margin-bottom:8px;">Tell people about you (max 500 characters).</div>
+
+        <textarea id="aboutText" maxlength="500" placeholder="Write something..."><%- aboutMe || "" %></textarea>
+
+        <div class="aboutFooter">
+          <div class="counter"><span id="aboutCount">0</span>/500</div>
+          <button id="aboutSave" type="button">Save</button>
+        </div>
+
+        <div class="muted" id="aboutStatus" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>
+</div>

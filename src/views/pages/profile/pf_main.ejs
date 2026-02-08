@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" href="/css/profile.css">
+</head>
+
+<body>
+  
+  <%- include("../../common/commands_sent") %>
+
+  <div class="profileGrid">
+
+    <div style="display:flex; flex-direction:column; gap:18px;">
+
+      <div class="card">
+        <div class="cardHd">
+          <span>Profile</span>
+          <form method="POST" action="/profile/reset-code" style="margin:0;">
+            <button class="miniDanger" type="submit" title="This will reset your pairing code">
+              Reset code
+            </button>
+          </form>
+        </div>
+
+        <div class="cardBd">
+          <div class="row">
+            <img class="profileAvi" src="<%= discordAvatarUrl(user, 64) %>" alt="" />
+            <div>
+              <div style="font-weight:900;font-size:16px;">
+                <%= user.global_name || user.username %>
+              </div>
+              <div class="muted"><%= user.username ? "@" + user.username : "" %></div>
+            </div>
+          </div>
+
+          <div style="margin-top:14px;" class="muted">Your pairing code:</div>
+          <div class="pairCode"><%= code %></div>
+
+          <div class="muted" style="margin-top:10px;">Your control page:</div>
+          <div style="margin-top:6px;">
+            <a class="plainLink" href="/device/<%= encodeURIComponent(code) %>">
+              <%= fullControlUrl %>
+            </a>
+          </div>
+
+          <div style="margin-top:14px;">
+            <a class="btnLink" href="/download/client">Download Client (Windows)</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardHd">Settings</div>
+        <div class="cardBd">
+          <div class="switchRow">
+            <div>
+              <div class="switchLabel">Show me on the Discover page</div>
+              <div class="switchHint">If enabled, your profile can appear on /discover.</div>
+            </div>
+
+            <label class="switch" title="Toggle Discover">
+              <input id="discoverToggle" type="checkbox" <% isDiscoverOn ? "checked" : "" %> <% isWhitelistOn ? "disabled" : "" %> />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div id="discoverStatus" class="muted" style="margin-top:10px;"></div>
+        </div>
+
+        <%- include("./whitelist") %>
+
+      </div>
+
+      <%- include("./api_card") %>
+
+
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:18px;">
+      <div class="card">
+        <div class="cardHd">Control Page Commands</div>
+        <div class="cardBd">
+          <div class="muted" style="margin-bottom:12px;">
+            Toggle what appears on your control page. Disabled commands are also blocked at the API level.
+          </div>
+
+          <div class="cmdGrid">
+
+            <%- include("../../functions/commandToggle", {
+                cmd: "popup",
+                title: "Send Message",
+                hint: "Let people send a popup message.",
+                enabled: !!prefs.allow_popup
+              }) %>
+
+            <%- include("../../functions/commandToggle", {
+                cmd: "image_popup",
+                title: "Send Image Popup",
+                hint: "Let people send an image popup.",
+                enabled: !!prefs.allow_image_popup
+              }) %>
+
+            <%- include("../../functions/commandToggle", {
+                cmd: "open_url",
+                title: "Open URL",
+                hint: "Let people open a URL on your device.",
+                enabled: !!prefs.allow_open_url
+              }) %>
+
+            <%- include("../../functions/commandToggle", {
+                cmd: "set_wallpaper",
+                title: "Set Wallpaper",
+                hint: "Let people set your wallpaper.",
+                enabled: !!prefs.allow_set_wallpaper
+              }) %>
+
+          </div>
+
+          <div id="cmdStatus" class="muted" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <%- include("./about_me") %>
+
+    </div>
+
+    <%- include("pf_scripts", { user }) %>
+
+</body>
+
+</html>

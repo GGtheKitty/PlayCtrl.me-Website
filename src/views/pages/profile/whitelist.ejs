@@ -1,0 +1,47 @@
+  <div class="cardBd">
+
+    <div class="switchRow">
+      <div>
+        <div class="switchLabel">Enable Whitelist</div>
+        <div class="switchHint">Only approved Discord IDs can send commands to your control page.</div>
+      </div>
+
+      <label class="switch" title="Toggle Whitelist">
+        <input id="whitelistToggle" type="checkbox" ${isWhitelistOn ? "checked" : "" } />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="wlAddRow">
+      <input id="wlInput" placeholder="Discord ID to allow (numbers only)" />
+      <button id="wlAddBtn" type="button">Add</button>
+    </div>
+
+    <div class="wlList" id="wlList">
+      <% if (wlList && wlList.length) { %>
+      <% for (const x of wlList) { 
+                 const name = x.global_name || x.username || x.allowed_id;
+                 const avi = discordAvatarUrl(
+                   { discord_id: x.allowed_id, avatar: x.avatar },
+                   64
+                 );
+            %>
+      <div class="wlRow" data-id="<%= x.allowed_id %>">
+        <div class="wlLeft">
+          <img class="wlAvi" src="<%= avi %>" alt="" />
+          <div style="min-width:0;">
+            <div class="wlName"><%= name %></div>
+            <div class="wlId"><%= x.allowed_id %></div>
+          </div>
+        </div>
+        <button class="wlRm" type="button" data-remove="<%= x.allowed_id %>">
+          Remove
+        </button>
+      </div>
+      <% } %>
+      <% } else { %>
+      <div class="muted">No whitelisted users yet.</div>
+      <% } %>
+    </div>
+    <div id="wlStatus" class="muted" style="margin-top:10px;"></div>
+  </div>

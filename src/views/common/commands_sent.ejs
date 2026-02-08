@@ -1,0 +1,11 @@
+<% if (commandsSentTotal !== null) { %>
+<div class="cmdCountBar">
+  <div>
+    <div class="cmdCountTitle">Commands Sent:</div>
+  </div>
+
+  <div class="cmdCountNum" id="cmdSentTotal">
+    <%= Number(commandsSentTotal).toLocaleString() %>
+  </div>
+</div>
+<% } %>

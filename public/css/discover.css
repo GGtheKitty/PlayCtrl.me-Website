@@ -1,0 +1,119 @@
+.uGrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+@media (max-width: 1200px) {
+    .uGrid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .uGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .uGrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.uCard {
+    position: relative;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: var(--panel3);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+    overflow: hidden;
+}
+
+.uAvi {
+    width: 88px;
+    height: 88px;
+    border-radius: 999px;
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, .12);
+    margin-bottom: 10px;
+}
+
+.display {
+    font-weight: 800;
+    font-size: 16px;
+    line-height: 1.1;
+}
+
+.handle {
+    font-size: 12px;
+    opacity: .65;
+    margin-top: 4px;
+}
+
+.control {
+    margin-top: 12px;
+    font-weight: 700;
+    text-decoration: none;
+    border: 1px solid rgba(255, 255, 255, .16);
+    padding: 8px 12px;
+    border-radius: 10px;
+    color: var(--text);
+    background: rgba(0, 0, 0, .12);
+}
+
+.control:hover {
+    border-color: rgba(167, 139, 250, .55);
+}
+
+.empty {
+    opacity: .7;
+    margin-top: 16px;
+}
+
+.statusDot {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, .55);
+    transition: background .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.statusDot--online {
+    background: #22c55e;
+    animation: pulse 2.2s ease-in-out infinite;
+    box-shadow:
+        0 0 0 2px rgba(0, 0, 0, .55),
+        0 0 10px rgba(34, 197, 94, .45);
+}
+
+.statusDot--offline {
+    background: #ef4444;
+    box-shadow:
+        0 0 0 2px rgba(0, 0, 0, .55),
+        0 0 10px rgba(239, 68, 68, .35);
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.12);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}

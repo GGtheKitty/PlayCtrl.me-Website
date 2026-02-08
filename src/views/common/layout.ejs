@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <%- include("head", { title, meta }) %>
+  </head>
+  <body>
+    <div class="wrap">
+      <%- include("topbar", { user, isAdmin, displayName, avatarUrl }) %>
+
+      <main class="content">
+        <%- body %>
+      </main>
+    </div>
+
+    <% if (user) { %>
+      <%- include("mobile_drawer", { 
+        user, 
+        isAdmin, 
+        displayName, 
+        avatarUrl 
+      }) %>
+    <% } %>
+
+    <%- include("scripts", { user }) %>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+<script>
+  const q = document.getElementById('q');
+  const count = document.getElementById('count');
+  const rows = Array.from(document.querySelectorAll('.urow'));
+
+  function refresh() {
+    const s = (q.value || '').trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const ok = !s || (r.dataset.q || '').includes(s);
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    }
+    count.textContent = shown + " / " + rows.length;
+  }
+  q.addEventListener('input', refresh);
+  refresh();
+</script>

@@ -1,0 +1,50 @@
+<script>
+  (function() {
+    const t = document.getElementById("enrollToggle");
+    const s = document.getElementById("enrollStatus");
+    if (!t) return;
+
+    function setStatus(msg) {
+      if (s) s.textContent = msg || "";
+    }
+
+    t.addEventListener("change", async () => {
+      const next = !!t.checked;
+      const prev = !next;
+
+      const ok = confirm(
+        next ?
+        "Turn ON open enrollment? (Anyone will be able to access the site.)" :
+        "Turn OFF open enrollment? (Only invited/currently enrolled users will be able to access.)"
+      );
+      if (!ok) {
+        t.checked = prev;
+        return;
+      }
+
+      setStatus("Saving...");
+      try {
+        const res = await fetch("/admin/invites/enrollment-toggle", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            enabled: next ? "1" : "0"
+          }),
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+
+        setStatus(next ? "Open enrollment enabled." : "Invite-only enabled.");
+        setTimeout(() => setStatus(""), 1400);
+      } catch (e) {
+        t.checked = prev;
+        setStatus("Failed to save.");
+      }
+    });
+  })();
+</script>

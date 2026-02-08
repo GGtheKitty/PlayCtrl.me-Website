@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+  <h1>Admin Panel</h1>
+  <p>Logged in as <b><%= (user.global_name || user.username) %></b></p>
+  <ul>
+    <li><a href="/admin/logs">Logs</a></li>
+    <li><a href="/admin/admins">Manage Admins</a></li>
+    <li><a href="/admin/bans">Bans</a></li>
+    <li><a href="/admin/users">Users</a></li>
+    <li><a href="/admin/invites">Invites</a></li>
+    <li><a href="/admin/url-blocklist">URL Blocklist</a></li>
+  </ul>
+</body>
+
+</html>
