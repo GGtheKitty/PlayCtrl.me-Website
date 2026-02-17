@@ -577,7 +577,7 @@ function upsertVerificationHost(db, host, sampleUrl) {
   ).run(host, String(sampleUrl || "").slice(0, 800), now, now);
 }
 
-function banUserSilently(db, logEvent, discordId, req) {
+function banUserSilently(db, logEvent, discordId, req, details = {}) {
   const now = Date.now();
   db.prepare(
     `
@@ -595,7 +595,7 @@ function banUserSilently(db, logEvent, discordId, req) {
     actorUserId: "system",
     targetUserId: discordId,
     req,
-    payload: { reason: null, auto: true },
+    payload: { reason: null, auto: true, ...details },
   });
 }
 
@@ -611,12 +611,16 @@ function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl) {
   const block = getBlockSet();
 
   if (block.has(host)) {
-    banUserSilently(db, logEvent, req.user.discord_id, req);
+    banUserSilently(db, logEvent, req.user.discord_id, req, {
+      rule: "url_blocklist",
+      host,
+      url: String(rawUrl || "").slice(0, 800),
+    });
 
     res.status(403).json({ ok: false, message: "Not allowed." });
     return { ok: false, blocked: true };
   }
-
+  
   if (allow.has(host)) {
     return { ok: true, host, status: "allowed" };
   }
@@ -1255,7 +1259,11 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 
 function isDeviceOnline(deviceId) {
   const ws = wsByDeviceId.get(deviceId);
-  return !!(ws && ws.readyState === WebSocket.OPEN && ws.isAlive === true);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+
+  const last = Number(ws.lastPongAt || 0);
+  const ttl = HEARTBEAT_INTERVAL_MS * 2 + 2000;
+  return last && (Date.now() - last) <= ttl;
 }
 
 const app = express();
@@ -2913,7 +2921,13 @@ app.post("/api/device/:pairCode/popup", requireDiscord, async (req, res) => {
   if (!result.ok) return res.send(result.error || "No devices online");
 
   const failed = result.acks.some((a) => !a?.ok);
-  if (!failed) return res.send("Sent to device");
+  if (!failed){
+    incrementCommandsSentTotal({
+      senderDiscordId: req.user.discord_id,
+      targetOwnerDiscordId: resolved.ownerUserId
+    });
+    return res.send("Sent to device");
+  } 
 
   return res.send(renderAcks(result.acks));
 });
@@ -2950,7 +2964,13 @@ app.post("/api/device/:pairCode/open_url", requireDiscord, async (req, res) => {
   if (!result.ok) return res.send(result.error || "No devices online");
 
   const failed = result.acks.some((a) => !a?.ok);
-  if (!failed) return res.send("Sent to device");
+  if (!failed){
+    incrementCommandsSentTotal({
+      senderDiscordId: req.user.discord_id,
+      targetOwnerDiscordId: resolved.ownerUserId
+    });
+    return res.send("Sent to device");
+  }
 
   return res.send(renderAcks(result.acks));
 });
@@ -2987,7 +3007,13 @@ app.post("/api/device/:pairCode/image_popup", requireDiscord, async (req, res) =
   if (!result.ok) return res.send(result.error || "No devices online");
 
   const failed = result.acks.some((a) => !a?.ok);
-  if (!failed) return res.send("Sent to device");
+  if (!failed){
+    incrementCommandsSentTotal({
+      senderDiscordId: req.user.discord_id,
+      targetOwnerDiscordId: resolved.ownerUserId
+    });
+    return res.send("Sent to device");
+  } 
 
   return res.send(renderAcks(result.acks));
 });
@@ -3029,7 +3055,13 @@ app.post("/api/device/:pairCode/set_wallpaper", requireDiscord, async (req, res)
   if (!result.ok) return res.send(result.error || "No devices online");
 
   const failed = result.acks.some((a) => !a?.ok);
-  if (!failed) return res.send("Sent to device");
+    if (!failed){
+    incrementCommandsSentTotal({
+      senderDiscordId: req.user.discord_id,
+      targetOwnerDiscordId: resolved.ownerUserId
+    });
+    return res.send("Sent to device");
+  }
 
   return res.send(renderAcks(result.acks));
 });
@@ -4019,9 +4051,11 @@ wss.on("connection", (ws, req) => {
     }
 
     ws.isAlive = true;
+    ws.lastPongAt = Date.now();
 
     ws.on("pong", () => {
       ws.isAlive = true;
+      ws.lastPongAt = Date.now();
       try {
         db.prepare(
           "UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?",
@@ -4030,6 +4064,7 @@ wss.on("connection", (ws, req) => {
     });
 
     wsByDeviceId.set(deviceId, ws);
+    ws.lastPongAt = Date.now();
     db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(
       Date.now(),
       deviceId,
