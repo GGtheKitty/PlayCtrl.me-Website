@@ -15,6 +15,7 @@
       <a href="#format">Response Format</a>
       <a href="#endpoints">Endpoints</a>
       <a href="#discover">Discover</a>
+      <a href="#favorites">Favorites</a>
       <a href="#user">User by Pair Code</a>
       <a href="#commands">Send Command</a>
       <a href="#errors">Error Codes</a>
@@ -69,6 +70,11 @@
           </tr>
           <tr>
             <td><span class="pill get">GET</span></td>
+            <td><code>/favorites</code></td>
+            <td>Get list of favorited users (with online status).</td>
+          </tr>
+          <tr>
+            <td><span class="pill get">GET</span></td>
             <td><code>/user/:pairCode</code></td>
             <td>Get a single user by pairing code.</td>
           </tr>
@@ -86,6 +92,31 @@
       <div class="muted">Returns discoverable users including display name, username, discord id, pair code, avatar URL, and online status.</div>
 
       <pre><code>curl "<%= base %>/discover" \\
+-H "Authorization: Bearer YOUR_API_KEY" \\
+-H "Accept: application/json"</code></pre>
+
+      <pre><code>// Response example
+{
+"ok": true,
+"code": "OK",
+"users": [
+  {
+    "displayName": "Example",
+    "username": "exampleuser",
+    "discordId": "123456789012345678",
+    "pairCode": "123456",
+    "avatarUrl": "https://cdn.discordapp.com/...",
+    "online": true
+  }
+]
+}</code></pre>
+    </div>
+
+    <div class="cardish" id="favorites">
+      <h2><span class="pill get">GET</span> /favorites</h2>
+      <div class="muted">Returns favorited users including display name, username, discord id, pair code, avatar URL, and online status.</div>
+
+      <pre><code>curl "<%= base %>/favorites" \\
 -H "Authorization: Bearer YOUR_API_KEY" \\
 -H "Accept: application/json"</code></pre>
 

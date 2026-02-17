@@ -18,8 +18,15 @@
           <div class="cardHd">
             <div class="topRow">
               <img class="deviceAvi" src="<%= discordAvatarUrl(ownerUser || { discord_id: ownerId, avatar: null }, 128) %>" alt="" />
-              <div class="name"><%= (ownerUser?.global_name || ownerUser?.username || ownerId) %></div>
+              <div class="name">
+                <%= (ownerUser?.global_name || ownerUser?.username || ownerId) %>
+                <div class="muted">@<%= ownerUser?.username || "" %></div>
+              </div>
             </div>
+
+            <button class="favBtn <%= isFavorited ? 'isFav' : '' %>" data-discord-id="<%= ownerId %>" title="<%= isFavorited ? 'Click to remove from favorites' : 'Add to favorites' %>">
+              <%= isFavorited ? 'Favorited' : 'Add to Favorites' %>
+            </button>
 
             <div id="statusPill" class="statusPill <%=anyOnline ? " statusPill--on" : "statusPill--off" %>" title="Live status">
               <span class="statusDot"></span>
@@ -180,4 +187,5 @@
   <%- include("con_scripts", { user }) %>
 
 </body>
+
 </html>

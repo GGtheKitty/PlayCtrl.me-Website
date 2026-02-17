@@ -1,0 +1,84 @@
+<script>
+  (function () {
+    const grid = document.getElementById("uGrid");
+    if (!grid) return;
+
+    function normPair(v) {
+      return String(v || "").trim();
+    }
+
+    function setDot(card, online) {
+      const dot = card.querySelector(".statusDot");
+      if (!dot) return;
+
+      dot.classList.remove("statusDot--online", "statusDot--offline");
+      dot.classList.add(online ? "statusDot--online" : "statusDot--offline");
+      dot.title = online ? "Online" : "Offline";
+    }
+
+    function resortCards() {
+      const cards = Array.from(grid.querySelectorAll(".uCard[data-pair]"));
+
+      cards.sort((a, b) => {
+        const ao = a.dataset.online === "1";
+        const bo = b.dataset.online === "1";
+        if (ao !== bo) return ao ? -1 : 1;
+
+        const at = Number(a.getAttribute("data-fav-ts") || a.getAttribute("data-favorited-at") || 0);
+        const bt = Number(b.getAttribute("data-fav-ts") || b.getAttribute("data-favorited-at") || 0);
+        if (at !== bt) return at - bt;
+
+        return normPair(a.getAttribute("data-pair")).localeCompare(normPair(b.getAttribute("data-pair")));
+      });
+
+      const frag = document.createDocumentFragment();
+      for (const c of cards) frag.appendChild(c);
+      grid.appendChild(frag);
+    }
+
+    async function tick() {
+      try {
+        const res = await fetch("/api/presence/favorites", {
+          headers: { "Accept": "application/json" },
+          credentials: "include"
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok || !data.map) return;
+
+        const cards = Array.from(grid.querySelectorAll(".uCard[data-pair]"));
+        let changed = false;
+
+        for (const card of cards) {
+          const code = normPair(card.getAttribute("data-pair"));
+
+          const st = data.map[code];
+          const online = !!(st && st.online);
+
+          const prev = card.dataset.online === "1";
+          if (prev !== online) changed = true;
+
+          card.dataset.online = online ? "1" : "0";
+          setDot(card, online);
+
+          card.style.display = "";
+        }
+
+        if (changed) resortCards();
+      } catch (e) {
+
+      }
+    }
+
+
+    Array.from(grid.querySelectorAll(".uCard[data-pair]")).forEach(card => {
+      const initialOnline = (card.getAttribute("data-online") === "1");
+      card.dataset.online = initialOnline ? "1" : "0";
+      setDot(card, initialOnline);
+    });
+
+    resortCards();
+    tick();
+    setInterval(tick, 5000);
+  })();
+</script>

@@ -355,5 +355,41 @@
       setInterval(refresh, 2500);
       setInterval(render, 15000);
     })();
-  </script>
+
+  async function toggleFav(btn) {
+    const id = btn.dataset.discordId;
+    btn.disabled = true;
+
+    try {
+      const res = await fetch("/favorites/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discordId: id })
+      });
+
+      const j = await res.json();
+      if (!j.ok) {
+        if (j.error === "not_logged_in") location.href = "/login";
+        throw new Error(j.error || "failed");
+      }
+
+      const isFav = !!j.favorited;
+      btn.classList.toggle("isFav", isFav);
+      btn.textContent = isFav ? "Favorited" : "Add to Favorites";
+      btn.title = isFav ? "Click to remove from favorites" : "Add to favorites";
+    } catch (e) {
+      console.error(e);
+      alert("Could not update favorite.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".favBtn");
+    if (!btn) return;
+    e.preventDefault();
+    toggleFav(btn);
+  });
+</script>
 <% } %>

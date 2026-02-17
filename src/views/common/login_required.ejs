@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+
+<div class="card">
+  <div class="cardHd"><%= title %></div>
+  <div class="cardBd">
+    <p class="muted"><%= msg || "You must login to access this page." %></p>
+
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btnLink" href="/auth/discord?next=<%= nextUrl %>">Login with Discord</a>
+      <a class="btnLink" href="/">Home</a>
+    </div>
+  </div>
+</div>
+
+</body>
+
+</html>

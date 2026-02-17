@@ -18,6 +18,7 @@
 
     <div class="navDesktop" style="display:flex;align-items:center;gap:10px;">
         <% if (isAdmin) { %><a class="btn btn--ghost" href="/admin">Admin</a><% } %>
+        <a class="btn btn--ghost" href="/favorites">Favorites</a>
         <a class="btn btn--ghost" href="/discover">Discover</a>
         <a class="btn btn--ghost" href="/profile">Profile</a>
 
@@ -40,12 +41,13 @@
 
             <button class="ddLink" role="menuitem" onclick="location.href='/profile'">Profile</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/discover'">Discover</button>
+            <button class="ddLink" role="menuitem" onclick="location.href='/favorites'">Favorites</button>
             <% if (isAdmin) { %>
             <button class="ddLink" role="menuitem" onclick="location.href='/admin'">Admin</button>
             <% } %>
 
             <form method="POST" action="/logout" style="margin:0;">
-            <button class="ddLink" role="menuitem" type="submit">Logout</button>
+            <button class="ddLink" role="menuitem" type="submit" style="color:var(--danger);">Logout</button>
             </form>
         </div>
         </div>

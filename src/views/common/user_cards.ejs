@@ -1,6 +1,6 @@
-<div class="uCard" data-pair="<%= code %>">
+<div class="uCard" data-pair="<%= code %>" data-fav-ts="<%= favorited_at %>" data-online="<%= isOnline ? 1 : 0 %>">
   <img class="uAvi" src="<%= avatar %>" alt="" />
-  <div class="statusDot statusDot--online" title="Online"></div>
+  <div class="statusDot statusDot--<%= isOnline ? "online" : "offline" %>" title="<%= isOnline ? "Online" : "Offline" %>"></div>
   <div class="display"><%= display %></div>
   <div class="handle">@<%= handle %></div>
   <a class="control" href="/device/<%= encodeURIComponent(code) %>">Control</a>

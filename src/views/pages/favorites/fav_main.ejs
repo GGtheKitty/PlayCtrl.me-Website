@@ -7,35 +7,36 @@
 
 <body>
 
-  <%- include("../../common/discord_notice") %>
-
   <div class="card" style="align-items:center;">
     <div class="cardHd">
-      <h2>Discover</h2>
+      <h2>Favorites</h2>
       <p style="opacity:.75;margin-top:6px;">
-        Online users who opted in to be discovered.
+        Users you have added to your favorites appear here.
       </p>
     </div>
     <div class="cardBd">
-      <% if (onlineRows && onlineRows.length) { %>
+      <% if (favUsers && favUsers.length) { %>
       <div class="uGrid" id="uGrid">
-        <% for (const u of onlineRows) { %>
+        <% for (const u of favUsers) { %>
         <%- include("../../common/user_cards", {
             display: u.global_name || u.username || u.discord_id,
             handle: u.username || "",
             avatar: discordAvatarUrl(u, 128),
             code: u.code_plain,
-            isOnline: 1,
-            favorited_at: null,
+            id: u.discord_id,
+            favorited_at: u.favorited_at,
+            isOnline: u.online
           }) %>
         <% } %>
       </div>
       <% } else { %>
-      <div class="empty">(No users are online right now.)</div>
+      <div class="muted">No favorites yet. Go to Discover and add some.</div>
       <% } %>
     </div>
   </div>
 
-  
+  <%- include("fav_scripts", { user }) %>
+
 </body>
+
 </html>

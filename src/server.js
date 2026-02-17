@@ -9,8 +9,6 @@ const ENV = require("dotenv").config();
 const cookieParser = require("cookie-parser");
 const { renderWithLayout } = require("./views/render");
 
-const layout = require("../views/layout");
-
 const PORT = process.env.PORT || 8080;
 
 const PEPPER = process.env.PEPPER || "pepper_change_me";
@@ -27,7 +25,7 @@ const LISTS = {
     key: "dislikes",
     label: process.env.LIST_DISLIKES_LABEL || "Dislikes",
     accent: "danger",
-  }
+  },
 };
 
 const CATALOG = process.env.LIST_CATALOG || "";
@@ -37,7 +35,11 @@ const DISCORD_TOKEN = "https://discord.com/api/oauth2/token";
 const DISCORD_ME = "https://discord.com/api/users/@me";
 
 function b64url(buf) {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 function hmac(s) {
   return crypto.createHmac("sha256", PEPPER).update(s).digest("hex");
@@ -69,25 +71,35 @@ function hashApiKey(raw) {
 }
 
 function ensureUserApiKeyExists(userId) {
-  const row = db.prepare(`SELECT key_hash FROM api_keys WHERE user_id=?`).get(userId);
+  const row = db
+    .prepare(`SELECT key_hash FROM api_keys WHERE user_id=?`)
+    .get(userId);
   if (row) return;
 
   const raw = genApiKey();
   const key_hash = hashApiKey(raw);
   const now = Date.now();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO api_keys (user_id, key_hash, created_at, last_reset_at)
     VALUES (?, ?, ?, ?)
-  `).run(userId, key_hash, now, now);
+  `,
+  ).run(userId, key_hash, now, now);
 }
 
 function getApiKeyMeta(userId) {
-  return db.prepare(`
+  return (
+    db
+      .prepare(
+        `
     SELECT created_at, last_reset_at
     FROM api_keys
     WHERE user_id=?
-  `).get(userId) || null;
+  `,
+      )
+      .get(userId) || null
+  );
 }
 
 const DISCORD_EPOCH_MS = 1420070400000n;
@@ -112,14 +124,16 @@ function discordAccountAgeDays(discordId) {
 function banDiscordIdSystem(targetId, req, payload = {}) {
   const reason = null;
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO bans (discord_id, reason, banned_by, created_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(discord_id) DO UPDATE SET
       reason=excluded.reason,
       banned_by=excluded.banned_by,
       created_at=excluded.created_at
-  `).run(targetId, reason, "system", Date.now());
+  `,
+  ).run(targetId, reason, "system", Date.now());
 
   try {
     logEvent({
@@ -127,19 +141,23 @@ function banDiscordIdSystem(targetId, req, payload = {}) {
       actorUserId: "system",
       targetUserId: targetId,
       req,
-      payload
+      payload,
     });
   } catch {}
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[c]));
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  );
 }
 
 function parseIntSafe(v, def) {
@@ -148,7 +166,11 @@ function parseIntSafe(v, def) {
 }
 
 function tryJson(s) {
-  try { return JSON.parse(s); } catch { return null; }
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 function isHttpUrl(s) {
@@ -157,7 +179,9 @@ function isHttpUrl(s) {
 
 function isAllowedWallpaperExt(url) {
   const clean = String(url).split("#")[0].split("?")[0].toLowerCase();
-  return clean.endsWith(".png") || clean.endsWith(".jpg") || clean.endsWith(".jpeg");
+  return (
+    clean.endsWith(".png") || clean.endsWith(".jpg") || clean.endsWith(".jpeg")
+  );
 }
 
 function incrementCommandsSentTotal({ senderDiscordId, targetOwnerDiscordId }) {
@@ -166,11 +190,13 @@ function incrementCommandsSentTotal({ senderDiscordId, targetOwnerDiscordId }) {
 
   if (String(senderDiscordId) === String(targetOwnerDiscordId)) return;
 
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE users
     SET commands_sent_total = commands_sent_total + 1
     WHERE discord_id = ?
-  `).run(senderDiscordId);
+  `,
+  ).run(senderDiscordId);
 }
 
 async function verifyWallpaperUrl(url) {
@@ -180,26 +206,34 @@ async function verifyWallpaperUrl(url) {
 
   const ct = String(resp.headers.get("content-type") || "").toLowerCase();
   const okType = ct.startsWith("image/png") || ct.startsWith("image/jpeg");
-  if (!okType) throw new Error(`Not a PNG/JPEG (content-type=${ct || "unknown"})`);
+  if (!okType)
+    throw new Error(`Not a PNG/JPEG (content-type=${ct || "unknown"})`);
 
   const len = Number(resp.headers.get("content-length") || "0");
-  const MAX = 10 * 1024 * 1024; // 10MB
-  if (len && len > MAX) throw new Error(`Image too large (${Math.round(len/1024/1024)}MB > 10MB)`);
+  const MAX = 10 * 1024 * 1024;
+  if (len && len > MAX)
+    throw new Error(
+      `Image too large (${Math.round(len / 1024 / 1024)}MB > 10MB)`,
+    );
 
   return true;
 }
 
 function getSetting(key, fallback = null) {
-  const row = db.prepare(`SELECT value FROM site_settings WHERE key=?`).get(key);
+  const row = db
+    .prepare(`SELECT value FROM site_settings WHERE key=?`)
+    .get(key);
   return row ? row.value : fallback;
 }
 
 function setSetting(key, value) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO site_settings (key, value)
     VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value=excluded.value
-  `).run(key, String(value));
+  `,
+  ).run(key, String(value));
 }
 
 function isEnrolledUser(user) {
@@ -207,7 +241,10 @@ function isEnrolledUser(user) {
 }
 
 function markUserEnrolled(discordId) {
-  db.prepare(`UPDATE users SET enrolled_at=? WHERE discord_id=?`).run(Date.now(), discordId);
+  db.prepare(`UPDATE users SET enrolled_at=? WHERE discord_id=?`).run(
+    Date.now(),
+    discordId,
+  );
 }
 
 function isEnrollmentOpen() {
@@ -215,20 +252,174 @@ function isEnrollmentOpen() {
 }
 
 function ensurePairCode(userId) {
-  const row = db.prepare("SELECT code_plain FROM pair_codes WHERE user_id=?").get(userId);
+  const row = db
+    .prepare("SELECT code_plain FROM pair_codes WHERE user_id=?")
+    .get(userId);
   if (row?.code_plain) return row.code_plain;
 
   const code = gen6();
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO pair_codes (user_id, code_hash, code_plain, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       code_hash=excluded.code_hash,
       code_plain=excluded.code_plain,
       updated_at=excluded.updated_at
-  `).run(userId, hmac(code), code, Date.now());
+  `,
+  ).run(userId, hmac(code), code, Date.now());
 
   return code;
+}
+
+const pendingAcks = new Map();
+
+function waitForAcks(commandId, expected, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const entry = {
+      expected: Math.max(0, Number(expected) || 0),
+      results: [],
+      resolve,
+      timer: null,
+    };
+
+    if (entry.expected <= 0) return resolve([]);
+
+    entry.timer = setTimeout(() => {
+      pendingAcks.delete(commandId);
+      resolve(entry.results);
+    }, timeoutMs);
+
+    pendingAcks.set(commandId, entry);
+  });
+}
+
+function handleIncomingAck(msg) {
+  if (!msg || msg.type !== "ack" || !msg.commandId) return;
+
+  const entry = pendingAcks.get(msg.commandId);
+  if (!entry) return;
+
+  entry.results.push(msg);
+
+  if (entry.results.length >= entry.expected) {
+    pendingAcks.delete(msg.commandId);
+    try {
+      if (entry.timer) clearTimeout(entry.timer);
+    } catch {}
+    entry.resolve(entry.results);
+  }
+}
+
+function sendToPairedDevices(deviceIds, msgObj) {
+  let sentTo = 0;
+  for (const deviceId of deviceIds) {
+    const ws = wsByDeviceId.get(deviceId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(msgObj));
+        sentTo++;
+      } catch {}
+    }
+  }
+  return sentTo;
+}
+
+async function sendToAllAndWait(commandId, deviceIds, commandPayload, timeoutMs = 15000) {
+  const ids = Array.isArray(deviceIds) ? deviceIds : [];
+  const online = ids.filter((did) => isDeviceOnline(did));
+
+  if (!online.length) {
+    return { ok: false, error: "No devices online", sent: 0, acks: [] };
+  }
+
+  const sent = sendToPairedDevices(online, {
+    type: "command",
+    commandId,
+    command: commandPayload,
+  });
+
+  if (sent <= 0) {
+    return { ok: false, error: "No devices online", sent: 0, acks: [] };
+  }
+
+  const acks = await waitForAcks(commandId, sent, timeoutMs);
+  return { ok: true, commandId, sent, acks };
+}
+
+function renderAcks(acks) {
+  if (!acks || !acks.length) return "No response from devices";
+
+  return acks
+    .map((a) => {
+      if (a && a.ok) return "OK";
+
+      if (a && a.status === "rejected") {
+        const code = a.code || "unknown";
+        const msg = a.message ? ` — ${String(a.message)}` : "";
+        return `Rejected: ${code}${msg}`;
+      }
+
+      const code = (a && (a.code || a.message)) || "unknown";
+      return `Failed: ${code}`;
+    })
+    .join("<br>");
+}
+
+function mb(n) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x) || x <= 0) return null;
+  return (x / 1024 / 1024).toFixed(1);
+}
+
+function formatAckForHttp(ack) {
+  const ok = !!ack?.ok;
+  if (ok) return { ok: true, ack };
+
+  const clientCode = String(ack?.code || "unknown");
+  let message = String(ack?.message || "Command rejected by client.");
+  const details = ack?.details;
+
+  if (clientCode === "file_too_large" && details && (details.sizeBytes || details.maxBytes)) {
+    const s = mb(details.sizeBytes);
+    const m = mb(details.maxBytes);
+    if (s && m) message = `${message} (${s}MB > ${m}MB)`;
+  }
+
+  return {
+    ok: false,
+    code: "CLIENT_REJECTED",
+    client_code: clientCode,
+    message,
+    details: details || null,
+    ack
+  };
+}
+
+async function sendCommandToOneOnlineAndWaitAck({ resolved, commandId, commandObj, timeoutMs = 20000 }) {
+  const deviceIds = resolved.deviceIds || [];
+  const targetDeviceId = deviceIds.find(did => isDeviceOnline(did));
+  if (!targetDeviceId) {
+    return { ok: false, httpStatus: 409, code: "DEVICE_OFFLINE", message: "No paired devices online." };
+  }
+
+  const sent = sendToPairedDevices([targetDeviceId], {
+    type: "command",
+    commandId,
+    command: commandObj
+  });
+
+  if (sent <= 0) {
+    return { ok: false, httpStatus: 409, code: "DEVICE_OFFLINE", message: "Target device not online." };
+  }
+
+  const ack = await waitForAck(commandId, targetDeviceId, timeoutMs);
+  if (ack?.ok) {
+    return { ok: true, httpStatus: 200, targetDeviceId, ack };
+  }
+
+  const formatted = formatAckForHttp(ack);
+  return { ok: false, httpStatus: 422, targetDeviceId, ...formatted };
 }
 
 function enforceWebCooldownForNewUsers(req, res, next) {
@@ -236,12 +427,18 @@ function enforceWebCooldownForNewUsers(req, res, next) {
     const senderId = req.user?.discord_id;
     if (!senderId) return next();
 
-    const row = db.prepare(`SELECT commands_sent_total FROM users WHERE discord_id=?`).get(senderId);
+    const row = db
+      .prepare(`SELECT commands_sent_total FROM users WHERE discord_id=?`)
+      .get(senderId);
     const total = Number(row?.commands_sent_total || 0);
     if (total >= 100) return next();
 
     const now = Date.now();
-    const cd = db.prepare(`SELECT next_allowed_at_ms FROM web_cmd_cooldowns WHERE user_id=?`).get(senderId);
+    const cd = db
+      .prepare(
+        `SELECT next_allowed_at_ms FROM web_cmd_cooldowns WHERE user_id=?`,
+      )
+      .get(senderId);
     const nextAllowed = Number(cd?.next_allowed_at_ms || 0);
 
     if (now < nextAllowed) {
@@ -249,16 +446,18 @@ function enforceWebCooldownForNewUsers(req, res, next) {
       return res.status(429).json({
         ok: false,
         code: "WEB_COOLDOWN",
-        retry_after_ms: retry
+        retry_after_ms: retry,
       });
     }
 
     const nextAt = now + 3000;
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO web_cmd_cooldowns (user_id, next_allowed_at_ms)
       VALUES (?, ?)
       ON CONFLICT(user_id) DO UPDATE SET next_allowed_at_ms=excluded.next_allowed_at_ms
-    `).run(senderId, nextAt);
+    `,
+    ).run(senderId, nextAt);
 
     next();
   } catch (e) {
@@ -274,13 +473,15 @@ if (!fs.existsSync(URL_DATA_DIR)) fs.mkdirSync(URL_DATA_DIR);
 const ALLOWLIST_PATH = path.join(URL_DATA_DIR, "url_allowlist.txt");
 const BLOCKLIST_PATH = path.join(URL_DATA_DIR, "url_blocklist.txt");
 
-function ensureListFilesExist(){
+function ensureListFilesExist() {
   fs.mkdirSync(path.dirname(ALLOWLIST_PATH), { recursive: true });
-  if (!fs.existsSync(ALLOWLIST_PATH)) fs.writeFileSync(ALLOWLIST_PATH, "", "utf8");
-  if (!fs.existsSync(BLOCKLIST_PATH)) fs.writeFileSync(BLOCKLIST_PATH, "", "utf8");
+  if (!fs.existsSync(ALLOWLIST_PATH))
+    fs.writeFileSync(ALLOWLIST_PATH, "", "utf8");
+  if (!fs.existsSync(BLOCKLIST_PATH))
+    fs.writeFileSync(BLOCKLIST_PATH, "", "utf8");
 }
 
-function parseHostLine(line){
+function parseHostLine(line) {
   const s = String(line || "").trim();
   if (!s || s.startsWith("#")) return null;
 
@@ -293,8 +494,10 @@ function parseHostLine(line){
   return normalizeHost(s);
 }
 
-function normalizeHost(host){
-  const h = String(host || "").trim().toLowerCase();
+function normalizeHost(host) {
+  const h = String(host || "")
+    .trim()
+    .toLowerCase();
 
   return h.replace(/\/+$/, "");
 }
@@ -302,10 +505,14 @@ function normalizeHost(host){
 let cacheAllow = { mtimeMs: 0, set: new Set() };
 let cacheBlock = { mtimeMs: 0, set: new Set() };
 
-function loadHostSetCached(filePath, cacheObj){
+function loadHostSetCached(filePath, cacheObj) {
   ensureListFilesExist();
   let st;
-  try { st = fs.statSync(filePath); } catch { st = null; }
+  try {
+    st = fs.statSync(filePath);
+  } catch {
+    st = null;
+  }
   const mtimeMs = st ? st.mtimeMs : 0;
 
   if (mtimeMs && mtimeMs === cacheObj.mtimeMs && cacheObj.set.size) {
@@ -313,10 +520,12 @@ function loadHostSetCached(filePath, cacheObj){
   }
 
   let txt = "";
-  try { txt = fs.readFileSync(filePath, "utf8"); } catch {}
+  try {
+    txt = fs.readFileSync(filePath, "utf8");
+  } catch {}
 
   const set = new Set();
-  for (const line of txt.split(/\r?\n/)){
+  for (const line of txt.split(/\r?\n/)) {
     const host = parseHostLine(line);
     if (host) set.add(host);
   }
@@ -326,10 +535,14 @@ function loadHostSetCached(filePath, cacheObj){
   return set;
 }
 
-function getAllowSet(){ return loadHostSetCached(ALLOWLIST_PATH, cacheAllow); }
-function getBlockSet(){ return loadHostSetCached(BLOCKLIST_PATH, cacheBlock); }
+function getAllowSet() {
+  return loadHostSetCached(ALLOWLIST_PATH, cacheAllow);
+}
+function getBlockSet() {
+  return loadHostSetCached(BLOCKLIST_PATH, cacheBlock);
+}
 
-function extractHostFromUrl(rawUrl){
+function extractHostFromUrl(rawUrl) {
   const s = String(rawUrl || "").trim();
   if (!s) return null;
 
@@ -337,7 +550,11 @@ function extractHostFromUrl(rawUrl){
   try {
     u = new URL(s);
   } catch {
-    try { u = new URL("https://" + s); } catch { return null; }
+    try {
+      u = new URL("https://" + s);
+    } catch {
+      return null;
+    }
   }
 
   const proto = (u.protocol || "").toLowerCase();
@@ -346,43 +563,47 @@ function extractHostFromUrl(rawUrl){
   return normalizeHost(u.host);
 }
 
-function upsertVerificationHost(db, host, sampleUrl){
+function upsertVerificationHost(db, host, sampleUrl) {
   const now = Date.now();
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO url_verification_queue (host, sample_url, first_seen_at, last_seen_at, seen_count)
     VALUES (?, ?, ?, ?, 1)
     ON CONFLICT(host) DO UPDATE SET
       last_seen_at=excluded.last_seen_at,
       sample_url=excluded.sample_url,
       seen_count=seen_count + 1
-  `).run(host, String(sampleUrl || "").slice(0, 800), now, now);
+  `,
+  ).run(host, String(sampleUrl || "").slice(0, 800), now, now);
 }
 
-function banUserSilently(db, logEvent, discordId, req){
+function banUserSilently(db, logEvent, discordId, req) {
   const now = Date.now();
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO bans (discord_id, reason, banned_by, created_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(discord_id) DO UPDATE SET
       reason=excluded.reason,
       banned_by=excluded.banned_by,
       created_at=excluded.created_at
-  `).run(discordId, null, "system", now);
+  `,
+  ).run(discordId, null, "system", now);
 
   logEvent({
     type: "user_banned",
     actorUserId: "system",
     targetUserId: discordId,
     req,
-    payload: { reason: null, auto: true }
+    payload: { reason: null, auto: true },
   });
 }
 
-function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl){
+function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl) {
   const host = extractHostFromUrl(rawUrl);
 
   if (!host) {
-    res.status(400).json({ ok:false, message:"Invalid URL." });
+    res.status(400).json({ ok: false, message: "Invalid URL." });
     return { ok: false, blocked: true };
   }
 
@@ -392,7 +613,7 @@ function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl){
   if (block.has(host)) {
     banUserSilently(db, logEvent, req.user.discord_id, req);
 
-    res.status(403).json({ ok:false, message:"Not allowed." });
+    res.status(403).json({ ok: false, message: "Not allowed." });
     return { ok: false, blocked: true };
   }
 
@@ -404,32 +625,49 @@ function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl){
   return { ok: true, host, status: "queued" };
 }
 
-function appendHostToFile(filePath, host){
+function appendHostToFile(filePath, host) {
   ensureListFilesExist();
   const h = normalizeHost(host);
   if (!h) return;
 
   const txt = fs.readFileSync(filePath, "utf8");
-  const lines = txt.split(/\r?\n/).map(l => parseHostLine(l)).filter(Boolean);
+  const lines = txt
+    .split(/\r?\n/)
+    .map((l) => parseHostLine(l))
+    .filter(Boolean);
   const set = new Set(lines);
 
   if (!set.has(h)) {
-    fs.appendFileSync(filePath, (txt.endsWith("\n") || txt.length === 0 ? "" : "\n") + h + "\n", "utf8");
+    fs.appendFileSync(
+      filePath,
+      (txt.endsWith("\n") || txt.length === 0 ? "" : "\n") + h + "\n",
+      "utf8",
+    );
   }
 }
 
-function removeHostFromFile(filePath, host){
+function removeHostFromFile(filePath, host) {
   ensureListFilesExist();
   const h = normalizeHost(host);
   const txt = fs.readFileSync(filePath, "utf8");
   const out = [];
-  for (const line of txt.split(/\r?\n/)){
+  for (const line of txt.split(/\r?\n/)) {
     const parsed = parseHostLine(line);
-    if (!parsed) { out.push(line); continue; }
+    if (!parsed) {
+      out.push(line);
+      continue;
+    }
     if (parsed === h) continue;
     out.push(parsed);
   }
-  fs.writeFileSync(filePath, out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n", "utf8");
+  fs.writeFileSync(
+    filePath,
+    out
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trimEnd() + "\n",
+    "utf8",
+  );
 }
 
 module.exports = {
@@ -448,42 +686,49 @@ const db = require("./db");
 const { resourceLimits } = require("worker_threads");
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS url_verification_queue (
-    host TEXT PRIMARY KEY,
-    sample_url TEXT,
-    first_seen_at INTEGER NOT NULL,
-    last_seen_at INTEGER NOT NULL,
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    decided TEXT,              -- NULL | 'allow' | 'block'
-    decided_by TEXT,
-    decided_at INTEGER
+  CREATE TABLE IF NOT EXISTS favorites (
+    user_id TEXT NOT NULL,               -- the logged in user
+    favorite_user_id TEXT NOT NULL,       -- the person they favorited
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (user_id, favorite_user_id)
   );
 
+  CREATE INDEX IF NOT EXISTS idx_favorites_user_created
+  ON favorites(user_id, created_at);
 `);
 
 function tableExists(name) {
-  return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
+  return !!db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(name);
 }
 
 function getBoardMessages(ownerUserId, limit = 10) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT id, body, created_at
     FROM device_message_board
     WHERE owner_user_id=?
     ORDER BY created_at DESC
     LIMIT ?
-  `).all(ownerUserId, limit);
+  `,
+    )
+    .all(ownerUserId, limit);
 }
 
 const postBoardMessageTx = db.transaction((ownerUserId, body) => {
   const now = Date.now();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO device_message_board (owner_user_id, body, created_at)
     VALUES (?, ?, ?)
-  `).run(ownerUserId, body, now);
+  `,
+  ).run(ownerUserId, body, now);
 
-  db.prepare(`
+  db.prepare(
+    `
     DELETE FROM device_message_board
     WHERE owner_user_id=?
       AND id NOT IN (
@@ -493,7 +738,8 @@ const postBoardMessageTx = db.transaction((ownerUserId, body) => {
         ORDER BY created_at DESC, id DESC
         LIMIT 10
       )
-  `).run(ownerUserId, ownerUserId);
+  `,
+  ).run(ownerUserId, ownerUserId);
 
   return now;
 });
@@ -502,7 +748,10 @@ function bootstrapAdminsFromEnv() {
   const raw = String(process.env.BOOTSTRAP_ADMINS || "").trim();
   if (!raw) return;
 
-  const ids = raw.split(",").map(s => s.trim()).filter(Boolean);
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const now = Date.now();
 
   const upsert = db.prepare(`
@@ -524,7 +773,9 @@ bootstrapAdminsFromEnv();
 function wantsJson(req) {
   const accept = String(req.headers["accept"] || "");
   const xr = String(req.headers["x-requested-with"] || "");
-  return accept.includes("application/json") || xr.toLowerCase() === "xmlhttprequest";
+  return (
+    accept.includes("application/json") || xr.toLowerCase() === "xmlhttprequest"
+  );
 }
 
 function isInvitedUser(u) {
@@ -536,17 +787,21 @@ function loginRequiredPage(req, res, opts = {}) {
   const nextUrl = opts.nextUrl || req.originalUrl || "/";
   const ogUrl = `https://playctrl.me${nextUrl}`;
 
-  return res.status(200).type("html").send(layout({
-    title,
-    user: req.viewUser,
-    isAdmin: req.viewIsAdmin,
-    meta: {
-      ogTitle: opts.ogTitle || "PlayCtrl.me",
-      ogDesc: opts.ogDesc || "Login required to view this page.",
-      ogUrl,
-      ogImage: opts.ogImage || "https://playctrl.me/og.png"
-    },
-    body: `
+  /*return res
+    .status(200)
+    .type("html")
+    .send(
+      layout({
+        title,
+        user: req.viewUser,
+        isAdmin: req.viewIsAdmin,
+        meta: {
+          ogTitle: opts.ogTitle || "PlayCtrl.me",
+          ogDesc: opts.ogDesc || "Login required to view this page.",
+          ogUrl,
+          ogImage: opts.ogImage || "https://playctrl.me/og.png",
+        },
+        body: `
       <div class="card">
         <div class="cardHd">${escapeHtml(title)}</div>
         <div class="cardBd">
@@ -558,8 +813,14 @@ function loginRequiredPage(req, res, opts = {}) {
           </div>
         </div>
       </div>
-    `
-  }));
+    `,
+      }),
+    );*/
+
+  return res.status(403).type("html").send(`
+    <h1>Access denied</h1>
+    <p>You must login to access this page.</p>
+  `);
 }
 
 function inviteGate(req, res, next) {
@@ -606,9 +867,7 @@ function inviteGate(req, res, next) {
       try {
         markUserEnrolled(req.viewUser.discord_id);
         req.viewUser.enrolled_at = Date.now();
-      } catch (e) {
-
-      }
+      } catch (e) {}
     }
     return next();
   }
@@ -621,16 +880,18 @@ function inviteGate(req, res, next) {
   next();
 }
 
-
 function isAdmin(discordId) {
   if (!discordId) return false;
-  const row = db.prepare("SELECT discord_id FROM admins WHERE discord_id=?").get(discordId);
+  const row = db
+    .prepare("SELECT discord_id FROM admins WHERE discord_id=?")
+    .get(discordId);
   return !!row;
 }
 
 function requireAdmin(req, res, next) {
   if (!req.user) return res.redirect("/auth/discord");
-  if (!isAdmin(req.user.discord_id)) return res.status(403).type("html").send("Admins only.");
+  if (!isAdmin(req.user.discord_id))
+    return res.status(403).type("html").send("Admins only.");
   next();
 }
 
@@ -639,18 +900,24 @@ function isDiscordId(s) {
 }
 
 function isWhitelistEnabled(ownerId) {
-  const row = db.prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`).get(ownerId);
+  const row = db
+    .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
+    .get(ownerId);
   return !!row?.whitelist_enabled;
 }
 
 function getWhitelist(ownerId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT w.allowed_id, u.username, u.global_name, u.avatar, w.created_at
     FROM user_whitelist w
     LEFT JOIN users u ON u.discord_id = w.allowed_id
     WHERE w.owner_id=?
     ORDER BY w.created_at DESC
-  `).all(ownerId);
+  `,
+    )
+    .all(ownerId);
 }
 
 function isAllowedByWhitelist(ownerId, actorId) {
@@ -658,16 +925,18 @@ function isAllowedByWhitelist(ownerId, actorId) {
 
   if (ownerId === actorId) return true;
 
-
   if (isAdmin(actorId)) return true;
-
 
   if (!isWhitelistEnabled(ownerId)) return true;
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT 1 FROM user_whitelist
     WHERE owner_id=? AND allowed_id=?
-  `).get(ownerId, actorId);
+  `,
+    )
+    .get(ownerId, actorId);
 
   return !!row;
 }
@@ -679,16 +948,18 @@ function logEvent({
   pairCode = null,
   deviceId = null,
   req = null,
-  payload = {}
+  payload = {},
 }) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO events (
       id, created_at, type,
       actor_user_id, target_user_id,
       pair_code, device_id,
       ip, ua, payload
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     crypto.randomUUID(),
     Date.now(),
     String(type),
@@ -696,14 +967,13 @@ function logEvent({
     targetUserId,
     pairCode,
     deviceId,
-    req ? (req.headers["x-forwarded-for"] || req.ip || null) : null,
-    req ? (req.headers["user-agent"] || null) : null,
-    JSON.stringify(payload ?? {})
+    req ? req.headers["x-forwarded-for"] || req.ip || null : null,
+    req ? req.headers["user-agent"] || null : null,
+    JSON.stringify(payload ?? {}),
   );
 }
 
 function discordAvatarUrl(u, size = 64) {
-
   if (u && u.avatar) {
     return `https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=${size}`;
   }
@@ -715,7 +985,10 @@ function getLoggedInUser(req) {
   const sid = req.cookies?.sid;
   if (!sid) return null;
 
-  return db.prepare(`
+  return (
+    db
+      .prepare(
+        `
     SELECT
       u.discord_id,
       u.username,
@@ -732,17 +1005,36 @@ function getLoggedInUser(req) {
     FROM sessions s
     JOIN users u ON u.discord_id = s.discord_id
     WHERE s.session_id = ?
-  `).get(sid) || null;
+  `,
+      )
+      .get(sid) || null
+  );
 }
 
 function getCommandPrefsForUser(discordId) {
   try {
-    return db.prepare(`
+    return (
+      db
+        .prepare(
+          `
       SELECT allow_toast, allow_popup, allow_open_url, allow_image_popup, allow_set_wallpaper
       FROM users WHERE discord_id=?
-    `).get(discordId) || { allow_toast: 1, allow_popup: 1, allow_open_url: 1, allow_image_popup: 1 };
+    `,
+        )
+        .get(discordId) || {
+        allow_toast: 1,
+        allow_popup: 1,
+        allow_open_url: 1,
+        allow_image_popup: 1,
+      }
+    );
   } catch {
-    return { allow_toast: 1, allow_popup: 1, allow_open_url: 1, allow_image_popup: 1 };
+    return {
+      allow_toast: 1,
+      allow_popup: 1,
+      allow_open_url: 1,
+      allow_image_popup: 1,
+    };
   }
 }
 
@@ -757,28 +1049,25 @@ function isCommandEnabled(prefs, cmd) {
 
 function resolveOwnerAndDevicesByPairCode(pairCode) {
   const codeHash = hmac(pairCode);
-  const pc = db.prepare("SELECT user_id FROM pair_codes WHERE code_hash=?").get(codeHash);
+  const pc = db
+    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
+    .get(codeHash);
   if (!pc) return null;
 
-  const deviceRows = db.prepare("SELECT device_id FROM device_pairs WHERE user_id=?").all(pc.user_id);
-  return { ownerUserId: pc.user_id, deviceIds: deviceRows.map(r => r.device_id) };
-}
-
-function sendToPairedDevices(deviceIds, msgObj) {
-  let sentTo = 0;
-  for (const deviceId of deviceIds) {
-    const ws = wsByDeviceId.get(deviceId);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msgObj));
-      sentTo++;
-    }
-  }
-  return sentTo;
+  const deviceRows = db
+    .prepare("SELECT device_id FROM device_pairs WHERE user_id=?")
+    .all(pc.user_id);
+  return {
+    ownerUserId: pc.user_id,
+    deviceIds: deviceRows.map((r) => r.device_id),
+  };
 }
 
 function getAboutMe(userId) {
   try {
-    const row = db.prepare(`SELECT about_me FROM users WHERE discord_id=?`).get(userId);
+    const row = db
+      .prepare(`SELECT about_me FROM users WHERE discord_id=?`)
+      .get(userId);
     return String(row?.about_me || "");
   } catch {
     return "";
@@ -787,7 +1076,10 @@ function getAboutMe(userId) {
 
 function setAboutMe(userId, text) {
   const clean = String(text || "").slice(0, 500);
-  db.prepare(`UPDATE users SET about_me=? WHERE discord_id=?`).run(clean, userId);
+  db.prepare(`UPDATE users SET about_me=? WHERE discord_id=?`).run(
+    clean,
+    userId,
+  );
   return clean;
 }
 
@@ -803,27 +1095,35 @@ function getApiKeyFromReq(req) {
 
 const API_MIN_COMMANDS = 500;
 
-function getCommandsSentTotal(discordId){
-  const r = db.prepare(`SELECT IFNULL(commands_sent_total, 0) AS n FROM users WHERE discord_id=?`).get(discordId);
+function getCommandsSentTotal(discordId) {
+  const r = db
+    .prepare(
+      `SELECT IFNULL(commands_sent_total, 0) AS n FROM users WHERE discord_id=?`,
+    )
+    .get(discordId);
   return r ? Number(r.n || 0) : 0;
 }
 
 function requireApiKey(req, res, next) {
   const raw = getApiKeyFromReq(req);
-  if (!raw) return res.status(401).json({ ok:false, code:"NO_API_KEY" });
+  if (!raw) return res.status(401).json({ ok: false, code: "NO_API_KEY" });
 
   const key_hash = hashApiKey(raw);
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT
       k.user_id,
       IFNULL(u.commands_sent_total, 0) AS commands_sent_total
     FROM api_keys k
     JOIN users u ON u.discord_id = k.user_id
     WHERE k.key_hash = ?
-  `).get(key_hash);
+  `,
+    )
+    .get(key_hash);
 
-  if (!row) return res.status(401).json({ ok:false, code:"INVALID_API_KEY" });
+  if (!row) return res.status(401).json({ ok: false, code: "INVALID_API_KEY" });
 
   if (row.commands_sent_total < API_MIN_COMMANDS) {
     return res.status(403).json({
@@ -831,7 +1131,7 @@ function requireApiKey(req, res, next) {
       code: "API_LOCKED",
       message: `API requires ${API_MIN_COMMANDS}+ commands sent.`,
       required: API_MIN_COMMANDS,
-      have: row.commands_sent_total
+      have: row.commands_sent_total,
     });
   }
 
@@ -850,17 +1150,22 @@ function enforceDailyQuota(req, res, next) {
   }
 
   const key_hash = req.api?.key_hash;
-  if (!key_hash) return res.status(500).json({ ok:false, code:"API_MISSING_CONTEXT" });
+  if (!key_hash)
+    return res.status(500).json({ ok: false, code: "API_MISSING_CONTEXT" });
 
-  let row = db.prepare(`
+  let row = db
+    .prepare(
+      `
     SELECT
       IFNULL(requests_today, 0) AS requests_today,
       IFNULL(reset_unix, 0) AS reset_unix
     FROM api_keys
     WHERE key_hash=?
-  `).get(key_hash);
+  `,
+    )
+    .get(key_hash);
 
-  if (!row) return res.status(401).json({ ok:false, code:"INVALID_API_KEY" });
+  if (!row) return res.status(401).json({ ok: false, code: "INVALID_API_KEY" });
 
   let used = row.requests_today || 0;
   let resetUnix = row.reset_unix || 0;
@@ -868,11 +1173,13 @@ function enforceDailyQuota(req, res, next) {
   if (resetUnix <= 0 || nowUnix >= resetUnix) {
     resetUnix = nextReset();
     used = 0;
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE api_keys
       SET requests_today=0, reset_unix=?
       WHERE key_hash=?
-    `).run(resetUnix, key_hash);
+    `,
+    ).run(resetUnix, key_hash);
   }
 
   let remaining = LIMIT - used;
@@ -885,24 +1192,34 @@ function enforceDailyQuota(req, res, next) {
   try {
     const authedUserId = req.apiUserId || req.user?.discord_id || null;
     if (authedUserId) {
-      const prev = db.prepare(`SELECT api_rate_limit FROM users WHERE discord_id=?`).get(authedUserId)?.api_rate_limit || 0;
+      const prev =
+        db
+          .prepare(`SELECT api_rate_limit FROM users WHERE discord_id=?`)
+          .get(authedUserId)?.api_rate_limit || 0;
       const next = Number(used) || 0;
       if (prev !== next) {
-        db.prepare(`UPDATE users SET api_rate_limit=? WHERE discord_id=?`).run(next, authedUserId);
+        db.prepare(`UPDATE users SET api_rate_limit=? WHERE discord_id=?`).run(
+          next,
+          authedUserId,
+        );
       }
-    }    
-  } catch (e) { }
+    }
+  } catch (e) {}
 
   if (remaining <= 0) {
     res.set("Retry-After", String(Math.max(0, resetUnix - nowUnix)));
-    return res.status(429).json({ ok:false, code:"RATE_LIMITED", reset: resetUnix });
+    return res
+      .status(429)
+      .json({ ok: false, code: "RATE_LIMITED", reset: resetUnix });
   }
 
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE api_keys
     SET requests_today = requests_today + 1
     WHERE key_hash=?
-  `).run(key_hash);
+  `,
+  ).run(key_hash);
 
   res.set("X-RateLimit-Remaining", String(Math.max(0, remaining - 1)));
 
@@ -915,14 +1232,17 @@ function requireDiscord(req, res, next) {
   const sid = req.cookies?.sid;
   if (!sid) return res.redirect("/auth/discord");
 
-  const user = db.prepare(`
+  const user = db
+    .prepare(
+      `
     SELECT users.discord_id, users.username, users.global_name, users.avatar,
           users.discoverable, users.invited_at
     FROM sessions
     JOIN users ON users.discord_id = sessions.discord_id
     WHERE sessions.session_id = ?
-  `).get(sid);
-
+  `,
+    )
+    .get(sid);
 
   if (!user) return res.redirect("/auth/discord");
   req.user = user;
@@ -944,13 +1264,20 @@ app.set("views", path.join(__dirname, "./views"));
 app.use(express.static(path.join(__dirname, "../public")));
 app.use(cookieParser());
 app.use(express.json({ strict: true }));
-app.use(express.urlencoded({ extended: false }))
-app.use(cors({
-  origin: true,
-  credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  exposedHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"]
-}));
+app.use(express.urlencoded({ extended: false }));
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    exposedHeaders: [
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+      "Retry-After",
+    ],
+  }),
+);
 
 app.set("trust proxy", 1);
 
@@ -968,7 +1295,9 @@ app.use((req, res, next) => {
 
   res.locals.user = user;
   res.locals.isAdmin = isAdmin;
-  res.locals.displayName = user ? (user.global_name || user.username || user.discord_id) : null;
+  res.locals.displayName = user
+    ? user.global_name || user.username || user.discord_id
+    : null;
   res.locals.avatarUrl = user
     ? `https://cdn.discordapp.com/avatars/${encodeURIComponent(user.discord_id)}/${encodeURIComponent(user.avatar || "")}.png?size=64`
     : "";
@@ -978,11 +1307,11 @@ app.use((req, res, next) => {
     ogUrl: "https://playctrl.me",
     ogImage: "https://playctrl.me/favicon-96x96.png",
   };
-  
+
   res.locals.LISTS = LISTS;
 
   next();
-})
+});
 
 app.use((req, res, next) => {
   const me = req.viewUser;
@@ -1007,10 +1336,12 @@ app.use((req, res, next) => {
 
 const api = express.Router();
 
-api.use(express.json({
-  limit: "32kb",
-  type: ["application/json", "application/*+json"]
-}));
+api.use(
+  express.json({
+    limit: "32kb",
+    type: ["application/json", "application/*+json"],
+  }),
+);
 
 api.use(requireApiKey);
 api.use(enforceDailyQuota);
@@ -1021,7 +1352,9 @@ function requireNotBanned(req, res, next) {
   const u = req.user || req.viewUser;
   if (!u?.discord_id) return next();
 
-  const banned = db.prepare("SELECT discord_id, reason FROM bans WHERE discord_id=?").get(u.discord_id);
+  const banned = db
+    .prepare("SELECT discord_id, reason FROM bans WHERE discord_id=?")
+    .get(u.discord_id);
   if (!banned) return next();
 
   return res.status(403).type("html").send(`
@@ -1037,9 +1370,16 @@ function denyIfDisabled(req, res, ownerId, cmd) {
 
   const msg = "That command is disabled for this user.";
   if (wantsJson(req)) {
-    res.status(403).json({ ok: false, reason: "command_disabled", cmd, message: msg });
+    res
+      .status(403)
+      .json({ ok: false, reason: "command_disabled", cmd, message: msg });
   } else {
-    res.status(403).type("html").send(`${msg} <a href="/device/${encodeURIComponent(req.params.pairCode)}">Back</a>`);
+    res
+      .status(403)
+      .type("html")
+      .send(
+        `${msg} <a href="/device/${encodeURIComponent(req.params.pairCode)}">Back</a>`,
+      );
   }
   return true;
 }
@@ -1053,7 +1393,7 @@ app.use((err, req, res, next) => {
 
 app.get("/", requireNotBanned, (req, res) => {
   renderWithLayout(res, "pages/home", {
-    title: "PlayCtrl.me"
+    title: "PlayCtrl.me",
   });
 });
 
@@ -1066,28 +1406,42 @@ app.post("/logout", (req, res) => {
   res.redirect("/");
 });
 
-app.use("/upd", express.static(path.join(__dirname, "../playctrl-updates"), {
-  index: false,
-  cacheControl: false
-}));
+app.use(
+  "/upd",
+  express.static(path.join(__dirname, "../playctrl-updates"), {
+    index: false,
+    cacheControl: false,
+  }),
+);
 
-app.use("/public", express.static(path.join(__dirname, "../public"), {
-  index: false,
-  cacheControl: false
-}));
+app.use(
+  "/public",
+  express.static(path.join(__dirname, "../public"), {
+    index: false,
+    cacheControl: false,
+  }),
+);
 
 app.get("/auth/discord", (req, res) => {
   const state = b64url(crypto.randomBytes(16));
   const nextUrl = String(req.query.next || "/").trim();
-  res.cookie("oauth_state", state, { httpOnly: true, sameSite: "lax", secure: true });
-  res.cookie("oauth_next", nextUrl, { httpOnly: true, sameSite: "lax", secure: true });
+  res.cookie("oauth_state", state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+  });
+  res.cookie("oauth_next", nextUrl, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+  });
 
   const params = new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID,
     redirect_uri: process.env.DISCORD_REDIRECT_URI,
     response_type: "code",
     scope: "identify",
-    state
+    state,
   });
 
   res.redirect(`${DISCORD_AUTH}?${params.toString()}`);
@@ -1095,7 +1449,8 @@ app.get("/auth/discord", (req, res) => {
 
 app.get("/auth/discord/callback", async (req, res) => {
   const { code, state } = req.query;
-  if (!code || !state || state !== req.cookies.oauth_state) return res.status(400).send("Bad OAuth state");
+  if (!code || !state || state !== req.cookies.oauth_state)
+    return res.status(400).send("Bad OAuth state");
 
   const tokenResp = await fetch(DISCORD_TOKEN, {
     method: "POST",
@@ -1105,23 +1460,26 @@ app.get("/auth/discord/callback", async (req, res) => {
       client_secret: process.env.DISCORD_CLIENT_SECRET,
       grant_type: "authorization_code",
       code: String(code),
-      redirect_uri: process.env.DISCORD_REDIRECT_URI
-    })
+      redirect_uri: process.env.DISCORD_REDIRECT_URI,
+    }),
   });
 
   if (!tokenResp.ok) return res.status(500).send("Token exchange failed");
   const token = await tokenResp.json();
 
   const meResp = await fetch(DISCORD_ME, {
-    headers: { authorization: `${token.token_type} ${token.access_token}` }
+    headers: { authorization: `${token.token_type} ${token.access_token}` },
   });
 
   if (!meResp.ok) return res.status(500).send("Failed to fetch user");
   const me = await meResp.json();
 
-  const existing = db.prepare("SELECT discord_id FROM users WHERE discord_id=?").get(me.id);
+  const existing = db
+    .prepare("SELECT discord_id FROM users WHERE discord_id=?")
+    .get(me.id);
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO users (discord_id, username, global_name, avatar, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(discord_id) DO UPDATE SET
@@ -1129,28 +1487,31 @@ app.get("/auth/discord/callback", async (req, res) => {
       global_name=excluded.global_name,
       avatar=excluded.avatar,
       updated_at=excluded.updated_at
-  `).run(me.id, me.username, me.global_name, me.avatar, Date.now(), Date.now());
+  `,
+  ).run(me.id, me.username, me.global_name, me.avatar, Date.now(), Date.now());
 
   logEvent({
     type: existing ? "user_updated" : "user_created",
     actorUserId: me.id,
     targetUserId: me.id,
     req,
-    payload: { username: me.username, global_name: me.global_name }
+    payload: { username: me.username, global_name: me.global_name },
   });
 
   const sessionId = crypto.randomUUID();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO sessions (session_id, discord_id, created_at)
     VALUES (?, ?, ?)
-  `).run(sessionId, me.id, Date.now());
+  `,
+  ).run(sessionId, me.id, Date.now());
 
   res.cookie("sid", sessionId, {
     httpOnly: true,
     sameSite: "lax",
     secure: true,
-    maxAge: 1000 * 60 * 60 * 24 * 15, // 15 days
+    maxAge: 1000 * 60 * 60 * 24 * 15,
     path: "/",
   });
 
@@ -1163,12 +1524,20 @@ app.get("/auth/discord/callback", async (req, res) => {
     return res.status(403).type("html").send("Access denied.");
   }
 
-  console.log("ID: " + me.id + " Username: " + me.username + " Global Name: " + me.global_name + " Avatar: " +  me.avatar);
-  
+  console.log(
+    "ID: " +
+      me.id +
+      " Username: " +
+      me.username +
+      " Global Name: " +
+      me.global_name +
+      " Avatar: " +
+      me.avatar,
+  );
+
   const nextUrl = req.cookies.oauth_next || "/";
   res.clearCookie("oauth_next");
   res.redirect(nextUrl);
-
 });
 
 app.options("/api/pair", cors());
@@ -1188,28 +1557,34 @@ app.post("/api/pair", (req, res) => {
     const codeHash = hmac(pairCode);
     console.log("[/api/pair] codeHash=", codeHash);
 
-    const pc = db.prepare("SELECT user_id FROM pair_codes WHERE code_hash=?").get(codeHash);
+    const pc = db
+      .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
+      .get(codeHash);
     console.log("[/api/pair] pair_codes row=", pc);
 
     if (!pc) return res.status(404).json({ ok: false, reason: "invalid_code" });
 
     const token = crypto.randomBytes(24).toString("base64url");
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO devices_v2 (device_id, device_token_hash, created_at, last_seen_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         device_token_hash=excluded.device_token_hash,
         last_seen_at=excluded.last_seen_at
-    `).run(deviceId, hmac(token), Date.now(), Date.now());
+    `,
+    ).run(deviceId, hmac(token), Date.now(), Date.now());
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO device_pairs (device_id, user_id, paired_at)
       VALUES (?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         user_id=excluded.user_id,
         paired_at=excluded.paired_at
-    `).run(deviceId, pc.user_id, Date.now());
+    `,
+    ).run(deviceId, pc.user_id, Date.now());
 
     console.log("[/api/pair] ok userId=", pc.user_id);
 
@@ -1221,13 +1596,15 @@ app.post("/api/pair", (req, res) => {
 });
 
 app.get("/invite", requireDiscord, (req, res) => {
-  if (req.user.invited_at || isAdmin(req.user.discord_id)) return res.redirect("/profile");
+  if (req.user.invited_at || isAdmin(req.user.discord_id))
+    return res.redirect("/profile");
 
-  res.type("html").send(layout({
-    title: "Invite Required",
-    user: req.viewUser,
-    isAdmin: req.viewIsAdmin,
-    body: `
+  res.type("html").send(
+    layout({
+      title: "Invite Required",
+      user: req.viewUser,
+      isAdmin: req.viewIsAdmin,
+      body: `
       <h1>Invite only</h1>
       <p>This site is currently invite-only. Enter an invite code to continue.</p>
 
@@ -1239,56 +1616,80 @@ app.get("/invite", requireDiscord, (req, res) => {
       <p style="opacity:.7;margin-top:10px;">
         Invite codes are one-time use.
       </p>
-    `
-  }));
+    `,
+    }),
+  );
 });
 
 app.post("/invite/redeem", requireDiscord, (req, res) => {
-  if (req.user.invited_at || isAdmin(req.user.discord_id)) return res.redirect("/profile");
+  if (req.user.invited_at || isAdmin(req.user.discord_id))
+    return res.redirect("/profile");
 
-  const code = String(req.body?.code || "").trim().toUpperCase();
+  const code = String(req.body?.code || "")
+    .trim()
+    .toUpperCase();
   if (!code || code.length < 6 || code.length > 32) {
-    return res.status(400).type("html").send(layout({
-      title: "Invite Required",
-      user: req.viewUser,
-      isAdmin: req.viewIsAdmin,
-      body: `<p>Invalid invite code format.</p><p><a href="/invite">Back</a></p>`
-    }));
+    return res
+      .status(400)
+      .type("html")
+      .send(
+        layout({
+          title: "Invite Required",
+          user: req.viewUser,
+          isAdmin: req.viewIsAdmin,
+          body: `<p>Invalid invite code format.</p><p><a href="/invite">Back</a></p>`,
+        }),
+      );
   }
 
   const codeHash = inviteHash(code);
 
-  const inv = db.prepare(`
+  const inv = db
+    .prepare(
+      `
     SELECT code_hash, used_at
     FROM invite_codes
     WHERE code_hash = ?
-  `).get(codeHash);
+  `,
+    )
+    .get(codeHash);
 
   if (!inv || inv.used_at) {
-    return res.status(403).type("html").send(layout({
-      title: "Invite Required",
-      user: req.viewUser,
-      isAdmin: req.viewIsAdmin,
-      body: `<p>That invite code is invalid or already used.</p><p><a href="/invite">Try again</a></p>`
-    }));
+    return res
+      .status(403)
+      .type("html")
+      .send(
+        layout({
+          title: "Invite Required",
+          user: req.viewUser,
+          isAdmin: req.viewIsAdmin,
+          body: `<p>That invite code is invalid or already used.</p><p><a href="/invite">Try again</a></p>`,
+        }),
+      );
   }
 
   const now = Date.now();
 
   const tx = db.transaction(() => {
-    const spent = db.prepare(`
+    const spent = db
+      .prepare(
+        `
       UPDATE invite_codes
       SET used_at = ?, used_by = ?
       WHERE code_hash = ? AND used_at IS NULL
-    `).run(now, req.user.discord_id, codeHash);
+    `,
+      )
+      .run(now, req.user.discord_id, codeHash);
 
     if (spent.changes !== 1) throw new Error("invite_race_lost");
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE users
       SET invited_at = COALESCE(invited_at, ?)
       WHERE discord_id = ?
-    `).run(now, req.user.discord_id);
+    `,
+    ).run(now, req.user.discord_id);
   });
 
   try {
@@ -1299,18 +1700,23 @@ app.post("/invite/redeem", requireDiscord, (req, res) => {
       actorUserId: req.user.discord_id,
       targetUserId: req.user.discord_id,
       req,
-      payload: {}
+      payload: {},
     });
 
     return res.redirect("/profile");
   } catch (e) {
     console.error("invite redeem failed:", e);
-    return res.status(500).type("html").send(layout({
-      title: "Invite Required",
-      user: req.viewUser,
-      isAdmin: req.viewIsAdmin,
-      body: `<p>Something went wrong redeeming that invite code. Try again.</p><p><a href="/invite">Back</a></p>`
-    }));
+    return res
+      .status(500)
+      .type("html")
+      .send(
+        layout({
+          title: "Invite Required",
+          user: req.viewUser,
+          isAdmin: req.viewIsAdmin,
+          body: `<p>Something went wrong redeeming that invite code. Try again.</p><p><a href="/invite">Back</a></p>`,
+        }),
+      );
   }
 });
 
@@ -1321,7 +1727,7 @@ app.get("/api-docs", (req, res) => {
   res.locals.base = base;
 
   renderWithLayout(res, "pages/api_docs", {
-    title: "API Docs"
+    title: "API Docs",
   });
 });
 
@@ -1336,15 +1742,20 @@ app.get("/profile", requireDiscord, requireNotBanned, (req, res) => {
   res.locals.isDiscoverOn = !!req.user.discoverable;
   res.locals.prefs = getCommandPrefsForUser(req.user.discord_id);
 
-  const wlRow = db.prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`).get(req.user.discord_id);
+  const wlRow = db
+    .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
+    .get(req.user.discord_id);
   res.locals.isWhitelistOn = !!wlRow?.whitelist_enabled;
   res.locals.wlList = getWhitelist(req.user.discord_id);
 
   res.locals.aboutMe = getAboutMe(req.user.discord_id);
 
   const commandsSentTotal = Number(
-    db.prepare(`SELECT IFNULL(commands_sent_total, 0) AS n FROM users WHERE discord_id=?`)
-      .get(req.user.discord_id)?.n || 0
+    db
+      .prepare(
+        `SELECT IFNULL(commands_sent_total, 0) AS n FROM users WHERE discord_id=?`,
+      )
+      .get(req.user.discord_id)?.n || 0,
   );
 
   const apiEligible = commandsSentTotal >= 500;
@@ -1359,7 +1770,7 @@ app.get("/profile", requireDiscord, requireNotBanned, (req, res) => {
   res.locals.apiMeta = apiMeta;
 
   renderWithLayout(res, "pages/profile/pf_main", {
-    title: "Profile"
+    title: "Profile",
   });
 });
 
@@ -1369,20 +1780,26 @@ app.post("/profile/reset-code", requireDiscord, (req, res) => {
   const deviceIds = unpairAllDevicesForUser(userId);
 
   const code = gen6();
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO pair_codes (user_id, code_hash, code_plain, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       code_hash=excluded.code_hash,
       code_plain=excluded.code_plain,
       updated_at=excluded.updated_at
-  `).run(userId, hmac(code), code, Date.now());
+  `,
+  ).run(userId, hmac(code), code, Date.now());
 
   for (const deviceId of deviceIds) {
     const ws = wsByDeviceId.get(deviceId);
     if (ws && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ type: "unauthorized" })); } catch {}
-      try { ws.close(1008, "pairing_reset"); } catch {}
+      try {
+        ws.send(JSON.stringify({ type: "unauthorized" }));
+      } catch {}
+      try {
+        ws.close(1008, "pairing_reset");
+      } catch {}
     }
     wsByDeviceId.delete(deviceId);
   }
@@ -1392,7 +1809,7 @@ app.post("/profile/reset-code", requireDiscord, (req, res) => {
     actorUserId: userId,
     targetUserId: userId,
     req,
-    payload: { unpairedDeviceCount: deviceIds.length }
+    payload: { unpairedDeviceCount: deviceIds.length },
   });
 
   res.redirect("/profile");
@@ -1401,25 +1818,39 @@ app.post("/profile/reset-code", requireDiscord, (req, res) => {
 app.post("/profile/discover", requireDiscord, (req, res) => {
   const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
 
-  const wl = db.prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`).get(req.user.discord_id);
+  const wl = db
+    .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
+    .get(req.user.discord_id);
   if (wl?.whitelist_enabled && String(req.body?.enabled || "0") === "1") {
-    if (wantsJson(req)) return res.status(400).json({ ok:false, message:"Disable whitelist to enable Discover." });
-    return res.status(400).type("html").send("Disable whitelist to enable Discover.");
+    if (wantsJson(req))
+      return res
+        .status(400)
+        .json({ ok: false, message: "Disable whitelist to enable Discover." });
+    return res
+      .status(400)
+      .type("html")
+      .send("Disable whitelist to enable Discover.");
   }
 
-  db.prepare(`UPDATE users SET discoverable=? WHERE discord_id=?`)
-    .run(enabled, req.user.discord_id);
+  db.prepare(`UPDATE users SET discoverable=? WHERE discord_id=?`).run(
+    enabled,
+    req.user.discord_id,
+  );
 
   logEvent({
     type: enabled ? "discover_enabled" : "discover_disabled",
     actorUserId: req.user.discord_id,
     targetUserId: req.user.discord_id,
     req,
-    payload: {}
+    payload: {},
   });
 
   if (wantsJson(req)) {
-    return res.json({ ok: true, enabled, message: enabled ? "Enabled" : "Disabled" });
+    return res.json({
+      ok: true,
+      enabled,
+      message: enabled ? "Enabled" : "Disabled",
+    });
   }
 
   res.redirect("/profile");
@@ -1430,25 +1861,33 @@ app.post("/profile/commands", requireDiscord, (req, res) => {
   const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
 
   const col =
-    cmd === "popup" ? "allow_popup" :
-    cmd === "open_url" ? "allow_open_url" :
-    cmd === "image_popup" ? "allow_image_popup" :
-    cmd === "set_wallpaper" ? "allow_set_wallpaper" :
-    null;
+    cmd === "popup"
+      ? "allow_popup"
+      : cmd === "open_url"
+        ? "allow_open_url"
+        : cmd === "image_popup"
+          ? "allow_image_popup"
+          : cmd === "set_wallpaper"
+            ? "allow_set_wallpaper"
+            : null;
 
   if (!col) {
-    if (wantsJson(req)) return res.status(400).json({ ok: false, message: "Unknown command." });
+    if (wantsJson(req))
+      return res.status(400).json({ ok: false, message: "Unknown command." });
     return res.status(400).send("Unknown command.");
   }
 
-  db.prepare(`UPDATE users SET ${col}=? WHERE discord_id=?`).run(enabled, req.user.discord_id);
+  db.prepare(`UPDATE users SET ${col}=? WHERE discord_id=?`).run(
+    enabled,
+    req.user.discord_id,
+  );
 
   logEvent({
     type: "command_pref_updated",
     actorUserId: req.user.discord_id,
     targetUserId: req.user.discord_id,
     req,
-    payload: { cmd, enabled }
+    payload: { cmd, enabled },
   });
 
   if (wantsJson(req)) {
@@ -1466,165 +1905,222 @@ app.post("/profile/aboutme", requireDiscord, requireNotBanned, (req, res) => {
     actorUserId: req.user.discord_id,
     targetUserId: req.user.discord_id,
     req,
-    payload: { len: saved.length }
+    payload: { len: saved.length },
   });
 
   if (wantsJson(req)) return res.json({ ok: true, len: saved.length });
   return res.redirect("/profile");
 });
 
-app.post("/profile/lists/toggle", requireDiscord, requireNotBanned, (req, res) => {
-  const listKey = String(req.body?.listKey || "").trim();
-  const itemKey = String(req.body?.itemKey || "").trim();
-  const enabled = String(req.body?.enabled || "0") === "1";
+app.post(
+  "/profile/lists/toggle",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const listKey = String(req.body?.listKey || "").trim();
+    const itemKey = String(req.body?.itemKey || "").trim();
+    const enabled = String(req.body?.enabled || "0") === "1";
 
-  try {
-    setUserItem(req.user.discord_id, listKey, itemKey, enabled);
+    try {
+      setUserItem(req.user.discord_id, listKey, itemKey, enabled);
+
+      if (wantsJson(req)) return res.json({ ok: true });
+      return res.redirect("/profile");
+    } catch (e) {
+      const msg = e?.message || "Failed";
+      if (wantsJson(req))
+        return res.status(400).json({ ok: false, message: msg });
+      return res.status(400).type("html").send(msg);
+    }
+  },
+);
+
+app.post(
+  "/profile/whitelist/toggle",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
+
+    const tx = db.transaction(() => {
+      db.prepare(`UPDATE users SET whitelist_enabled=? WHERE discord_id=?`).run(
+        enabled,
+        req.user.discord_id,
+      );
+
+      if (enabled) {
+        db.prepare(`UPDATE users SET discoverable=0 WHERE discord_id=?`).run(
+          req.user.discord_id,
+        );
+      }
+    });
+
+    tx();
+
+    logEvent({
+      type: enabled ? "whitelist_enabled" : "whitelist_disabled",
+      actorUserId: req.user.discord_id,
+      targetUserId: req.user.discord_id,
+      req,
+      payload: {},
+    });
+
+    if (wantsJson(req)) return res.json({ ok: true, enabled });
+    return res.redirect("/profile");
+  },
+);
+
+app.post(
+  "/profile/whitelist/add",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const allowedId = String(req.body?.discord_id || "").trim();
+
+    if (!isDiscordId(allowedId)) {
+      return wantsJson(req)
+        ? res.status(400).json({ ok: false, message: "Bad Discord ID." })
+        : res.status(400).type("html").send("Bad Discord ID.");
+    }
+
+    if (allowedId === req.user.discord_id) {
+      return wantsJson(req)
+        ? res
+            .status(400)
+            .json({ ok: false, message: "You can’t add yourself." })
+        : res.status(400).type("html").send("You can’t add yourself.");
+    }
+
+    const exists = db
+      .prepare(`SELECT discord_id FROM users WHERE discord_id=?`)
+      .get(allowedId);
+    if (!exists) {
+      return wantsJson(req)
+        ? res
+            .status(400)
+            .json({
+              ok: false,
+              message: "That user hasn’t logged in yet (no user record).",
+            })
+        : res.status(400).type("html").send("That user hasn’t logged in yet.");
+    }
+
+    db.prepare(
+      `
+    INSERT OR IGNORE INTO user_whitelist (owner_id, allowed_id, created_at)
+    VALUES (?, ?, ?)
+  `,
+    ).run(req.user.discord_id, allowedId, Date.now());
+
+    logEvent({
+      type: "whitelist_added",
+      actorUserId: req.user.discord_id,
+      targetUserId: allowedId,
+      req,
+      payload: {},
+    });
 
     if (wantsJson(req)) return res.json({ ok: true });
     return res.redirect("/profile");
-  } catch (e) {
-    const msg = e?.message || "Failed";
-    if (wantsJson(req)) return res.status(400).json({ ok: false, message: msg });
-    return res.status(400).type("html").send(msg);
-  }
-});
+  },
+);
 
-app.post("/profile/whitelist/toggle", requireDiscord, requireNotBanned, (req, res) => {
-  const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
+app.post(
+  "/profile/whitelist/remove",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const allowedId = String(req.body?.discord_id || "").trim();
 
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET whitelist_enabled=? WHERE discord_id=?`)
-      .run(enabled, req.user.discord_id);
-
-    if (enabled) {
-      db.prepare(`UPDATE users SET discoverable=0 WHERE discord_id=?`)
-        .run(req.user.discord_id);
-    }
-  });
-
-  tx();
-
-  logEvent({
-    type: enabled ? "whitelist_enabled" : "whitelist_disabled",
-    actorUserId: req.user.discord_id,
-    targetUserId: req.user.discord_id,
-    req,
-    payload: {}
-  });
-
-  if (wantsJson(req)) return res.json({ ok:true, enabled });
-  return res.redirect("/profile");
-});
-
-app.post("/profile/whitelist/add", requireDiscord, requireNotBanned, (req, res) => {
-  const allowedId = String(req.body?.discord_id || "").trim();
-
-  if (!isDiscordId(allowedId)) {
-    return wantsJson(req)
-      ? res.status(400).json({ ok:false, message:"Bad Discord ID." })
-      : res.status(400).type("html").send("Bad Discord ID.");
-  }
-
-  if (allowedId === req.user.discord_id) {
-    return wantsJson(req)
-      ? res.status(400).json({ ok:false, message:"You can’t add yourself." })
-      : res.status(400).type("html").send("You can’t add yourself.");
-  }
-
-  const exists = db.prepare(`SELECT discord_id FROM users WHERE discord_id=?`).get(allowedId);
-  if (!exists) {
-    return wantsJson(req)
-      ? res.status(400).json({ ok:false, message:"That user hasn’t logged in yet (no user record)." })
-      : res.status(400).type("html").send("That user hasn’t logged in yet.");
-  }
-
-  db.prepare(`
-    INSERT OR IGNORE INTO user_whitelist (owner_id, allowed_id, created_at)
-    VALUES (?, ?, ?)
-  `).run(req.user.discord_id, allowedId, Date.now());
-
-  logEvent({
-    type: "whitelist_added",
-    actorUserId: req.user.discord_id,
-    targetUserId: allowedId,
-    req,
-    payload: {}
-  });
-
-  if (wantsJson(req)) return res.json({ ok:true });
-  return res.redirect("/profile");
-});
-
-app.post("/profile/whitelist/remove", requireDiscord, requireNotBanned, (req, res) => {
-  const allowedId = String(req.body?.discord_id || "").trim();
-
-  db.prepare(`
+    db.prepare(
+      `
     DELETE FROM user_whitelist
     WHERE owner_id=? AND allowed_id=?
-  `).run(req.user.discord_id, allowedId);
+  `,
+    ).run(req.user.discord_id, allowedId);
 
-  logEvent({
-    type: "whitelist_removed",
-    actorUserId: req.user.discord_id,
-    targetUserId: allowedId,
-    req,
-    payload: {}
-  });
+    logEvent({
+      type: "whitelist_removed",
+      actorUserId: req.user.discord_id,
+      targetUserId: allowedId,
+      req,
+      payload: {},
+    });
 
-  if (wantsJson(req)) return res.json({ ok:true });
-  return res.redirect("/profile");
-});
+    if (wantsJson(req)) return res.json({ ok: true });
+    return res.redirect("/profile");
+  },
+);
 
-app.post("/profile/api_key/reset", requireDiscord, requireNotBanned, (req, res) => {
-  const raw = genApiKey();
-  const key_hash = hashApiKey(raw);
-  const now = Date.now();
-  const sent = getCommandsSentTotal(req.user.discord_id);
+app.post(
+  "/profile/api_key/reset",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const raw = genApiKey();
+    const key_hash = hashApiKey(raw);
+    const now = Date.now();
+    const sent = getCommandsSentTotal(req.user.discord_id);
 
-  if (sent < API_MIN_COMMANDS) {
-    return res.status(403).type("html").send("Not eligible.");
-  }
+    if (sent < API_MIN_COMMANDS) {
+      return res.status(403).type("html").send("Not eligible.");
+    }
 
-  db.prepare(`
+    db.prepare(
+      `
     INSERT INTO api_keys (user_id, key_hash, created_at, last_reset_at)
     VALUES (?, ?, COALESCE((SELECT created_at FROM api_keys WHERE user_id=?), ?), ?)
     ON CONFLICT(user_id) DO UPDATE SET
       key_hash=excluded.key_hash,
       last_reset_at=excluded.last_reset_at
-  `).run(req.user.discord_id, key_hash, req.user.discord_id, now, now);
+  `,
+    ).run(req.user.discord_id, key_hash, req.user.discord_id, now, now);
 
-  return res.json({
-    ok: true,
-    api_key: raw,
-    last_reset_at: now
-  });
-});
+    return res.json({
+      ok: true,
+      api_key: raw,
+      last_reset_at: now,
+    });
+  },
+);
 
 app.get("/device/:pairCode", requireDiscord, requireNotBanned, (req, res) => {
   const pairCode = String(req.params.pairCode || "").trim();
   if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
 
+  const me = req.viewUser?.discord_id || null;
+
   res.locals.pairCode = pairCode;
 
   const codeHash = hmac(pairCode);
-  const pc = db.prepare("SELECT user_id FROM pair_codes WHERE code_hash=?").get(codeHash);
+  const pc = db
+    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
+    .get(codeHash);
   if (!pc) return res.status(404).send("Unknown code");
 
   const ownerId = pc.user_id;
+  res.locals.ownerId = ownerId;
 
-  const ownerUser = db.prepare(`
+  const ownerUser = db
+    .prepare(
+      `
     SELECT discord_id, username, global_name, avatar
     FROM users
     WHERE discord_id=?
-  `).get(ownerId);
+  `,
+    )
+    .get(ownerId);
   res.locals.ownerUser = ownerUser;
 
-  const viewerRow = db.prepare(`
+  const viewerRow = db
+    .prepare(
+      `
     SELECT commands_sent_total
     FROM users
     WHERE discord_id=?
-  `).get(req.user.discord_id);
+  `,
+    )
+    .get(req.user.discord_id);
   const viewerCommandsSentTotal = Number(viewerRow?.commands_sent_total || 0);
   res.locals.cooldownApplies = viewerCommandsSentTotal < 100;
 
@@ -1638,19 +2134,23 @@ app.get("/device/:pairCode", requireDiscord, requireNotBanned, (req, res) => {
 
   res.locals.aboutMe = getAboutMe(ownerId);
 
-  res.locals.labelByKey = new Map(catalog.map(it => [it.key, it.label]));
+  res.locals.labelByKey = new Map(catalog.map((it) => [it.key, it.label]));
   res.locals.favKeys = Array.from(ownerSelections.favorites || []);
   res.locals.disKeys = Array.from(ownerSelections.dislikes || []);
 
-  const devices = db.prepare(`
+  const devices = db
+    .prepare(
+      `
     SELECT dp.device_id, d.last_seen_at
     FROM device_pairs dp
     JOIN devices_v2 d ON d.device_id = dp.device_id
     WHERE dp.user_id = ?
     ORDER BY d.last_seen_at DESC
-  `).all(ownerId);
+  `,
+    )
+    .all(ownerId);
 
-  res.locals.anyOnline = devices.some(d => isDeviceOnline(d.device_id));
+  res.locals.anyOnline = devices.some((d) => isDeviceOnline(d.device_id));
 
   const canPopup = isCommandEnabled(ownerPrefs, "popup");
   const canOpenUrl = isCommandEnabled(ownerPrefs, "open_url");
@@ -1661,21 +2161,37 @@ app.get("/device/:pairCode", requireDiscord, requireNotBanned, (req, res) => {
   res.locals.canOpenUrl = canOpenUrl;
   res.locals.canImage = canImage;
   res.locals.canSetWallpaper = canSetWallpaper;
-  res.locals.anyCommandsEnabled = canPopup || canOpenUrl || canImage || canSetWallpaper;
+  res.locals.anyCommandsEnabled =
+    canPopup || canOpenUrl || canImage || canSetWallpaper;
+
+  let isFavorited = false;
+  if (me) {
+    isFavorited = !!db
+      .prepare(
+        `
+      SELECT 1 FROM favorites
+      WHERE user_id = ? AND favorite_user_id = ?
+    `,
+      )
+      .get(me, ownerId);
+  }
+  res.locals.isFavorited = isFavorited;
 
   renderWithLayout(res, "pages/control_links/con_main", {
     title: "Control",
     meta: {
       ogTitle: `Control ${ownerUser?.global_name || ownerUser?.username || "User"}'s device!`,
-      ogDesc: `Open this control page to send commands.`
-    }
+      ogDesc: `Open this control page to send commands.`,
+    },
   });
 });
 
 api.get("/user/:pairCode", (req, res) => {
   const pairCode = String(req.params.pairCode || "").trim();
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT
       u.discord_id,
       u.username,
@@ -1687,15 +2203,19 @@ api.get("/user/:pairCode", (req, res) => {
     FROM pair_codes pc
     JOIN users u ON u.discord_id = pc.user_id
     WHERE pc.code_plain = ?
-  `).get(pairCode);
+  `,
+    )
+    .get(pairCode);
 
-  if (!row) return res.status(404).json({ ok:false, code:"USER_NOT_FOUND" });
+  if (!row) return res.status(404).json({ ok: false, code: "USER_NOT_FOUND" });
 
-  const devs = db.prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`).all(row.discord_id);
-  const online = devs.some(d => isDeviceOnline(d.device_id));
+  const devs = db
+    .prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`)
+    .all(row.discord_id);
+  const online = devs.some((d) => isDeviceOnline(d.device_id));
 
   res.json({
-    ok:true,
+    ok: true,
     user: {
       displayName: row.global_name || row.username || row.discord_id,
       username: row.username || null,
@@ -1704,8 +2224,8 @@ api.get("/user/:pairCode", (req, res) => {
       avatarUrl: discordAvatarUrl(row, 128),
       online,
       discoverable: !!row.discoverable,
-      whitelistEnabled: !!row.whitelist_enabled
-    }
+      whitelistEnabled: !!row.whitelist_enabled,
+    },
   });
 });
 
@@ -1723,7 +2243,9 @@ app.get("/discover", (req, res) => {
     return Math.floor(Date.now() / (10 * 60 * 1000));
   }
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       u.discord_id,
       u.username,
@@ -1735,21 +2257,27 @@ app.get("/discover", (req, res) => {
     WHERE u.discoverable = 1 AND IFNULL(u.whitelist_enabled, 0) = 0
     ORDER BY u.global_name COLLATE NOCASE, u.username COLLATE NOCASE
     LIMIT 500
-  `).all();
+  `,
+    )
+    .all();
 
   const onlineByUser = new Map();
-  const ids = rows.map(r => r.discord_id);
+  const ids = rows.map((r) => r.discord_id);
 
   if (ids.length) {
     const placeholders = ids.map((_, i) => `@id${i}`).join(",");
     const args = {};
     ids.forEach((id, i) => (args[`id${i}`] = id));
 
-    const pairs = db.prepare(`
+    const pairs = db
+      .prepare(
+        `
       SELECT user_id, device_id
       FROM device_pairs
       WHERE user_id IN (${placeholders})
-    `).all(args);
+    `,
+      )
+      .all(args);
 
     const deviceIdsByUser = new Map();
     for (const p of pairs) {
@@ -1759,12 +2287,12 @@ app.get("/discover", (req, res) => {
 
     for (const userId of ids) {
       const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some(did => isDeviceOnline(did));
+      const anyOnline = devs.some((did) => isDeviceOnline(did));
       onlineByUser.set(userId, anyOnline);
     }
   }
 
-  let onlineRows = rows.filter(u => !!onlineByUser.get(u.discord_id));
+  let onlineRows = rows.filter((u) => !!onlineByUser.get(u.discord_id));
 
   const winId = windowIdNow10m();
   onlineRows.sort((a, b) => {
@@ -1776,14 +2304,14 @@ app.get("/discover", (req, res) => {
   res.locals.onlineRows = onlineRows;
 
   renderWithLayout(res, "pages/discover/dsc_main", {
-    title: "Discover"
+    title: "Discover",
   });
 });
 
-
-
 api.get("/discover", (req, res) => {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       u.discord_id,
       u.username,
@@ -1796,9 +2324,11 @@ api.get("/discover", (req, res) => {
       AND IFNULL(u.whitelist_enabled, 0) = 0
     ORDER BY u.global_name COLLATE NOCASE, u.username COLLATE NOCASE
     LIMIT 500
-  `).all();
+  `,
+    )
+    .all();
 
-  const ids = rows.map(r => r.discord_id);
+  const ids = rows.map((r) => r.discord_id);
   const onlineByUser = new Map();
 
   if (ids.length) {
@@ -1806,11 +2336,15 @@ api.get("/discover", (req, res) => {
     const args = {};
     ids.forEach((id, i) => (args[`id${i}`] = id));
 
-    const pairs = db.prepare(`
+    const pairs = db
+      .prepare(
+        `
       SELECT user_id, device_id
       FROM device_pairs
       WHERE user_id IN (${placeholders})
-    `).all(args);
+    `,
+      )
+      .all(args);
 
     const deviceIdsByUser = new Map();
     for (const p of pairs) {
@@ -1820,14 +2354,159 @@ api.get("/discover", (req, res) => {
 
     for (const userId of ids) {
       const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some(did => isDeviceOnline(did));
+      const anyOnline = devs.some((did) => isDeviceOnline(did));
       onlineByUser.set(userId, anyOnline);
     }
   }
 
-  const users = rows.map(u => {
+  const users = rows.map((u) => {
     const displayName = u.global_name || u.username || u.discord_id;
     const avatarUrl = discordAvatarUrl(u, 128);
+    return {
+      displayName,
+      username: u.username || null,
+      discordId: u.discord_id,
+      pairCode: u.code_plain,
+      avatarUrl,
+      online: !!onlineByUser.get(u.discord_id),
+    };
+  });
+
+  res.json({ ok: true, users });
+});
+
+app.get("/favorites", (req, res) => {
+  if (!req.viewUser) return res.redirect("/login");
+  const me = req.viewUser.discord_id;
+
+  const rows = db
+    .prepare(
+      `
+    SELECT
+      f.favorite_user_id AS discord_id,
+      f.created_at AS favorited_at,
+      u.username,
+      u.global_name,
+      u.avatar,
+      pc.code_plain
+    FROM favorites f
+    JOIN users u ON u.discord_id = f.favorite_user_id
+    LEFT JOIN pair_codes pc ON pc.user_id = u.discord_id
+    WHERE f.user_id = ?
+    ORDER BY f.created_at ASC
+  `,
+    )
+    .all(me);
+
+  const ids = rows.map((r) => r.discord_id);
+  const onlineByUser = new Map();
+
+  if (ids.length) {
+    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
+    const args = {};
+    ids.forEach((id, i) => (args[`id${i}`] = id));
+
+    const pairs = db
+      .prepare(
+        `
+      SELECT user_id, device_id
+      FROM device_pairs
+      WHERE user_id IN (${placeholders})
+    `,
+      )
+      .all(args);
+
+    const deviceIdsByUser = new Map();
+    for (const p of pairs) {
+      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
+      deviceIdsByUser.get(p.user_id).push(p.device_id);
+    }
+
+    for (const userId of ids) {
+      const devs = deviceIdsByUser.get(userId) || [];
+      const anyOnline = devs.some((did) => isDeviceOnline(did));
+      onlineByUser.set(userId, anyOnline);
+    }
+  }
+
+  let onlineRows = rows.filter((u) => !!onlineByUser.get(u.discord_id));
+  let offlineRows = rows.filter((u) => !onlineByUser.get(u.discord_id));
+
+  const sortByOldest = (a, b) => {
+    const at = Number(a.favorited_at || 0);
+    const bt = Number(b.favorited_at || 0);
+    if (at !== bt) return at - bt;
+
+    return String(a.discord_id || "").localeCompare(String(b.discord_id || ""));
+  };
+
+  onlineRows.sort(sortByOldest);
+  offlineRows.sort(sortByOldest);
+
+  res.locals.favUsers = onlineRows.concat(offlineRows);
+
+  renderWithLayout(res, "pages/favorites/fav_main", {
+    title: "Favorites",
+  });
+});
+
+api.get("/favorites", (req, res) => {
+  const me = req.api.user_id;
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        u.discord_id,
+        u.username,
+        u.global_name,
+        u.avatar,
+        pc.code_plain
+      FROM favorites f
+      JOIN users u ON u.discord_id = f.favorite_user_id
+      JOIN pair_codes pc ON pc.user_id = u.discord_id
+      WHERE f.user_id = ?
+      ORDER BY f.created_at ASC
+      LIMIT 500
+    `,
+    )
+    .all(me);
+
+  const ids = rows.map((r) => r.discord_id);
+  const onlineByUser = new Map();
+
+  if (ids.length) {
+    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
+    const args = {};
+    ids.forEach((id, i) => (args[`id${i}`] = id));
+
+    const pairs = db
+      .prepare(
+        `
+        SELECT user_id, device_id
+        FROM device_pairs
+        WHERE user_id IN (${placeholders})
+      `,
+      )
+      .all(args);
+
+    const deviceIdsByUser = new Map();
+    for (const p of pairs) {
+      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
+      deviceIdsByUser.get(p.user_id).push(p.device_id);
+    }
+
+    for (const userId of ids) {
+      const devs = deviceIdsByUser.get(userId) || [];
+      const anyOnline = devs.some((did) => isDeviceOnline(did));
+      onlineByUser.set(userId, anyOnline);
+    }
+  }
+
+  const users = rows.map((u) => {
+    const displayName = u.global_name || u.username || u.discord_id;
+    const avatarUrl = discordAvatarUrl(u, 128);
+
     return {
       displayName,
       username: u.username || null,
@@ -1838,34 +2517,53 @@ api.get("/discover", (req, res) => {
     };
   });
 
-  res.json({ ok:true, users });
+  res.json({ ok: true, users });
 });
 
 function resolveDevicesForPairCode(pairCode) {
   const codeHash = hmac(pairCode);
-  const pc = db.prepare("SELECT user_id FROM pair_codes WHERE code_hash=?").get(codeHash);
+  const pc = db
+    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
+    .get(codeHash);
   if (!pc) return { ok: false, reason: "invalid_code" };
 
-  const devices = db.prepare(`
+  const devices = db
+    .prepare(
+      `
     SELECT device_id FROM device_pairs WHERE user_id=?
-  `).all(pc.user_id);
+  `,
+    )
+    .all(pc.user_id);
 
-  return { ok: true, userId: pc.user_id, deviceIds: devices.map(r => r.device_id) };
+  return {
+    ok: true,
+    userId: pc.user_id,
+    deviceIds: devices.map((r) => r.device_id),
+  };
 }
 
 function unpairAllDevicesForUser(userId) {
-  const deviceRows = db.prepare(`
+  const deviceRows = db
+    .prepare(
+      `
     SELECT device_id FROM device_pairs WHERE user_id=?
-  `).all(userId);
+  `,
+    )
+    .all(userId);
 
-  const deviceIds = deviceRows.map(r => r.device_id);
+  const deviceIds = deviceRows.map((r) => r.device_id);
 
   const tx = db.transaction(() => {
     db.prepare(`DELETE FROM device_pairs WHERE user_id=?`).run(userId);
 
-    const invalidate = db.prepare(`UPDATE devices_v2 SET device_token_hash=? WHERE device_id=?`);
+    const invalidate = db.prepare(
+      `UPDATE devices_v2 SET device_token_hash=? WHERE device_id=?`,
+    );
     for (const deviceId of deviceIds) {
-      invalidate.run(hmac(crypto.randomBytes(24).toString("base64url")), deviceId);
+      invalidate.run(
+        hmac(crypto.randomBytes(24).toString("base64url")),
+        deviceId,
+      );
     }
   });
 
@@ -1873,49 +2571,35 @@ function unpairAllDevicesForUser(userId) {
   return deviceIds;
 }
 
-app.get("/api/presence/:pairCode", (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).json({ ok:false, message:"bad_pair_code" });
-
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).json({ ok:false, message:"unknown_code" });
-
-  const deviceIds = resolved.deviceIds || [];
-
-  const onlineCount = deviceIds.reduce((n, id) => n + (isDeviceOnline(id) ? 1 : 0), 0);
-
-  return res.json({
-    ok: true,
-    pairCode,
-    ownerUserId: resolved.ownerUserId,
-    online: onlineCount > 0,
-    onlineCount,
-    deviceCount: deviceIds.length,
-    ts: Date.now()
-  });
-});
-
 app.get("/api/presence/discover", (req, res) => {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT u.discord_id, pc.code_plain
     FROM users u
     JOIN pair_codes pc ON pc.user_id = u.discord_id
     WHERE u.discoverable = 1
     LIMIT 500
-  `).all();
+  `,
+    )
+    .all();
 
   if (!rows.length) return res.json({ ok: true, map: {}, ts: Date.now() });
 
-  const ids = rows.map(r => r.discord_id);
+  const ids = rows.map((r) => r.discord_id);
   const placeholders = ids.map((_, i) => `@id${i}`).join(",");
   const args = {};
   ids.forEach((id, i) => (args[`id${i}`] = id));
 
-  const pairs = db.prepare(`
+  const pairs = db
+    .prepare(
+      `
     SELECT user_id, device_id
     FROM device_pairs
     WHERE user_id IN (${placeholders})
-  `).all(args);
+  `,
+    )
+    .all(args);
 
   const deviceIdsByUser = new Map();
   for (const p of pairs) {
@@ -1926,28 +2610,114 @@ app.get("/api/presence/discover", (req, res) => {
   const map = {};
   for (const r of rows) {
     const devs = deviceIdsByUser.get(r.discord_id) || [];
-    const online = devs.some(did => isDeviceOnline(did));
+    const online = devs.some((did) => isDeviceOnline(did));
     map[String(r.code_plain)] = { online };
   }
 
   res.json({ ok: true, map, ts: Date.now() });
 });
 
+app.get("/api/presence/favorites", (req, res) => {
+  if (!req.viewUser)
+    return res.status(401).json({ ok: false, error: "not_logged_in" });
+
+  const me = req.viewUser.discord_id;
+
+  const rows = db
+    .prepare(
+      `
+    SELECT u.discord_id, pc.code_plain
+    FROM favorites f
+    JOIN users u ON u.discord_id = f.favorite_user_id
+    JOIN pair_codes pc ON pc.user_id = u.discord_id
+    WHERE f.user_id = ?
+    ORDER BY f.created_at ASC
+    LIMIT 500
+  `,
+    )
+    .all(me);
+
+  if (!rows.length) return res.json({ ok: true, map: {}, ts: Date.now() });
+
+  const ids = rows.map((r) => r.discord_id);
+  const placeholders = ids.map((_, i) => `@id${i}`).join(",");
+  const args = {};
+  ids.forEach((id, i) => (args[`id${i}`] = id));
+
+  const pairs = db
+    .prepare(
+      `
+    SELECT user_id, device_id
+    FROM device_pairs
+    WHERE user_id IN (${placeholders})
+  `,
+    )
+    .all(args);
+
+  const deviceIdsByUser = new Map();
+  for (const p of pairs) {
+    if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
+    deviceIdsByUser.get(p.user_id).push(p.device_id);
+  }
+
+  const map = {};
+  for (const r of rows) {
+    const devs = deviceIdsByUser.get(r.discord_id) || [];
+    const online = devs.some((did) => isDeviceOnline(did));
+    map[String(r.code_plain)] = { online };
+  }
+
+  res.json({ ok: true, map, ts: Date.now() });
+});
+
+app.get("/api/presence/:pairCode", (req, res) => {
+  const pairCode = String(req.params.pairCode || "").trim();
+  if (!/^\d{6}$/.test(pairCode))
+    return res.status(400).json({ ok: false, message: "bad_pair_code" });
+
+  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+  if (!resolved)
+    return res.status(404).json({ ok: false, message: "unknown_code" });
+
+  const deviceIds = resolved.deviceIds || [];
+
+  const onlineCount = deviceIds.reduce(
+    (n, id) => n + (isDeviceOnline(id) ? 1 : 0),
+    0,
+  );
+
+  return res.json({
+    ok: true,
+    pairCode,
+    ownerUserId: resolved.ownerUserId,
+    online: onlineCount > 0,
+    onlineCount,
+    deviceCount: deviceIds.length,
+    ts: Date.now(),
+  });
+});
+
 function apiFail(res, httpStatus, code, extra = {}) {
-  return res.status(httpStatus).json({ ok:false, code, ...extra });
+  return res.status(httpStatus).json({ ok: false, code, ...extra });
 }
 
-api.post("/commands", (req, res) => {
+api.post("/commands", async (req, res) => {
   const body = req.body || {};
   const actorId = req.api.user_id;
 
   const pairCode = String(body.pairCode || "").trim();
   if (!pairCode) {
-    return apiFail(res, 400, "INVALID_PAIRCODE", { message: "pairCode is either missing or invalid" });
+    return apiFail(res, 400, "INVALID_PAIRCODE", {
+      message: "pairCode is either missing or invalid",
+    });
   }
 
   const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return apiFail(res, 400, "INVALID_PAIRCODE", { message: "pairCode is either missing or invalid" });
+  if (!resolved) {
+    return apiFail(res, 400, "INVALID_PAIRCODE", {
+      message: "pairCode is either missing or invalid",
+    });
+  }
 
   const ownerId = resolved.ownerUserId;
   const deviceIds = resolved.deviceIds || [];
@@ -1956,42 +2726,53 @@ api.post("/commands", (req, res) => {
     return apiFail(res, 403, "NOT_WHITELISTED");
   }
 
-  const targetDeviceId = deviceIds.find(did => isDeviceOnline(did));
-  if (!targetDeviceId) {
-    return apiFail(res, 409, "DEVICE_OFFLINE");
-  }
-
   const type = String(body.command || "").trim();
   const allowed = new Set(["popup", "open_url", "image_popup", "set_wallpaper"]);
   if (!allowed.has(type)) {
     return apiFail(res, 400, "BAD_REQUEST", { message: "Unknown command type." });
   }
 
-  const params = new Set(Object.keys(body?.parameters || {}));
-  console.log(params);
+  const paramsObj = body.parameters || {};
+  const params = new Set(Object.keys(paramsObj));
+
   switch (type) {
-    case "popup":
-      if(params.has("message")){ 
-        break;
+    case "popup": {
+      const msg = String(paramsObj.message || "").trim();
+      if (!msg) {
+        return apiFail(res, 400, "MISSING_PARAMETER", {
+          message: "Required parameter missing: message",
+        });
       }
-      return apiFail(res, 400, "MISSING_PARAMETER", { message: "Required parameter missing" }); 
+      break;
+    }
+
     case "open_url":
     case "image_popup":
-    case "set_wallpaper":
-      if(params.has("url")){ 
-        const url = String(body?.parameters.url || "").trim();
-        if (!/^https?:\/\//i.test(url)) {
-          return apiFail(res, 400, "BAD_URL", { message: "Url must start with http(s)" }); 
-        }
-        const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
-        if (!policy.ok) return;
-        break;
+    case "set_wallpaper": {
+      const url = String(paramsObj.url || "").trim();
+      if (!url) {
+        return apiFail(res, 400, "MISSING_PARAMETER", {
+          message: "Required parameter missing: url",
+        });
       }
-      return apiFail(res, 400, "MISSING_PARAMETER", { message: "Required parameter missing" }); 
-    default:
-      return apiFail(res, 400, "MISSING_PARAMETER", { message: "Required parameter missing" });
+      if (!/^https?:\/\//i.test(url)) {
+        return apiFail(res, 400, "BAD_URL", { message: "Url must start with http(s)" });
+      }
+
+      const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
+      if (!policy.ok) return;
+
+      if (type === "set_wallpaper") {
+        const clean = url.split("#")[0].split("?")[0].toLowerCase();
+        if (!clean.endsWith(".png") && !clean.endsWith(".jpg") && !clean.endsWith(".jpeg")) {
+          return apiFail(res, 400, "BAD_REQUEST", { message: "Invalid file type" });
+        }
+      }
+      break;
+    }
   }
 
+  const commandPayload = { type, ...(paramsObj || {}) };
 
   const commandId = crypto.randomUUID();
 
@@ -2001,119 +2782,120 @@ api.post("/commands", (req, res) => {
     targetUserId: ownerId,
     pairCode,
     req,
-    payload: { commandId, command: body.command, parameters: body.parameters, deviceCount: resolved.deviceIds.length }
+    payload: {
+      commandId,
+      command: type,
+      parameters: paramsObj,
+      deviceCount: deviceIds.length,
+    },
   });
 
-  const { pairCode: _pc, ...payload } = body;
+  const result = await sendToAllAndWait(commandId, deviceIds, commandPayload, 20000);
 
-  if (!targetDeviceId) {
-    return apiFail(res, 409, "DEVICE_OFFLINE");
+  if (!result.ok) {
+    return apiFail(res, 409, "DEVICE_OFFLINE", { message: result.error || "No devices online" });
   }
 
-  try {
-    const payload = { type, ...body.parameters };
+  const anyFail = result.acks.some((a) => !a?.ok);
 
-    const result = sendToPairedDevices(resolved.deviceIds, {
-      type: "command",
-      commandId,
-      command: payload
-    });
+  incrementCommandsSentTotal({
+    senderDiscordId: actorId,
+    targetOwnerDiscordId: ownerId,
+  });
 
-    const ok = result > 0;
+  return res.json({
+    ok: !anyFail,
+    message: anyFail ? "Some devices rejected/failed" : "Sent to device",
+    sent: result.sent,
+    acks: result.acks,
+  });
+});
 
-    if(ok){
-      incrementCommandsSentTotal({
-        senderDiscordId: actorId,
-        targetOwnerDiscordId: ownerId
-      });
+app.get(
+  "/api/device/:pairCode/board",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode))
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved)
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+
+    if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
+      return res.status(403).json({ ok: false, code: "NOT_WHITELISTED" });
     }
 
-    return res.json({
-      ok,
-      message: "Command sent successfully",
-      command: body.command,
-      parameters: body.parameters,
-      dispatchedTo: pairCode
-    });
-  } catch (e) {
-    return apiFail(res, 500, "INTERNAL_ERROR", {
-      ok: "false",
-      message: "sendToPairedDevices threw",
-      detail: String(e?.message || e)
-    });
-  }  
-});
+    const messages = getBoardMessages(resolved.ownerUserId, 10);
+    const latestCreatedAt = messages.length
+      ? Number(messages[0].created_at)
+      : 0;
 
-app.get("/api/device/:pairCode/board", requireDiscord, requireNotBanned, (req, res) => {
+    res.json({
+      ok: true,
+      ownerUserId: resolved.ownerUserId,
+      latest_created_at: latestCreatedAt,
+      messages,
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/board",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode))
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved)
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    let body = String(req.body?.body || "").trim();
+
+    if (!body) {
+      return res.status(400).json({ ok: false, message: "Message required." });
+    }
+
+    if (body.length > 200) {
+      body = body.slice(0, 200);
+    }
+
+    const createdAt = postBoardMessageTx(resolved.ownerUserId, body);
+
+    logEvent({
+      type: "device_board_post",
+      actorUserId: req.user.discord_id,
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: { body, createdAt },
+    });
+
+    const messages = getBoardMessages(resolved.ownerUserId, 10);
+    return res.json({ ok: true, createdAt, messages });
+  },
+);
+
+app.post("/api/device/:pairCode/popup", requireDiscord, async (req, res) => {
   const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).json({ ok:false, code:"BAD_PAIR_CODE" });
+  const message = String(req.body?.message || "").trim();
+  if (!message) return res.send("Missing message");
 
   const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).json({ ok:false, code:"UNKNOWN_CODE" });
+  if (!resolved) return res.send("Invalid code");
 
   if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    return res.status(403).json({ ok:false, code:"NOT_WHITELISTED" });
+    return res.send("Not allowed");
   }
-
-  const messages = getBoardMessages(resolved.ownerUserId, 10);
-  const latestCreatedAt = messages.length ? Number(messages[0].created_at) : 0;
-
-  res.json({ ok:true, ownerUserId: resolved.ownerUserId, latest_created_at: latestCreatedAt, messages });
-});
-
-app.post("/api/device/:pairCode/board", requireDiscord, requireNotBanned, (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).json({ ok:false, code:"BAD_PAIR_CODE" });
-
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).json({ ok:false, code:"UNKNOWN_CODE" });
-
-  if (req.user.discord_id !== resolved.ownerUserId) {
-    return res.status(403).json({ ok:false, code:"NOT_OWNER" });
-  }
-
-  let body = String(req.body?.body || "").trim();
-
-  if (!body) {
-    return res.status(400).json({ ok:false, message:"Message required." });
-  }
-
-  if (body.length > 200) {
-    body = body.slice(0, 200);
-  }
-
-  const createdAt = postBoardMessageTx(resolved.ownerUserId, body);
-
-  logEvent({
-    type: "device_board_post",
-    actorUserId: req.user.discord_id,
-    targetUserId: resolved.ownerUserId,
-    pairCode,
-    req,
-    payload: { body, createdAt }
-  });
-
-  const messages = getBoardMessages(resolved.ownerUserId, 10);
-  return res.json({ ok:true, createdAt, messages });
-});
-
-app.post("/api/device/:pairCode/popup", requireDiscord, requireNotBanned, enforceWebCooldownForNewUsers, (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
-
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).send("Unknown code");
-
-  if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    const msg = "You are not allowed to control this user (whitelist enabled).";
-    return wantsJson(req)
-      ? res.status(403).json({ ok:false, reason:"not_whitelisted", message: msg })
-      : res.status(403).type("html").send(`${escapeHtml(msg)} <a href="/device/${encodeURIComponent(pairCode)}">Back</a>`);
-  }
-
-  if (denyIfDisabled(req, res, resolved.ownerUserId, "popup")) return;
-
-  const message = String(req.body?.message || "").slice(0, 2000);
 
   const commandId = crypto.randomUUID();
 
@@ -2126,55 +2908,30 @@ app.post("/api/device/:pairCode/popup", requireDiscord, requireNotBanned, enforc
     payload: { commandId, message, deviceCount: resolved.deviceIds.length }
   });
 
-  const sent = sendToPairedDevices(resolved.deviceIds, {
-    type: "command",
-    commandId,
-    command: { type: "popup", message }
-  });
+  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "popup", message }, 15000);
 
-  const ok = sent > 0;
-  const msg = ok
-    ? `Sent popup to ${sent} online device(s).`
-    : `No paired devices online.`;
+  if (!result.ok) return res.send(result.error || "No devices online");
 
-  incrementCommandsSentTotal({
-    senderDiscordId: req.user.discord_id,
-    targetOwnerDiscordId: resolved.ownerUserId
-  });
+  const failed = result.acks.some((a) => !a?.ok);
+  if (!failed) return res.send("Sent to device");
 
-  if (wantsJson(req)) {
-    return res.json({
-      ok,
-      sent,
-      ownerUserId: resolved.ownerUserId,
-      pairCode,
-      deviceCount: resolved.deviceIds.length,
-      message: msg
-    });
-  }
-
-  return res.type("html").send(`${msg} <a href="/device/${pairCode}">Back</a>`);
+  return res.send(renderAcks(result.acks));
 });
 
-app.post("/api/device/:pairCode/open_url", requireDiscord, requireNotBanned, enforceWebCooldownForNewUsers, (req, res) => {
+app.post("/api/device/:pairCode/open_url", requireDiscord, async (req, res) => {
   const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
+  const url = String(req.body?.url || "").trim();
+
+  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
+
+  const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
+  if (!policy.ok) return;
 
   const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).send("Unknown code");
+  if (!resolved) return res.send("Invalid code");
 
   if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    const msg = "You are not allowed to control this user (whitelist enabled).";
-    return wantsJson(req)
-      ? res.status(403).json({ ok:false, reason:"not_whitelisted", message: msg })
-      : res.status(403).type("html").send(`${escapeHtml(msg)} <a href="/device/${encodeURIComponent(pairCode)}">Back</a>`);
-  }
-
-  if (denyIfDisabled(req, res, resolved.ownerUserId, "open_url")) return;
-
-  const url = String(req.body?.url || "").trim();
-  if (!/^https?:\/\//i.test(url)) {
-    return res.type("html").send(`Bad URL. Must start with http(s). <a href="/device/${pairCode}">Back</a>`);
+    return res.send("Not allowed");
   }
 
   const commandId = crypto.randomUUID();
@@ -2188,62 +2945,30 @@ app.post("/api/device/:pairCode/open_url", requireDiscord, requireNotBanned, enf
     payload: { commandId, url, deviceCount: resolved.deviceIds.length }
   });
 
+  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "open_url", url }, 15000);
+
+  if (!result.ok) return res.send(result.error || "No devices online");
+
+  const failed = result.acks.some((a) => !a?.ok);
+  if (!failed) return res.send("Sent to device");
+
+  return res.send(renderAcks(result.acks));
+});
+
+app.post("/api/device/:pairCode/image_popup", requireDiscord, async (req, res) => {
+  const pairCode = String(req.params.pairCode || "").trim();
+  const url = String(req.body?.url || "").trim();
+
+  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
+
   const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
   if (!policy.ok) return;
 
-  const sent = sendToPairedDevices(resolved.deviceIds, {
-    type: "command",
-    commandId,
-    command: { type: "open_url", url }
-  });
-
-  const ok = sent > 0;
-  const msg = ok
-    ? `Sent to ${sent} online device(s).`
-    : `No paired devices online.`;
-
-  incrementCommandsSentTotal({
-    senderDiscordId: req.user.discord_id,
-    targetOwnerDiscordId: resolved.ownerUserId
-  });
-
-  if (wantsJson(req)) {
-    return res.json({
-      ok,
-      sent,
-      ownerUserId: resolved.ownerUserId,
-      pairCode,
-      deviceCount: resolved.deviceIds.length,
-      message: msg
-    });
-  }
-
-  return res.type("html").send(
-    ok
-      ? `${msg} <a href="/device/${pairCode}">Back</a>`
-      : `${msg} <a href="/device/${pairCode}">Back</a>`
-  );
-});
-
-app.post("/api/device/:pairCode/image_popup", requireDiscord, requireNotBanned, enforceWebCooldownForNewUsers, (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
-
   const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).send("Unknown code");
+  if (!resolved) return res.send("Invalid code");
 
   if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    const msg = "You are not allowed to control this user (whitelist enabled).";
-    return wantsJson(req)
-      ? res.status(403).json({ ok:false, reason:"not_whitelisted", message: msg })
-      : res.status(403).type("html").send(`${escapeHtml(msg)} <a href="/device/${encodeURIComponent(pairCode)}">Back</a>`);
-  }
-
-  if (denyIfDisabled(req, res, resolved.ownerUserId, "image_popup")) return;
-
-  const url = String(req.body?.url || "").trim();
-  if (!/^https?:\/\//i.test(url)) {
-    return res.type("html").send(`Bad URL (must start with http/https). <a href="/device/${pairCode}">Back</a>`);
+    return res.send("Not allowed");
   }
 
   const commandId = crypto.randomUUID();
@@ -2257,75 +2982,35 @@ app.post("/api/device/:pairCode/image_popup", requireDiscord, requireNotBanned, 
     payload: { commandId, url, deviceCount: resolved.deviceIds.length }
   });
 
+  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "image_popup", url }, 20000);
+
+  if (!result.ok) return res.send(result.error || "No devices online");
+
+  const failed = result.acks.some((a) => !a?.ok);
+  if (!failed) return res.send("Sent to device");
+
+  return res.send(renderAcks(result.acks));
+});
+
+app.post("/api/device/:pairCode/set_wallpaper", requireDiscord, async (req, res) => {
+  const pairCode = String(req.params.pairCode || "").trim();
+  const url = String(req.body?.url || "").trim();
+
+  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
+
+  const clean = url.split("#")[0].split("?")[0].toLowerCase();
+  if (!clean.endsWith(".png") && !clean.endsWith(".jpg") && !clean.endsWith(".jpeg")) {
+    return res.send("Invalid file type");
+  }
+
   const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
   if (!policy.ok) return;
 
-  const sent = sendToPairedDevices(resolved.deviceIds, {
-    type: "command",
-    commandId,
-    command: { type: "image_popup", url }
-  });
-
-  const ok = sent > 0;
-  const msg = ok
-    ? `Sent to ${sent} online device(s).`
-    : `No paired devices online.`;
-
-  incrementCommandsSentTotal({
-    senderDiscordId: req.user.discord_id,
-    targetOwnerDiscordId: resolved.ownerUserId
-  });
-
-  if (wantsJson(req)) {
-    return res.json({
-      ok,
-      sent,
-      ownerUserId: resolved.ownerUserId,
-      pairCode,
-      deviceCount: resolved.deviceIds.length,
-      message: msg
-    });
-  }
-
-  return res.type("html").send(
-    ok
-      ? `${msg} <a href="/device/${pairCode}">Back</a>`
-      : `${msg} <a href="/device/${pairCode}">Back</a>`
-  );
-});
-
-app.post("/api/device/:pairCode/set_wallpaper", requireDiscord, requireNotBanned, enforceWebCooldownForNewUsers, async (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
-
   const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.status(404).send("Unknown code");
+  if (!resolved) return res.send("Invalid code");
 
   if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    const msg = "You are not allowed to control this user (whitelist enabled).";
-    return wantsJson(req)
-      ? res.status(403).json({ ok:false, reason:"not_whitelisted", message: msg })
-      : res.status(403).type("html").send(`${escapeHtml(msg)} <a href="/device/${encodeURIComponent(pairCode)}">Back</a>`);
-  }
-
-  if (denyIfDisabled(req, res, resolved.ownerUserId, "set_wallpaper")) return;
-
-  const url = String(req.body?.url || "").trim();
-  if (!isHttpUrl(url)) {
-    const msg = "Bad URL (must start with http/https).";
-    return wantsJson(req) ? res.status(400).json({ ok:false, message: msg }) : res.type("html").send(`${msg} <a href="/device/${pairCode}">Back</a>`);
-  }
-
-  if (!isAllowedWallpaperExt(url)) {
-    const msg = "Wallpaper must end in .png or .jpg/.jpeg (no gifs/videos).";
-    return wantsJson(req) ? res.status(400).json({ ok:false, message: msg }) : res.type("html").send(`${msg} <a href="/device/${pairCode}">Back</a>`);
-  }
-
-  try {
-    await verifyWallpaperUrl(url);
-  } catch (e) {
-    const msg = e?.message || "URL failed validation.";
-    return wantsJson(req) ? res.status(400).json({ ok:false, message: msg }) : res.type("html").send(`${msg} <a href="/device/${pairCode}">Back</a>`);
+    return res.send("Not allowed");
   }
 
   const commandId = crypto.randomUUID();
@@ -2339,34 +3024,45 @@ app.post("/api/device/:pairCode/set_wallpaper", requireDiscord, requireNotBanned
     payload: { commandId, url, deviceCount: resolved.deviceIds.length }
   });
 
-  const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
-  if (!policy.ok) return;
+  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "set_wallpaper", url }, 20000);
 
-  const sent = sendToPairedDevices(resolved.deviceIds, {
-    type: "command",
-    commandId,
-    command: { type: "set_wallpaper", url }
-  });
+  if (!result.ok) return res.send(result.error || "No devices online");
 
-  const ok = sent > 0;
-  const msg = ok ? `Sent to ${sent} online device(s).` : `No paired devices online.`;
+  const failed = result.acks.some((a) => !a?.ok);
+  if (!failed) return res.send("Sent to device");
 
-  incrementCommandsSentTotal({
-    senderDiscordId: req.user.discord_id,
-    targetOwnerDiscordId: resolved.ownerUserId
-  });
+  return res.send(renderAcks(result.acks));
+});
 
-  if (wantsJson(req)) {
-    return res.json({
-      ok,
-      sent,
-      ownerUserId: resolved.ownerUserId,
-      pairCode,
-      deviceCount: resolved.deviceIds.length,
-      message: msg
-    });
+app.post("/favorites/toggle", requireDiscord, (req, res) => {
+  const me = req.viewUser.discord_id;
+  const target = String(req.body?.discordId || "");
+
+  if (!target)
+    return res.status(400).json({ ok: false, error: "missing_discordId" });
+  if (target === me)
+    return res.status(400).json({ ok: false, error: "cannot_favorite_self" });
+
+  const exists = db
+    .prepare(
+      `
+    SELECT 1 FROM favorites
+    WHERE user_id = ? AND favorite_user_id = ?
+  `,
+    )
+    .get(me, target);
+
+  if (exists) {
+    db.prepare(
+      `DELETE FROM favorites WHERE user_id = ? AND favorite_user_id = ?`,
+    ).run(me, target);
+    return res.json({ ok: true, favorited: false });
+  } else {
+    db.prepare(
+      `INSERT OR IGNORE INTO favorites (user_id, favorite_user_id) VALUES (?, ?)`,
+    ).run(me, target);
+    return res.json({ ok: true, favorited: true });
   }
-  return res.type("html").send(`${msg} <a href="/device/${pairCode}">Back</a>`);
 });
 
 app.use(express.static(path.join(__dirname, "../public")));
@@ -2376,11 +3072,13 @@ function loadCatalogItems() {
   const raw = fs.readFileSync(file, "utf8");
   const data = JSON.parse(raw);
   const items = Array.isArray(data.items) ? data.items : [];
-  return items.map(it => ({
-    key: String(it.key || "").trim(),
-    label: String(it.label || "").trim(),
-    sort: Number.isFinite(Number(it.sort)) ? Number(it.sort) : 0,
-  })).filter(it => it.key && it.label);
+  return items
+    .map((it) => ({
+      key: String(it.key || "").trim(),
+      label: String(it.label || "").trim(),
+      sort: Number.isFinite(Number(it.sort)) ? Number(it.sort) : 0,
+    }))
+    .filter((it) => it.key && it.label);
 }
 
 function syncCatalogToDb() {
@@ -2411,25 +3109,36 @@ function syncCatalogToDb() {
   });
 
   tx();
-  console.log(`[catalog] synced ${items.length} items` + (CATALOG_PRUNE ? " (prune ON)" : " (prune OFF)"));
+  console.log(
+    `[catalog] synced ${items.length} items` +
+      (CATALOG_PRUNE ? " (prune ON)" : " (prune OFF)"),
+  );
 }
 
 syncCatalogToDb();
 
 function getCatalogItems() {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT key, label
     FROM list_items
     ORDER BY sort_order ASC, label COLLATE NOCASE ASC
-  `).all();
+  `,
+    )
+    .all();
 }
 
 function getUserSelections(userId) {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT list_key, item_key
     FROM user_list_items
     WHERE user_id=?
-  `).all(userId);
+  `,
+    )
+    .all(userId);
 
   const out = { favorites: new Set(), dislikes: new Set() };
   for (const r of rows) {
@@ -2442,27 +3151,35 @@ function getUserSelections(userId) {
 function setUserItem(userId, listKey, itemKey, enabled) {
   if (!LISTS[listKey]) throw new Error("bad_list_key");
 
-  const exists = db.prepare(`SELECT key FROM list_items WHERE key=?`).get(itemKey);
+  const exists = db
+    .prepare(`SELECT key FROM list_items WHERE key=?`)
+    .get(itemKey);
   if (!exists) throw new Error("bad_item_key");
 
-  const otherListKey = (listKey === "favorites") ? "dislikes" : "favorites";
+  const otherListKey = listKey === "favorites" ? "dislikes" : "favorites";
 
   const tx = db.transaction(() => {
     if (enabled) {
-      db.prepare(`
+      db.prepare(
+        `
         DELETE FROM user_list_items
         WHERE user_id=? AND list_key=? AND item_key=?
-      `).run(userId, otherListKey, itemKey);
+      `,
+      ).run(userId, otherListKey, itemKey);
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT OR IGNORE INTO user_list_items (user_id, list_key, item_key, created_at)
         VALUES (?, ?, ?, ?)
-      `).run(userId, listKey, itemKey, Date.now());
+      `,
+      ).run(userId, listKey, itemKey, Date.now());
     } else {
-      db.prepare(`
+      db.prepare(
+        `
         DELETE FROM user_list_items
         WHERE user_id=? AND list_key=? AND item_key=?
-      `).run(userId, listKey, itemKey);
+      `,
+      ).run(userId, listKey, itemKey);
     }
   });
 
@@ -2470,7 +3187,11 @@ function setUserItem(userId, listKey, itemKey, enabled) {
 }
 
 app.get("/download/client", requireDiscord, requireNotBanned, (req, res) => {
-  const filePath = path.join(__dirname, "../downloads", "PlayCtrl.me Client_0.1.8_x64-setup.exe");
+  const filePath = path.join(
+    __dirname,
+    "../downloads",
+    "PlayCtrl.me Client_0.1.10_x64-setup.exe",
+  );
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).type("html").send("Client installer not found.");
@@ -2481,20 +3202,24 @@ app.get("/download/client", requireDiscord, requireNotBanned, (req, res) => {
 
 app.get("/admin", requireDiscord, requireAdmin, (req, res) => {
   renderWithLayout(res, "pages/admin/admin_main", {
-    title: "PlayCtrl.me"
+    title: "PlayCtrl.me",
   });
 });
 
 app.get("/admin/admins", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.admins = db.prepare(`
+  res.locals.admins = db
+    .prepare(
+      `
     SELECT a.discord_id, a.is_bootstrap, u.username, u.global_name, a.added_by, a.created_at
     FROM admins a
     LEFT JOIN users u ON u.discord_id = a.discord_id
     ORDER BY a.is_bootstrap DESC, a.created_at DESC
-  `).all();
+  `,
+    )
+    .all();
 
   renderWithLayout(res, "pages/admin/manage/mng_main", {
-    title: "PlayCtrl.me"
+    title: "PlayCtrl.me",
   });
 });
 
@@ -2502,13 +3227,21 @@ app.post("/admin/admins/add", requireDiscord, requireAdmin, (req, res) => {
   const id = String(req.body?.discord_id || "").trim();
   if (!/^\d{10,20}$/.test(id)) return res.status(400).send("Bad discord id");
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO admins (discord_id, added_by, created_at)
     VALUES (?, ?, ?)
     ON CONFLICT(discord_id) DO NOTHING
-  `).run(id, req.user.discord_id, Date.now());
+  `,
+  ).run(id, req.user.discord_id, Date.now());
 
-  logEvent({ type: "admin_added", actorUserId: req.user.discord_id, targetUserId: id, req, payload: {} });
+  logEvent({
+    type: "admin_added",
+    actorUserId: req.user.discord_id,
+    targetUserId: id,
+    req,
+    payload: {},
+  });
   res.redirect("/admin/admins");
 });
 
@@ -2516,7 +3249,9 @@ app.post("/admin/admins/remove", requireDiscord, requireAdmin, (req, res) => {
   const targetId = String(req.body?.discord_id || "").trim();
   if (!targetId) return res.status(400).send("bad_request");
 
-  const row = db.prepare(`SELECT is_bootstrap FROM admins WHERE discord_id=?`).get(targetId);
+  const row = db
+    .prepare(`SELECT is_bootstrap FROM admins WHERE discord_id=?`)
+    .get(targetId);
   if (!row) return res.status(404).send("not_found");
 
   if (row.is_bootstrap) {
@@ -2534,20 +3269,27 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
   const q = String(req.query.q || "").trim();
   const typesParam = String(req.query.types || "").trim();
   const selectedTypes = typesParam
-    ? typesParam.split(",").map(s => s.trim()).filter(Boolean)
+    ? typesParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
     : [];
 
   res.locals.q = q;
   res.locals.selectedTypes = selectedTypes;
 
-  const typeRows = db.prepare(`
+  const typeRows = db
+    .prepare(
+      `
     SELECT type, COUNT(*) as c
     FROM events
     GROUP BY type
     ORDER BY c DESC
     LIMIT 80
-  `).all();
-  res.locals.allTypes = typeRows.map(r => r.type);
+  `,
+    )
+    .all();
+  res.locals.allTypes = typeRows.map((r) => r.type);
 
   const where = [];
   const args = {};
@@ -2578,13 +3320,19 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const total = Number(db.prepare(`
+  const total = Number(
+    db
+      .prepare(
+        `
     SELECT COUNT(*) as n
     FROM events e
     LEFT JOIN users au ON au.discord_id = e.actor_user_id
     LEFT JOIN users tu ON tu.discord_id = e.target_user_id
     ${whereSql}
-  `).get(args)?.n || 0);
+  `,
+      )
+      .get(args)?.n || 0,
+  );
   res.locals.total = total;
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -2593,7 +3341,9 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
   res.locals.pages = pages;
   res.locals.safePage = safePage;
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       e.created_at, e.type, e.actor_user_id, e.target_user_id, e.pair_code, e.device_id, e.payload,
 
@@ -2613,7 +3363,9 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
     ${whereSql}
     ORDER BY e.created_at DESC
     LIMIT ${PAGE_SIZE} OFFSET ${offset}
-  `).all(args);
+  `,
+    )
+    .all(args);
   res.locals.rows = rows;
 
   function userChip(prefix, id, username, globalName, avatar) {
@@ -2630,15 +3382,19 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
   }
   res.locals.userChip = userChip;
 
-  res.locals.cards = rows.map(r => {
+  res.locals.cards = rows.map((r) => {
     const when = new Date(r.created_at).toISOString();
     const payloadObj = tryJson(r.payload);
-    const pretty = payloadObj ? JSON.stringify(payloadObj, null, 2) : String(r.payload || "");
+    const pretty = payloadObj
+      ? JSON.stringify(payloadObj, null, 2)
+      : String(r.payload || "");
 
     let summary = "";
     if (payloadObj && typeof payloadObj === "object") {
       const title = payloadObj.title ? `title="${payloadObj.title}"` : "";
-      const msg = payloadObj.message ? `message="${String(payloadObj.message).slice(0, 80)}"` : "";
+      const msg = payloadObj.message
+        ? `message="${String(payloadObj.message).slice(0, 80)}"`
+        : "";
       const url = payloadObj.url ? `url="${payloadObj.url}"` : "";
       const cmdId = payloadObj.commandId ? `cmd=${payloadObj.commandId}` : "";
       summary = [cmdId, title, msg, url].filter(Boolean).join(" • ");
@@ -2648,17 +3404,17 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
       type: r.type,
       pair_code: r.pair_code,
       device_id: r.device_id,
-  
+
       actor_id: r.actor_id,
       actor_username: r.actor_username,
       actor_global_name: r.actor_global_name,
       actor_avatar: r.actor_avatar,
-  
+
       target_id: r.target_id,
       target_username: r.target_username,
       target_global_name: r.target_global_name,
       target_avatar: r.target_avatar,
-  
+
       when,
       summary,
       pretty,
@@ -2678,19 +3434,24 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
   res.locals.nextDisabled = safePage >= pages;
 
   const maxPageOptions = Math.min(pages, 400);
-  res.locals.pageOptionsHtml = Array.from({ length: maxPageOptions }, (_, i) => {
-    const n = i + 1;
-    const sel = n === safePage ? "selected" : "";
-    return `<option value="${n}" ${sel}>${n}</option>`;
-  }).join("");
+  res.locals.pageOptionsHtml = Array.from(
+    { length: maxPageOptions },
+    (_, i) => {
+      const n = i + 1;
+      const sel = n === safePage ? "selected" : "";
+      return `<option value="${n}" ${sel}>${n}</option>`;
+    },
+  ).join("");
 
   renderWithLayout(res, "pages/admin/logs/logs_main", {
-    title: "Admin Logs"
+    title: "Admin Logs",
   });
 });
 
 app.get("/admin/bans", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.users = db.prepare(`
+  res.locals.users = db
+    .prepare(
+      `
     SELECT
       u.discord_id, u.username, u.global_name, u.avatar,
       b.discord_id AS banned, b.reason, b.banned_by, b.created_at AS banned_at
@@ -2698,34 +3459,41 @@ app.get("/admin/bans", requireDiscord, requireAdmin, (req, res) => {
     LEFT JOIN bans b ON b.discord_id = u.discord_id
     ORDER BY (b.discord_id IS NOT NULL) DESC, u.created_at DESC
     LIMIT 2000
-  `).all();
-  
+  `,
+    )
+    .all();
+
   renderWithLayout(res, "pages/admin/bans/bans_main", {
-    title: "PlayCtrl.me"
+    title: "PlayCtrl.me",
   });
 });
 
 app.post("/admin/bans/ban", requireDiscord, requireAdmin, (req, res) => {
   const targetId = String(req.body?.discord_id || "").trim();
-  const reason = String(req.body?.reason || "").trim().slice(0, 300);
+  const reason = String(req.body?.reason || "")
+    .trim()
+    .slice(0, 300);
 
-  if (!/^\d{10,20}$/.test(targetId)) return res.status(400).send("Bad discord id");
+  if (!/^\d{10,20}$/.test(targetId))
+    return res.status(400).send("Bad discord id");
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO bans (discord_id, reason, banned_by, created_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(discord_id) DO UPDATE SET
       reason=excluded.reason,
       banned_by=excluded.banned_by,
       created_at=excluded.created_at
-  `).run(targetId, reason || null, req.user.discord_id, Date.now());
+  `,
+  ).run(targetId, reason || null, req.user.discord_id, Date.now());
 
   logEvent({
     type: "user_banned",
     actorUserId: req.user.discord_id,
     targetUserId: targetId,
     req,
-    payload: { reason: reason || null }
+    payload: { reason: reason || null },
   });
 
   res.redirect("/admin/bans");
@@ -2733,7 +3501,8 @@ app.post("/admin/bans/ban", requireDiscord, requireAdmin, (req, res) => {
 
 app.post("/admin/bans/unban", requireDiscord, requireAdmin, (req, res) => {
   const targetId = String(req.body?.discord_id || "").trim();
-  if (!/^\d{10,20}$/.test(targetId)) return res.status(400).send("Bad discord id");
+  if (!/^\d{10,20}$/.test(targetId))
+    return res.status(400).send("Bad discord id");
 
   db.prepare(`DELETE FROM bans WHERE discord_id=?`).run(targetId);
 
@@ -2742,24 +3511,28 @@ app.post("/admin/bans/unban", requireDiscord, requireAdmin, (req, res) => {
     actorUserId: req.user.discord_id,
     targetUserId: targetId,
     req,
-    payload: {}
+    payload: {},
   });
 
   res.redirect("/admin/bans");
 });
 
 app.get("/admin/invites", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.rows = db.prepare(`
+  res.locals.rows = db
+    .prepare(
+      `
     SELECT created_at, created_by, used_at, used_by
     FROM invite_codes
     ORDER BY created_at DESC
     LIMIT 500
-  `).all();
+  `,
+    )
+    .all();
 
   res.locals.enrollmentOpen = isEnrollmentOpen();
 
   renderWithLayout(res, "pages/admin/invites/inv_main", {
-    title: "Invites"
+    title: "Invites",
   });
 });
 
@@ -2802,137 +3575,189 @@ app.post("/admin/invites/new", requireDiscord, requireAdmin, (req, res) => {
     actorUserId: createdBy,
     targetUserId: null,
     req,
-    payload: { count: codes.length }
+    payload: { count: codes.length },
   });
 
-  const codeHtml = codes.map(c => `<li style="font-family:monospace;font-size:16px;">${escapeHtml(c)}</li>`).join("");
+  const codeHtml = codes
+    .map(
+      (c) =>
+        `<li style="font-family:monospace;font-size:16px;">${escapeHtml(c)}</li>`,
+    )
+    .join("");
 
-  res.type("html").send(layout({
-    title: "Invites Generated",
-    user: req.viewUser,
-    isAdmin: req.viewIsAdmin,
-    body: `
+  res.type("html").send(
+    layout({
+      title: "Invites Generated",
+      user: req.viewUser,
+      isAdmin: req.viewIsAdmin,
+      body: `
       <h1>Invite codes generated</h1>
       <p>Copy these now — you won’t be able to view them again.</p>
       <ol>${codeHtml}</ol>
       <p><a href="/admin/invites">Back to Invites</a></p>
-    `
-  }));
+    `,
+    }),
+  );
 });
 
-app.post("/admin/invites/enrollment-toggle", requireDiscord, requireAdmin, (req, res) => {
-  const enabled = String(req.body?.enabled || "0") === "1";
+app.post(
+  "/admin/invites/enrollment-toggle",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const enabled = String(req.body?.enabled || "0") === "1";
 
-  setSetting("enrollment_open", enabled ? "1" : "0");
+    setSetting("enrollment_open", enabled ? "1" : "0");
 
-  try {
-    logEvent({
-      type: "enrollment_toggle",
-      actorUserId: req.user.discord_id,
-      targetUserId: null,
-      req,
-      payload: { enrollment_open: enabled ? 1 : 0 }
-    });
-  } catch {}
+    try {
+      logEvent({
+        type: "enrollment_toggle",
+        actorUserId: req.user.discord_id,
+        targetUserId: null,
+        req,
+        payload: { enrollment_open: enabled ? 1 : 0 },
+      });
+    } catch {}
 
-  if ((req.headers["x-requested-with"] || "") === "XMLHttpRequest") {
-    return res.json({ ok: true, enrollment_open: enabled });
-  }
+    if ((req.headers["x-requested-with"] || "") === "XMLHttpRequest") {
+      return res.json({ ok: true, enrollment_open: enabled });
+    }
 
-  return res.redirect("/admin/invites");
-});
+    return res.redirect("/admin/invites");
+  },
+);
 
 app.get("/admin/url-blocklist", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.pending = db.prepare(`
+  res.locals.pending = db
+    .prepare(
+      `
     SELECT host, sample_url, first_seen_at, last_seen_at, seen_count
     FROM url_verification_queue
     WHERE decided IS NULL
     ORDER BY last_seen_at DESC
     LIMIT 500
-  `).all();
+  `,
+    )
+    .all();
 
   renderWithLayout(res, "pages/admin/blocklist/bl_main", {
-    title: "URL Blocklist"
+    title: "URL Blocklist",
   });
 });
 
+app.get(
+  "/admin/url-blocklist/list",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const which = String(req.query.which || "allow").toLowerCase();
+    const qRaw = String(req.query.q || "");
+    const q = qRaw.trim().toLowerCase();
+    const offset = Math.max(0, Number(req.query.offset || 0) || 0);
+    const limit = Math.min(
+      500,
+      Math.max(10, Number(req.query.limit || 200) || 200),
+    );
 
-app.get("/admin/url-blocklist/list", requireDiscord, requireAdmin, (req, res) => {
-  const which = String(req.query.which || "allow").toLowerCase();
-  const qRaw = String(req.query.q || "");
-  const q = qRaw.trim().toLowerCase();
-  const offset = Math.max(0, Number(req.query.offset || 0) || 0);
-  const limit = Math.min(500, Math.max(10, Number(req.query.limit || 200) || 200));
+    const set = which === "block" ? getBlockSet() : getAllowSet();
 
-  const set = which === "block" ? getBlockSet() : getAllowSet();
+    let items = Array.from(set);
+    if (q) items = items.filter((h) => String(h).toLowerCase().includes(q));
+    items.sort();
 
-  let items = Array.from(set);
-  if (q) items = items.filter(h => String(h).toLowerCase().includes(q));
-  items.sort();
+    const total = items.length;
+    const page = items.slice(offset, offset + limit);
 
-  const total = items.length;
-  const page = items.slice(offset, offset + limit);
+    res.json({
+      ok: true,
+      which,
+      total,
+      offset,
+      limit,
+      items: page,
+    });
+  },
+);
 
-  res.json({
-    ok: true,
-    which,
-    total,
-    offset,
-    limit,
-    items: page
-  });
-});
+app.post(
+  "/admin/url-blocklist/allow/add",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const host = String(req.body?.host || "").trim();
+    appendHostToFile(ALLOWLIST_PATH, host);
+    return res.json({ ok: true });
+  },
+);
 
-app.post("/admin/url-blocklist/allow/add", requireDiscord, requireAdmin, (req, res) => {
-  const host = String(req.body?.host || "").trim();
-  appendHostToFile(ALLOWLIST_PATH, host);
-  return res.json({ ok:true });
-});
+app.post(
+  "/admin/url-blocklist/allow/remove",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const host = String(req.body?.host || "").trim();
+    removeHostFromFile(ALLOWLIST_PATH, host);
+    return res.json({ ok: true });
+  },
+);
 
-app.post("/admin/url-blocklist/allow/remove", requireDiscord, requireAdmin, (req, res) => {
-  const host = String(req.body?.host || "").trim();
-  removeHostFromFile(ALLOWLIST_PATH, host);
-  return res.json({ ok:true });
-});
+app.post(
+  "/admin/url-blocklist/block/add",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const host = String(req.body?.host || "").trim();
+    appendHostToFile(BLOCKLIST_PATH, host);
+    return res.json({ ok: true });
+  },
+);
 
-app.post("/admin/url-blocklist/block/add", requireDiscord, requireAdmin, (req, res) => {
-  const host = String(req.body?.host || "").trim();
-  appendHostToFile(BLOCKLIST_PATH, host);
-  return res.json({ ok:true });
-});
+app.post(
+  "/admin/url-blocklist/block/remove",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const host = String(req.body?.host || "").trim();
+    removeHostFromFile(BLOCKLIST_PATH, host);
+    return res.json({ ok: true });
+  },
+);
 
-app.post("/admin/url-blocklist/block/remove", requireDiscord, requireAdmin, (req, res) => {
-  const host = String(req.body?.host || "").trim();
-  removeHostFromFile(BLOCKLIST_PATH, host);
-  return res.json({ ok:true });
-});
+app.post(
+  "/admin/url-blocklist/queue/decide",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const host = String(req.body?.host || "")
+      .trim()
+      .toLowerCase();
+    const decision = String(req.body?.decision || "").trim();
+    if (!host || (decision !== "allow" && decision !== "block")) {
+      return res.status(400).json({ ok: false, message: "Bad request." });
+    }
 
-app.post("/admin/url-blocklist/queue/decide", requireDiscord, requireAdmin, (req, res) => {
-  const host = String(req.body?.host || "").trim().toLowerCase();
-  const decision = String(req.body?.decision || "").trim();
-  if (!host || (decision !== "allow" && decision !== "block")) {
-    return res.status(400).json({ ok:false, message:"Bad request." });
-  }
+    if (decision === "allow") appendHostToFile(ALLOWLIST_PATH, host);
+    if (decision === "block") appendHostToFile(BLOCKLIST_PATH, host);
 
-  if (decision === "allow") appendHostToFile(ALLOWLIST_PATH, host);
-  if (decision === "block") appendHostToFile(BLOCKLIST_PATH, host);
-  
-  db.prepare(`
+    db.prepare(
+      `
     UPDATE url_verification_queue
     SET decided=?, decided_by=?, decided_at=?
     WHERE host=?
-  `).run(decision, req.user.discord_id, Date.now(), host);
+  `,
+    ).run(decision, req.user.discord_id, Date.now(), host);
 
-  logEvent({
-    type: "url_queue_decided",
-    actorUserId: req.user.discord_id,
-    targetUserId: null,
-    req,
-    payload: { host, decision }
-  });
+    logEvent({
+      type: "url_queue_decided",
+      actorUserId: req.user.discord_id,
+      targetUserId: null,
+      req,
+      payload: { host, decision },
+    });
 
-  return res.json({ ok:true });
-});
+    return res.json({ ok: true });
+  },
+);
 
 app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
   const PAGE_SIZE = 50;
@@ -2940,7 +3765,8 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
   const page = Math.max(1, parseIntSafe(req.query.page, 1));
   const q = String(req.query.q || "").trim();
   const sortKey = String(req.query.sort || "commands").trim();
-  const dir = (String(req.query.dir || "desc").toLowerCase() === "asc") ? "ASC" : "DESC";
+  const dir =
+    String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
   res.locals.q = q;
   res.locals.dir = dir;
 
@@ -2972,7 +3798,10 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
 
   const orderBy = SORT_MAP[sortKey] || SORT_MAP.commands;
 
-  const total = Number(db.prepare(`
+  const total = Number(
+    db
+      .prepare(
+        `
     SELECT COUNT(*) AS n
     FROM users u
     LEFT JOIN pair_codes pc
@@ -2980,7 +3809,10 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
         SELECT MAX(rowid) FROM pair_codes WHERE user_id = u.discord_id
       )
     ${whereSql}
-  `).get(args)?.n || 0);
+  `,
+      )
+      .get(args)?.n || 0,
+  );
   res.locals.total = total;
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -2989,7 +3821,9 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
   res.locals.pages = pages;
   res.locals.safePage = safePage;
 
-  res.locals.rows = db.prepare(`
+  res.locals.rows = db
+    .prepare(
+      `
     SELECT
       u.discord_id,
       u.username,
@@ -3006,7 +3840,9 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
     ${whereSql}
     ORDER BY ${orderBy} ${dir}, u.discord_id ASC
     LIMIT ${PAGE_SIZE} OFFSET ${offset}
-  `).all(args);
+  `,
+    )
+    .all(args);
 
   function qs(nextPage) {
     const p = new URLSearchParams();
@@ -3033,75 +3869,103 @@ app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
     ["username", "Username"],
     ["discord", "Discord ID"],
     ["paircode", "Pair code"],
-  ].map(([k, label]) => {
-    const sel = (k === sortKey) ? "selected" : "";
-    return `<option value="${escapeHtml(k)}" ${sel}>${escapeHtml(label)}</option>`;
-  }).join("");
+  ]
+    .map(([k, label]) => {
+      const sel = k === sortKey ? "selected" : "";
+      return `<option value="${escapeHtml(k)}" ${sel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
 
   renderWithLayout(res, "pages/admin/users/usr_main", {
-    title: "Users"
+    title: "Users",
   });
 });
 
-app.post("/admin/users/set-commands", requireDiscord, requireAdmin, (req, res) => {
-  try{
-    const targetId = String(req.body?.discord_id || "").trim();
-    const nRaw = req.body?.commands_sent_total;
-    const n = Number.parseInt(String(nRaw), 10);
+app.post(
+  "/admin/users/set-commands",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    try {
+      const targetId = String(req.body?.discord_id || "").trim();
+      const nRaw = req.body?.commands_sent_total;
+      const n = Number.parseInt(String(nRaw), 10);
 
-    if (!/^\d{10,20}$/.test(targetId)) {
-      return res.status(400).json({ ok:false, message:"Bad discord id" });
-    }
-    if (!Number.isFinite(n) || n < 0) {
-      return res.status(400).json({ ok:false, message:"Bad commands_sent_total" });
-    }
+      if (!/^\d{10,20}$/.test(targetId)) {
+        return res.status(400).json({ ok: false, message: "Bad discord id" });
+      }
+      if (!Number.isFinite(n) || n < 0) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Bad commands_sent_total" });
+      }
 
-    db.prepare(`
+      db.prepare(
+        `
       UPDATE users
       SET commands_sent_total = ?
       WHERE discord_id = ?
-    `).run(n, targetId);
+    `,
+      ).run(n, targetId);
 
-    logEvent({
-      type: "admin_set_commands_sent",
-      actorUserId: req.user.discord_id,
-      targetUserId: targetId,
-      req,
-      payload: { commands_sent_total: n }
-    });
+      logEvent({
+        type: "admin_set_commands_sent",
+        actorUserId: req.user.discord_id,
+        targetUserId: targetId,
+        req,
+        payload: { commands_sent_total: n },
+      });
 
-    return res.json({ ok:true });
-  }catch(e){
-    return res.status(500).json({ ok:false, message: "Server error" });
-  }
-});
+      return res.json({ ok: true });
+    } catch (e) {
+      return res.status(500).json({ ok: false, message: "Server error" });
+    }
+  },
+);
 
-app.post("/admin/users/:discordId/commands-sent", requireDiscord, requireAdmin, (req, res) => {
-  const uid = String(req.params.discordId || "").trim();
-  if (!uid) return res.status(400).json({ ok:false, message:"Missing user id" });
+app.post(
+  "/admin/users/:discordId/commands-sent",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const uid = String(req.params.discordId || "").trim();
+    if (!uid)
+      return res.status(400).json({ ok: false, message: "Missing user id" });
 
-  const nRaw = req.body?.commands_sent_total;
-  const n = Math.max(0, Math.floor(Number(nRaw)));
-  if (!Number.isFinite(n)) return res.status(400).json({ ok:false, message:"Bad number" });
+    const nRaw = req.body?.commands_sent_total;
+    const n = Math.max(0, Math.floor(Number(nRaw)));
+    if (!Number.isFinite(n))
+      return res.status(400).json({ ok: false, message: "Bad number" });
 
-  const info = db.prepare(`
+    const info = db
+      .prepare(
+        `
     UPDATE users
     SET commands_sent_total = @n
     WHERE discord_id = @uid
-  `).run({ n, uid });
+  `,
+      )
+      .run({ n, uid });
 
-  if (!info.changes) return res.status(404).json({ ok:false, message:"User not found" });
-  return res.json({ ok:true });
-});
+    if (!info.changes)
+      return res.status(404).json({ ok: false, message: "User not found" });
+    return res.json({ ok: true });
+  },
+);
 
 function getHostListPage(filePath, { q = "", offset = 0, limit = 200 } = {}) {
-  q = String(q || "").trim().toLowerCase();
+  q = String(q || "")
+    .trim()
+    .toLowerCase();
   offset = Math.max(0, Number(offset) || 0);
   limit = Math.min(500, Math.max(10, Number(limit) || 200));
 
-  const set = loadHostSetCached(filePath, filePath === ALLOWLIST_PATH ? cacheAllow : cacheBlock);
+  const set = loadHostSetCached(
+    filePath,
+    filePath === ALLOWLIST_PATH ? cacheAllow : cacheBlock,
+  );
   let arr = Array.from(set);
-  if (q) arr = arr.filter(h => h.includes(q));
+  if (q) arr = arr.filter((h) => h.includes(q));
   arr.sort();
 
   const total = arr.length;
@@ -3109,16 +3973,21 @@ function getHostListPage(filePath, { q = "", offset = 0, limit = 200 } = {}) {
   return { total, offset, limit, items: page };
 }
 
-app.get("/admin/url-blocklist/list", requireDiscord, requireAdmin, (req, res) => {
-  const which = String(req.query.which || "allow").toLowerCase();
-  const q = String(req.query.q || "");
-  const offset = Number(req.query.offset || 0);
-  const limit = Number(req.query.limit || 200);
+app.get(
+  "/admin/url-blocklist/list",
+  requireDiscord,
+  requireAdmin,
+  (req, res) => {
+    const which = String(req.query.which || "allow").toLowerCase();
+    const q = String(req.query.q || "");
+    const offset = Number(req.query.offset || 0);
+    const limit = Number(req.query.limit || 200);
 
-  const filePath = which === "block" ? BLOCKLIST_PATH : ALLOWLIST_PATH;
-  const page = getHostListPage(filePath, { q, offset, limit });
-  res.json({ ok: true, which, ...page });
-});
+    const filePath = which === "block" ? BLOCKLIST_PATH : ALLOWLIST_PATH;
+    const page = getHostListPage(filePath, { q, offset, limit });
+    res.json({ ok: true, which, ...page });
+  },
+);
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -3136,7 +4005,9 @@ wss.on("connection", (ws, req) => {
       return;
     }
 
-    const row = db.prepare("SELECT device_token_hash FROM devices_v2 WHERE device_id=?").get(deviceId);
+    const row = db
+      .prepare("SELECT device_token_hash FROM devices_v2 WHERE device_id=?")
+      .get(deviceId);
     if (!row) {
       ws.close(1008, "Unknown device");
       return;
@@ -3152,29 +4023,35 @@ wss.on("connection", (ws, req) => {
     ws.on("pong", () => {
       ws.isAlive = true;
       try {
-        db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(Date.now(), deviceId);
+        db.prepare(
+          "UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?",
+        ).run(Date.now(), deviceId);
       } catch {}
     });
 
     wsByDeviceId.set(deviceId, ws);
-    db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(Date.now(), deviceId);
+    db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(
+      Date.now(),
+      deviceId,
+    );
 
     ws.send(JSON.stringify({ type: "hello", deviceId }));
 
     ws.on("message", (data) => {
       let msg;
-      try { msg = JSON.parse(data.toString("utf8")); } catch { return; }
+      try { msg = JSON.parse(data); } catch { return; }
 
-      if (msg?.type === "ack" && typeof msg.commandId === "string") {
-        db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(Date.now(), deviceId);
-      }
+      handleIncomingAck(msg);
     });
 
     ws.on("close", () => {
-      if (deviceId && wsByDeviceId.get(deviceId) === ws) wsByDeviceId.delete(deviceId);
+      if (deviceId && wsByDeviceId.get(deviceId) === ws)
+        wsByDeviceId.delete(deviceId);
     });
   } catch (e) {
-    try { ws.close(); } catch {}
+    try {
+      ws.close();
+    } catch {}
   }
 });
 
@@ -3186,14 +4063,20 @@ const hbTimer = setInterval(() => {
     }
 
     if (ws.isAlive === false) {
-      try { ws.terminate(); } catch {}
+      try {
+        ws.terminate();
+      } catch {}
       wsByDeviceId.delete(deviceId);
       continue;
     }
 
     ws.isAlive = false;
-    try { ws.ping(); } catch {
-      try { ws.terminate(); } catch {}
+    try {
+      ws.ping();
+    } catch {
+      try {
+        ws.terminate();
+      } catch {}
       wsByDeviceId.delete(deviceId);
     }
   }
