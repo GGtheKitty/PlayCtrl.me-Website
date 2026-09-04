@@ -13,6 +13,7 @@ const db = require("./db");
 const { renderWithLayout } = require("./views/render");
 const { createAuthMiddleware } = require("./middleware/auth");
 const { createAdminActivityService } = require("./services/admin_activity");
+const { createApiKeyHasher } = require("./services/api_key_hashing");
 const {
   createMediaUrlResolverService,
 } = require("./services/media_url_resolvers");
@@ -770,6 +771,22 @@ function hmac(s) {
 }
 const CLIENT_PAIRING_ENCRYPTION_KEY =
   process.env.CLIENT_PAIRING_ENCRYPTION_KEY || `fallback:${PEPPER}`;
+const API_KEY_HASH_PEPPER =
+  process.env.API_KEY_HASH_PEPPER ||
+  process.env.CLIENT_PAIRING_ENCRYPTION_KEY ||
+  "";
+if (!API_KEY_HASH_PEPPER && process.env.NODE_ENV === "production") {
+  throw new Error(
+    "API_KEY_HASH_PEPPER or CLIENT_PAIRING_ENCRYPTION_KEY is required in production",
+  );
+}
+const {
+  hashApiKey,
+  hashLegacyApiKey,
+  isCurrentApiKeyHash,
+} = createApiKeyHasher({
+  pepper: API_KEY_HASH_PEPPER || CLIENT_PAIRING_ENCRYPTION_KEY,
+});
 if (!process.env.CLIENT_PAIRING_ENCRYPTION_KEY) {
   console.warn(
     "[pairing] CLIENT_PAIRING_ENCRYPTION_KEY is not set; using the PEPPER-derived fallback.",
@@ -801,9 +818,6 @@ function gen6() {
 
 function genApiKey() {
   return "pc_" + crypto.randomBytes(32).toString("base64url");
-}
-function hashApiKey(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
 function ensureUserApiKeyExists(userId) {
@@ -8714,21 +8728,30 @@ function requireApiKey(req, res, next) {
   if (!raw) return res.status(401).json({ ok: false, code: "NO_API_KEY" });
 
   const key_hash = hashApiKey(raw);
+  const legacyKeyHash = hashLegacyApiKey(raw);
 
   const row = db
     .prepare(
       `
     SELECT
       k.user_id,
+      k.key_hash AS stored_key_hash,
       IFNULL(u.commands_sent_total, 0) AS commands_sent_total
     FROM api_keys k
     JOIN users u ON u.discord_id = k.user_id
-    WHERE k.key_hash = ?
+    WHERE k.key_hash IN (?, ?)
+    ORDER BY CASE WHEN k.key_hash = ? THEN 0 ELSE 1 END
   `,
     )
-    .get(key_hash);
+    .get(key_hash, legacyKeyHash, key_hash);
 
   if (!row) return res.status(401).json({ ok: false, code: "INVALID_API_KEY" });
+
+  if (!isCurrentApiKeyHash(row.stored_key_hash)) {
+    db.prepare(
+      `UPDATE api_keys SET key_hash=? WHERE user_id=? AND key_hash=?`,
+    ).run(key_hash, row.user_id, legacyKeyHash);
+  }
 
   if (row.commands_sent_total < API_MIN_COMMANDS) {
     return res.status(403).json({
