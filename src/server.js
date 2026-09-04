@@ -4,6 +4,7 @@ const http = require("http");
 const WebSocket = require("ws");
 const crypto = require("crypto");
 const cors = require("cors");
+const { rateLimit } = require("express-rate-limit");
 const fs = require("fs");
 const { Readable } = require("stream");
 require("dotenv").config();
@@ -58,6 +59,18 @@ const GB = 1024 * 1024 * 1024;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const AWAY_WINDOW_MS = DAY_MS;
+const WEB_RATE_LIMIT_WINDOW_MS = Math.max(
+  1000,
+  Number(process.env.WEB_RATE_LIMIT_WINDOW_MS) || 60 * 1000,
+);
+const WEB_RATE_LIMIT_MAX = Math.max(
+  1,
+  Number(process.env.WEB_RATE_LIMIT_MAX) || 300,
+);
+const WEB_WRITE_RATE_LIMIT_MAX = Math.max(
+  1,
+  Number(process.env.WEB_WRITE_RATE_LIMIT_MAX) || 60,
+);
 const QUEUED_COMMAND_SEND_DELAY_MS = Number(
   process.env.QUEUED_COMMAND_SEND_DELAY_MS || 5000,
 );
@@ -8824,8 +8837,48 @@ const uploadJsonParser = express.json({
   strict: true,
   limit: `${UPLOAD_REQUEST_LIMIT_MB}mb`,
 });
+const generalRequestLimiter = rateLimit({
+  windowMs: WEB_RATE_LIMIT_WINDOW_MS,
+  limit: WEB_RATE_LIMIT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  skip: (req) => req.method === "OPTIONS",
+});
+const writeRequestLimiter = rateLimit({
+  windowMs: WEB_RATE_LIMIT_WINDOW_MS,
+  limit: WEB_WRITE_RATE_LIMIT_MAX,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  skip: (req) =>
+    req.method === "GET" ||
+    req.method === "HEAD" ||
+    req.method === "OPTIONS",
+});
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "./views"));
+app.set("trust proxy", 1);
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Device-Id",
+      "X-Requested-With",
+    ],
+    exposedHeaders: [
+      "RateLimit",
+      "RateLimit-Policy",
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+      "Retry-After",
+    ],
+  }),
+);
+app.use(generalRequestLimiter);
+app.use(writeRequestLimiter);
 app.use(express.static(path.join(__dirname, "../public")));
 app.use(cookieParser());
 app.use((req, res, next) => {
@@ -8842,26 +8895,6 @@ app.use((req, res, next) => {
   return defaultJsonParser(req, res, next);
 });
 app.use(express.urlencoded({ extended: false }));
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Device-Id",
-      "X-Requested-With",
-    ],
-    exposedHeaders: [
-      "X-RateLimit-Limit",
-      "X-RateLimit-Remaining",
-      "X-RateLimit-Reset",
-      "Retry-After",
-    ],
-  }),
-);
-
-app.set("trust proxy", 1);
 
 app.use((req, res, next) => {
   const canonicalUrl = buildSiteUrl(req.path);
