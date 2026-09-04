@@ -1,6 +1,24 @@
 <!doctype html>
 <html lang="en">
 
+<%
+  const effectivePresenceStatus = String(
+    currentPresenceStatus || (anyOnline ? "online" : "offline"),
+  ).trim() || "offline";
+  const effectivePresenceLabel =
+    effectivePresenceStatus === "online"
+      ? "Online"
+      : effectivePresenceStatus === "away"
+        ? "Away"
+        : "Offline";
+  const effectivePresenceClass =
+    effectivePresenceStatus === "online"
+      ? "statusPill--on"
+      : effectivePresenceStatus === "away"
+        ? "statusPill--away"
+        : "statusPill--off";
+%>
+
 <head>
   <link rel="stylesheet" href="/css/profile.css">
 </head>
@@ -9,6 +27,22 @@
   
   <%- include("../../common/commands_sent") %>
 
+  <% if (isDelegatedProfile) { %>
+    <div class="delegationBanner">
+      <div>
+        <div class="delegationBannerTitle">
+          Controlling <%= user.global_name || user.username || user.discord_id %>
+        </div>
+        <div class="muted">
+          Signed in as <%= delegatedActorDisplayName || actorUser?.username || actorUser?.discord_id %>. Account secrets and device pairing stay on your own account.
+        </div>
+      </div>
+      <form method="POST" action="/profile/leash/return">
+        <button class="controlUrlCopyBtn" type="submit">Return to yourself</button>
+      </form>
+    </div>
+  <% } %>
+
   <div class="profileGrid">
 
     <div style="display:flex; flex-direction:column; gap:18px;">
@@ -16,33 +50,185 @@
       <div class="card">
         <div class="cardHd">
           <span>Profile</span>
-          <form method="POST" action="/profile/reset-code" style="margin:0;">
-            <button class="miniDanger" type="submit" title="This will reset your pairing code">
-              Reset code
-            </button>
-          </form>
+          <% if (canManageAccountSecurity) { %>
+            <form method="POST" action="/profile/reset-code" style="margin:0;">
+              <button
+                class="miniDanger"
+                type="submit"
+                title="<%= pairCodeCanResetNow ? "This will reset your pairing code" : "You can reset your pairing code again after " + (pairCodeNextResetLabel || "the cooldown ends") %>"
+                <% if (!pairCodeCanResetNow) { %>disabled aria-disabled="true"<% } %>
+              >
+                Reset code
+              </button>
+            </form>
+          <% } %>
         </div>
 
         <div class="cardBd">
-          <div class="row">
-            <img class="profileAvi" src="<%= discordAvatarUrl(user, 64) %>" alt="" />
-            <div>
-              <div style="font-weight:900;font-size:16px;">
-                <%= user.global_name || user.username %>
+          <% if (profileFlash) { %>
+            <div class="profileFlash <%= profileFlashIsError ? "profileFlash--error" : "" %>">
+              <%= profileFlash.text %>
+            </div>
+          <% } %>
+
+          <div class="profileIdentityRow">
+            <div class="profileUserBlock">
+              <img
+                id="profileAvatarImg"
+                class="profileAvi"
+                src="<%= siteAvatarUrl(user, 64) %><%= controlLinkAvatarVersion ? `&v=${encodeURIComponent(controlLinkAvatarVersion)}` : "" %>"
+                alt=""
+              />
+              <div class="profileIdentity">
+                <div id="profileDisplayNameText" class="profileDisplayName">
+                  <%= controlLinkDisplayName %>
+                </div>
+                <div class="muted profileUsername"><%= user.username ? "@" + user.username : "" %></div>
               </div>
-              <div class="muted"><%= user.username ? "@" + user.username : "" %></div>
+            </div>
+
+            <div class="profileActionRow" data-control-theme="<%= controlLinkTheme %>">
+              <button id="profileControlThemeEditBtn" class="controlEditBtn profileActionBtn" type="button">
+                Edit
+              </button>
+
+              <div
+                id="statusPill"
+                class="statusPill <%= effectivePresenceClass %>"
+                title="Live status"
+              >
+                <span class="statusDot"></span>
+                <span id="statusText"><%= effectivePresenceLabel %></span>
+              </div>
             </div>
           </div>
 
-          <div style="margin-top:14px;" class="muted">Your pairing code:</div>
-          <div class="pairCode"><%= code %></div>
-
-          <div class="muted" style="margin-top:10px;">Your control page:</div>
-          <div style="margin-top:6px;">
-            <a class="plainLink" href="/device/<%= encodeURIComponent(code) %>">
+          <div class="muted" style="margin-top:16px;">Your control page:</div>
+          <div class="controlUrlRow" style="margin-top:6px;">
+            <a class="plainLink controlUrlLink" href="/device/<%= encodeURIComponent(code) %>">
               <%= fullControlUrl %>
             </a>
+            <button
+              class="controlUrlCopyBtn"
+              id="copyControlUrlBtn"
+              type="button"
+              data-copy-text="<%= fullControlUrl %>"
+            >
+              Copy
+            </button>
           </div>
+
+          <% if (canManageAccountSecurity) { %>
+            <section class="profileConnectionHub" aria-label="Device connection and security">
+              <div class="profileConnectionSummary">
+                <div>
+                  <div class="profileConnectionTitle">Device connections</div>
+                  <div class="muted profileConnectionHint">
+                    <%= clientCredentialMeta?.required
+                      ? "Protected mode is active. New devices require your client secret."
+                      : "Connect normally or use your client secret to activate protected mode." %>
+                  </div>
+                </div>
+                <span class="clientSecretMode <%= clientCredentialMeta?.required ? 'isProtected' : '' %>">
+                  <%= clientCredentialMeta?.required ? "Protected" : "Compatibility mode" %>
+                </span>
+              </div>
+              <div class="profileConnectionActions">
+                <button id="profileConnectDeviceBtn" class="profileConnectionPrimary" type="button">
+                  Connect a device
+                </button>
+                <button id="profileManageDevicesBtn" class="controlUrlCopyBtn" type="button">
+                  Manage <%= Number(clientPairedDevices?.length || 0) %> device<%= Number(clientPairedDevices?.length || 0) === 1 ? "" : "s" %>
+                </button>
+              </div>
+            </section>
+          <% } %>
+
+          <%
+            const customControlRequiredCommands = Number(customControlUrlMinCommands || 200);
+          %>
+          <details class="customControlUrlSection">
+            <summary class="customControlUrlSummary">
+              <span class="customControlUrlSummaryText">
+                <span class="customControlUrlTitleRow">
+                  <span class="customControlUrlTitle">Custom control page URL</span>
+                </span>
+                <span class="muted customControlUrlSummaryHint">
+                  <% if (customControlUrlEligible) { %>
+                    Optional shortcut for your control page.
+                  <% } else { %>
+                    Requires <%= customControlRequiredCommands.toLocaleString() %>+ commands sent.
+                  <% } %>
+                </span>
+              </span>
+              <span class="customControlUrlChevron" aria-hidden="true"></span>
+            </summary>
+
+            <div class="customControlUrlPanel">
+              <div class="muted">Your custom control page:</div>
+
+              <% if (customControlFullUrl) { %>
+                <div class="controlUrlRow" style="margin-top:6px;">
+                  <a class="plainLink controlUrlLink" href="/c/<%= encodeURIComponent(customControlSlug) %>">
+                    <%= customControlFullUrl %>
+                  </a>
+                  <button
+                    class="controlUrlCopyBtn"
+                    type="button"
+                    data-copy-text="<%= customControlFullUrl %>"
+                  >
+                    Copy
+                  </button>
+                </div>
+              <% } else { %>
+                <div class="muted customControlUrlEmpty">No custom URL set yet.</div>
+              <% } %>
+
+              <% if (customControlUrlEligible) { %>
+                <div class="customControlUrlForm">
+                  <label class="muted customControlUrlLabel" for="customControlSlugInput">
+                    Set custom path
+                  </label>
+
+                  <div class="customControlUrlInputRow">
+                    <span class="customControlUrlPrefix">playctrl.me/c/</span>
+                    <input
+                      id="customControlSlugInput"
+                      class="customControlUrlInput"
+                      type="text"
+                      maxlength="<%= Number(customControlUrlMaxLength || 32) %>"
+                      pattern="[A-Za-z0-9]{<%= Number(customControlUrlMinLength || 4) %>,<%= Number(customControlUrlMaxLength || 32) %>}"
+                      value="<%= customControlSlug || "" %>"
+                      placeholder="example"
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                    <button
+                      id="saveCustomControlSlugBtn"
+                      class="controlUrlCopyBtn"
+                      type="button"
+                    >
+                      Save
+                    </button>
+                  </div>
+
+                  <div class="muted customControlUrlHint">
+                    Pick a cleaner public link like <span class="mono">playctrl.me/c/example</span>.
+                  </div>
+
+                  <div id="customControlSlugStatus" class="muted customControlUrlStatus">
+                    <% if (!customControlUrlCanChangeNow && customControlUrlNextChangeLabel) { %>
+                      You can change it again after <%= customControlUrlNextChangeLabel %>.
+                    <% } %>
+                  </div>
+                </div>
+              <% } else { %>
+                <div class="muted customControlUrlHint">
+                  Custom control pages unlock after <%= customControlRequiredCommands.toLocaleString() %>+ commands sent.
+                </div>
+              <% } %>
+            </div>
+          </details>
 
           <div style="margin-top:14px;">
             <a class="btnLink" href="/download/client">Download Client (Windows)</a>
@@ -66,64 +252,178 @@
           </div>
 
           <div id="discoverStatus" class="muted" style="margin-top:10px;"></div>
+
+          <div class="switchRow" style="margin-top:12px;">
+            <div>
+              <div class="switchLabel">Away mode</div>
+              <div class="switchHint">Commands sent while you're away queue until you're online again.</div>
+            </div>
+
+            <label class="switch" title="Toggle Away mode">
+              <input id="awayModeToggle" type="checkbox" <%= awayModeEnabled ? "checked" : "" %> />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="switchRow" style="margin-top:12px;">
+            <div>
+              <div class="switchLabel">Disable custom backgrounds</div>
+              <div class="switchHint">When enabled, control links you view will skip custom background images. Helpful for photosensitivity.</div>
+            </div>
+
+            <label class="switch" title="Toggle custom backgrounds">
+              <input id="disableCustomBackgroundsToggle" type="checkbox" <%= disableCustomBackgroundsOn ? "checked" : "" %> />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div id="disableCustomBackgroundsStatus" class="muted" style="margin-top:10px;"></div>
+
+          <div class="switchRow" style="margin-top:12px;">
+            <div>
+              <div class="switchLabel">Hide me from leaderboards</div>
+              <div class="switchHint">When enabled, you will be excluded from the home page command leaderboards.</div>
+            </div>
+
+            <label class="switch" title="Toggle leaderboard visibility">
+              <input id="excludeFromLeaderboardsToggle" type="checkbox" <%= excludeFromLeaderboardsOn ? "checked" : "" %> />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div id="excludeFromLeaderboardsStatus" class="muted" style="margin-top:10px;"></div>
         </div>
-
-        <%- include("./whitelist") %>
-
       </div>
 
-      <%- include("./api_card") %>
+      <div class="card">
+        <div class="cardHd">
+          <span>Strikes</span>
+          <a class="btnLink" href="/profile/strikes">View details</a>
+        </div>
 
+        <div class="cardBd">
+          <div class="strikeSummaryRow">
+            <div>
+              <div class="muted">Current strikes</div>
+              <div class="strikeSummaryValue"><%= Number(currentStrikeCount || 0) %> / <%= Number(maxUserStrikes || 3) %></div>
+            </div>
 
+            <div class="strikeMeter" aria-hidden="true">
+              <% for (let i = 0; i < Number(maxUserStrikes || 3); i += 1) { %>
+                <span class="strikeMeterDot <%= i < Number(currentStrikeCount || 0) ? "isOn" : "" %>"></span>
+              <% } %>
+            </div>
+          </div>
+
+          <div class="muted" style="margin-top:10px;">
+            Reaching <%= Number(maxUserStrikes || 3) %> strikes results in an immediate ban.
+          </div>
+
+          <div class="muted" style="margin-top:6px;">
+            <% if (Number(currentStrikeCount || 0) > 0 && nextStrikeDecayLabel) { %>
+              If you avoid new strikes, 1 strike will expire after <%= nextStrikeDecayLabel %>. New strikes reset this timer.
+            <% } else { %>
+              Active strikes expire one at a time after 30 days without a new strike.
+            <% } %>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div style="display:flex; flex-direction:column; gap:18px;">
-      <div class="card">
-        <div class="cardHd">Control Page Commands</div>
-        <div class="cardBd">
-          <div class="muted" style="margin-bottom:12px;">
-            Toggle what appears on your control page. Disabled commands are also blocked at the API level.
+      <%- include("./friends") %>
+      <%- include("./about_me") %>
+      <%- include("./whitelist") %>
+      <% if (canManageAccountSecurity) { %>
+        <%- include("./api_card") %>
+      <% } %>
+    </div>
+
+    <% if (canManageAccountSecurity) { %>
+      <template id="tpl_profile_connect_device">
+      <div class="connectDeviceFlow" data-client-secret-ui>
+        <div class="connectDeviceStep">
+          <div class="connectDeviceStepNumber">1</div>
+          <div class="connectDeviceStepBody">
+            <div class="connectDeviceStepTitle">Enter your pairing code</div>
+            <div class="muted connectDeviceStepHint">Use this code in the PlayCtrl.me client.</div>
+            <div class="connectDeviceCredentialRow">
+              <span class="pairCode connectDevicePairCode"><%= code %></span>
+              <button class="controlUrlCopyBtn" type="button" data-copy-pair-code="<%= code %>">Copy</button>
+            </div>
+            <% if (!pairCodeCanResetNow && pairCodeNextResetLabel && !profileFlashIsError) { %>
+              <div class="muted profileResetHint">You can reset it again after <%= pairCodeNextResetLabel %>.</div>
+            <% } %>
           </div>
+        </div>
 
-          <div class="cmdGrid">
-
-            <%- include("../../functions/commandToggle", {
-                cmd: "popup",
-                title: "Send Message",
-                hint: "Let people send a popup message.",
-                enabled: !!prefs.allow_popup
-              }) %>
-
-            <%- include("../../functions/commandToggle", {
-                cmd: "image_popup",
-                title: "Send Image Popup",
-                hint: "Let people send an image popup.",
-                enabled: !!prefs.allow_image_popup
-              }) %>
-
-            <%- include("../../functions/commandToggle", {
-                cmd: "open_url",
-                title: "Open URL",
-                hint: "Let people open a URL on your device.",
-                enabled: !!prefs.allow_open_url
-              }) %>
-
-            <%- include("../../functions/commandToggle", {
-                cmd: "set_wallpaper",
-                title: "Set Wallpaper",
-                hint: "Let people set your wallpaper.",
-                enabled: !!prefs.allow_set_wallpaper
-              }) %>
-
+        <div class="connectDeviceStep">
+          <div class="connectDeviceStepNumber">2</div>
+          <div class="connectDeviceStepBody">
+            <div class="connectDeviceStepTitle">Add your client secret</div>
+            <div class="muted connectDeviceStepHint">
+              This unlocks command history. The first verified pairing disconnects every legacy device and activates protected mode.
+            </div>
+            <button
+              id="clientSecretRevealSurface"
+              class="clientSecretRevealSurface isBlurred"
+              type="button"
+              aria-label="Reveal client secret"
+            >
+              <span id="clientSecretValue" class="clientSecretValue">pcs_FAKE-CODE-HIDDEN-000000</span>
+            </button>
+            <div class="clientSecretActions">
+              <button id="clientSecretResetBtn" class="miniDanger" type="button">Reset secret</button>
+            </div>
+            <div id="clientSecretStatus" class="muted clientSecretStatus" aria-live="polite"></div>
           </div>
-
-          <div id="cmdStatus" class="muted" style="margin-top:12px;"></div>
         </div>
       </div>
+      </template>
 
-      <%- include("./about_me") %>
+      <template id="tpl_profile_manage_devices">
+      <div class="deviceManager" data-device-manager>
+        <div class="deviceManagerSummary">
+          <strong data-device-summary-count><%= Number(clientPairedDevices?.length || 0) %> paired device<%= Number(clientPairedDevices?.length || 0) === 1 ? "" : "s" %></strong>
+          <span class="clientSecretMode <%= clientCredentialMeta?.required ? 'isProtected' : '' %>">
+            <%= clientCredentialMeta?.required ? "Protected" : "Compatibility mode" %>
+          </span>
+        </div>
+        <input class="deviceManagerSearch" type="search" placeholder="Search devices…" data-device-search />
+        <div class="clientDeviceList" data-device-list>
+          <% (clientPairedDevices || []).forEach((device) => { %>
+            <div class="clientDeviceRow" data-device-row data-device-search-text="<%= String(device.deviceName || device.deviceId).toLowerCase() %> <%= String(device.deviceId).toLowerCase() %>">
+              <div>
+                <div class="clientDeviceName"><%= device.deviceName || device.deviceId %></div>
+                <% if (device.deviceName) { %><div class="muted clientDeviceId"><%= device.deviceId %></div><% } %>
+              </div>
+              <span class="clientDeviceTrust <%= device.authLevel === 'verified' ? 'isVerified' : '' %>">
+                <%= device.authLevel === "verified" ? "Verified" : "Legacy" %>
+              </span>
+              <button class="clientDeviceRevokeBtn miniDanger" type="button" data-client-device-revoke="<%= device.deviceId %>">Revoke</button>
+            </div>
+          <% }) %>
+          <div class="muted deviceManagerEmpty" data-device-empty <%= clientPairedDevices?.length ? "hidden" : "" %>>No paired devices.</div>
+        </div>
+        <div class="muted clientSecretStatus" data-device-manager-status aria-live="polite"></div>
+      </div>
+      </template>
+    <% } %>
 
+    <div id="cmdModal" class="cmdModal" style="display:none;" aria-hidden="true">
+      <div class="cmdModalBackdrop" data-cmd-modal-close="1"></div>
+
+      <div class="cmdModalCard" role="dialog" aria-modal="true" aria-labelledby="cmdModalTitle">
+        <div class="cmdModalHd">
+          <div id="cmdModalTitle" class="cmdModalTitle">Command</div>
+          <button id="cmdModalClose" class="cmdModalClose" type="button" data-cmd-modal-close="1">Close</button>
+        </div>
+
+        <div id="cmdModalBody" class="cmdModalBody"></div>
+      </div>
     </div>
+
+    <%- include("../control_links/control_theme_template") %>
 
     <%- include("pf_scripts", { user }) %>
 

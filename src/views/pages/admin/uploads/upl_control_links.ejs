@@ -1,0 +1,139 @@
+<link rel="stylesheet" href="/css/admin_uploads.css">
+
+<div class="uploadAdminPage">
+  <div class="uploadAdminPanel">
+    <div class="uploadAdminPanelHd">
+      <div>
+        <h1>Control Link Uploads</h1>
+        <p class="uploadAdminMuted">Custom profile pictures, banners, and background images grouped by user for quick review and removal.</p>
+      </div>
+      <div class="uploadAdminPanelActions">
+        <a class="uploadAdminBtn uploadAdminBtn--ghost" href="/admin/uploads">Back to Uploads</a>
+        <a class="uploadAdminBtn" href="/admin">Back</a>
+      </div>
+    </div>
+
+    <div class="uploadAdminStats">
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Users</span>
+        <span id="controlLinkAssetUserCount" class="uploadAdminStatValue"><%= Number(controlLinkAssetStats?.userCount || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Assets</span>
+        <span id="controlLinkAssetCount" class="uploadAdminStatValue"><%= Number(controlLinkAssetStats?.assetCount || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Storage</span>
+        <span id="controlLinkAssetBytes" class="uploadAdminStatValue"><%= controlLinkAssetStats?.totalBytesLabel || "0B" %></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="controlLinkAssetGrid" class="controlAssetGrid">
+    <% if (controlLinkAssetCards && controlLinkAssetCards.length) { %>
+      <% for (const card of controlLinkAssetCards) { %>
+        <article
+          class="controlAssetUserCard"
+          data-control-user-card
+          data-control-user-id="<%= card.user.discordId %>"
+        >
+          <div class="controlAssetUserHd">
+            <div class="controlAssetUserIdentity">
+              <img
+                class="controlAssetUserAvatar"
+                src="<%= card.user.avatarUrl || '/default-avatar.svg' %>"
+                alt=""
+              />
+              <div class="controlAssetUserText">
+                <div class="controlAssetUserName"><%= card.user.displayName %></div>
+                <div class="controlAssetUserMeta">
+                  <span>@<%= card.user.username || "unknown" %></span>
+                  <span>•</span>
+                  <span><%= card.user.discordId %></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="controlAssetTiles">
+            <% for (const asset of card.assets) { %>
+              <section
+                class="controlAssetTile controlAssetTile--<%= asset.kind %>"
+                data-control-asset-tile
+                data-control-user-id="<%= card.user.discordId %>"
+                data-control-asset-kind="<%= asset.kind %>"
+                data-control-asset-bytes="<%= Number(asset.bytes || 0) %>"
+                data-control-asset-name="<%= `${card.user.displayName} - ${asset.label}` %>"
+                data-preview-id="control:<%= card.user.discordId %>:<%= asset.kind %>"
+              >
+                <button
+                  class="controlAssetPreviewBtn controlAssetPreviewBtn--<%= asset.kind %>"
+                  type="button"
+                  data-open-control-asset-preview="1"
+                  data-preview-kind="image"
+                  data-preview-url="<%= asset.url %>"
+                  data-preview-name="<%= `${card.user.displayName} - ${asset.label}` %>"
+                  data-preview-id="control:<%= card.user.discordId %>:<%= asset.kind %>"
+                >
+                  <img
+                    src="<%= asset.url %>"
+                    alt="<%= `${card.user.displayName} ${asset.label}` %>"
+                    loading="lazy"
+                  />
+                  <span class="controlAssetPreviewHint">Preview</span>
+                </button>
+
+                <div class="controlAssetTileBd">
+                  <div class="controlAssetTileTitle"><%= asset.label %></div>
+                  <div class="controlAssetTileMeta">
+                    <span><%= asset.sizeLabel %></span>
+                    <span>•</span>
+                    <span><%= asset.updatedAtLabel %></span>
+                  </div>
+                </div>
+
+                <div class="controlAssetTileActions">
+                  <a
+                    class="uploadAdminLink controlAssetActionLink"
+                    href="<%= asset.url %>"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open
+                  </a>
+                  <button
+                    class="uploadAdminDeleteBtn controlAssetDeleteBtn"
+                    type="button"
+                    data-delete-control-asset="1"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </section>
+            <% } %>
+          </div>
+        </article>
+      <% } %>
+    <% } %>
+  </div>
+
+  <div id="controlLinkAssetEmpty" class="uploadAdminEmpty"<%= controlLinkAssetCards && controlLinkAssetCards.length ? ' hidden' : '' %>>
+    No control link uploads are currently stored.
+  </div>
+</div>
+
+<div id="uploadPreviewModal" class="uploadPreviewModal" hidden>
+  <div class="uploadPreviewBackdrop" data-close-preview="1"></div>
+  <div class="uploadPreviewCard" role="dialog" aria-modal="true" aria-labelledby="uploadPreviewTitle">
+    <div class="uploadPreviewHd">
+      <div id="uploadPreviewTitle" class="uploadPreviewTitle">Preview</div>
+      <button class="uploadPreviewClose" type="button" data-close-preview="1">Close</button>
+    </div>
+    <div class="uploadPreviewBd">
+      <img id="uploadPreviewImage" class="uploadPreviewImage" alt="" hidden />
+      <video id="uploadPreviewVideo" class="uploadPreviewVideo" controls playsinline hidden></video>
+    </div>
+  </div>
+</div>
+
+<%- include("upl_scripts") %>

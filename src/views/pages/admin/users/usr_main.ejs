@@ -37,8 +37,9 @@
           <div class="uCard" data-id="<%= (u.discord_id) %>">
             <div class="uTop">
               <div class="uLeft">
-                <img class="uAv" src="<%= discordAvatarUrl({ discord_id: u.discord_id, avatar: u.avatar }, 64) %>" alt="" />
+                <img class="uAv" src="<%= siteAvatarUrl({ discord_id: u.discord_id }, 64) %>" alt="" />
                 <div style="min-width:0;">
+                  <% const queueCount = Number(u.queue_count || 0); %>
                   <div class="uName"><%= (u.global_name || u.username || u.discord_id) %></div>
                   <div class="uMeta">
                     <span class="mono">@<%= (u.username || "") %></span>
@@ -46,18 +47,88 @@
                     <span class="mono"><%= (u.discord_id) %></span>
                   </div>
                   <div class="uMeta">
-                    <span class="pill"><span class="k">pair</span><span class="v"><%= (u.pair_code || "(none)") %></span></span>
+                    <span class="pill">
+                      <span class="k">pair</span>
+                      <span class="v">
+                        <% if (u.pair_code) { %>
+                          <a class="uPairLink" href="/device/<%= encodeURIComponent(u.pair_code) %>"><%= u.pair_code %></a>
+                        <% } else { %>
+                          (none)
+                        <% } %>
+                      </span>
+                    </span>
                     <span class="pill"><span class="k">commands</span><span class="v"><%= Number(u.commands_sent_total || 0) %></span></span>
+                    <span class="pill">
+                      <span class="k">queued</span>
+                      <span class="v">
+                        <% if (queueCount > 0 && u.queue_admin_url) { %>
+                          <a class="uMetaLink" href="<%= u.queue_admin_url %>"><%= queueCount %></a>
+                        <% } else { %>
+                          <%= queueCount %>
+                        <% } %>
+                      </span>
+                    </span>
+                    <span class="pill"><span class="k">strikes</span><span class="v"><%= Number(u.strike_count || 0) %> / 3</span></span>
                     <span class="pill"><span class="k">api limit</span><span class="v"><%= Number(u.api_rate_limit || 0) %></span></span>
+                    <% if (Number(u.is_banned || 0)) { %>
+                      <span class="pill pill--danger"><span class="k">status</span><span class="v">banned</span></span>
+                    <% } %>
                   </div>
                 </div>
               </div>
     
-              <button class="miniBtn" type="button" data-edit="<%= (u.discord_id) %>">Edit commands</button>
+              <div class="uActions">
+                <% if (queueCount > 0 && u.queue_admin_url) { %>
+                  <a class="miniBtn" href="<%= u.queue_admin_url %>">View queue</a>
+                  <button
+                    class="miniBtn miniBtn--danger"
+                    type="button"
+                    data-clear-queue="<%= (u.discord_id) %>"
+                    data-display-name="<%= (u.global_name || u.username || u.discord_id) %>"
+                    data-queue-count="<%= queueCount %>"
+                  >
+                    Clear queue
+                  </button>
+                <% } %>
+                <button class="miniBtn" type="button" data-edit="<%= (u.discord_id) %>">Edit</button>
+              </div>
             </div>
     
             <div class="editRow" style="display:none;" data-edit-row="<%= (u.discord_id) %>">
-              <input class="editInput" type="number" min="0" step="1" value="<%= Number(u.commands_sent_total || 0) %>" />
+              <input
+                class="editInput"
+                type="number"
+                min="0"
+                step="1"
+                title="Commands sent total"
+                placeholder="Commands"
+                value="<%= Number(u.commands_sent_total || 0) %>"
+                data-original-value="<%= Number(u.commands_sent_total || 0) %>"
+                data-commands-input="1"
+              />
+              <input
+                class="editInput editInput--small"
+                type="number"
+                min="0"
+                max="3"
+                step="1"
+                title="Current strikes"
+                placeholder="Strikes"
+                value="<%= Number(u.strike_count || 0) %>"
+                data-original-strike-value="<%= Number(u.strike_count || 0) %>"
+                data-strike-input="1"
+              />
+              <button
+                class="badgeToggleBtn <%= Number(u.has_supporter_badge || 0) ? 'isOn' : '' %>"
+                type="button"
+                data-supporter-toggle="<%= (u.discord_id) %>"
+                data-enabled="<%= Number(u.has_supporter_badge || 0) ? '1' : '0' %>"
+                data-original-enabled="<%= Number(u.has_supporter_badge || 0) ? '1' : '0' %>"
+                aria-pressed="<%= Number(u.has_supporter_badge || 0) ? 'true' : 'false' %>"
+              >
+                <span class="badgeToggleKnob" aria-hidden="true"></span>
+                <span class="badgeToggleLabel">Donor badge</span>
+              </button>
               <button class="btnSm" type="button" data-save="<%= (u.discord_id) %>">Save</button>
               <button class="btnSm" type="button" data-cancel="<%= (u.discord_id) %>">Cancel</button>
               <span class="muted" data-status="<%= (u.discord_id) %>"></span>

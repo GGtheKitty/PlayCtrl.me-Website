@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <div class="card adminReportsCard">
+    <div class="cardHd notificationPageHd">
+      <div>
+        <div><%= adminReportPageTitle || "Reports" %></div>
+        <div class="muted notificationPageSubhead">
+          <%= adminReportPageSubhead || "Newest open reports for admin review." %>
+        </div>
+      </div>
+      <div class="reportAdminPageActions">
+        <a class="btn btn--ghost" href="<%= adminReportModeHref || "/admin/reports/history" %>"><%= adminReportModeLinkLabel || "Reports History" %></a>
+        <a class="btn btn--ghost" href="/admin">Back to Admin</a>
+      </div>
+    </div>
+
+    <div class="cardBd">
+      <div class="reportAdminMetaBar muted">
+        <span><%= adminReportModeCountLabel || "Open reports" %>: <strong><%= adminReportCount || 0 %></strong></span>
+        <% if ((adminReportMode || "open") === "history") { %>
+          <span>Open reports: <strong><%= adminOpenReportCount || 0 %></strong></span>
+        <% } else { %>
+          <span>Resolved reports: <strong><%= adminResolvedReportCount || 0 %></strong></span>
+        <% } %>
+        <% if (adminReportPageSummary) { %>
+          <span><%= adminReportPageSummary %></span>
+        <% } %>
+      </div>
+
+      <% if (adminReportFlash) { %>
+        <div class="reportAdminFlash <%= adminReportFlashIsError ? "reportAdminFlash--error" : "" %>">
+          <%= adminReportFlash %>
+        </div>
+      <% } %>
+
+      <% if ((adminReportTotalPages || 1) > 1) { %>
+        <div class="reportAdminPager">
+          <% if (adminReportHasPrevPage) { %>
+            <a class="reportAdminActionLink" href="<%= adminReportPrevPageHref %>">Previous</a>
+          <% } %>
+          <div class="reportAdminPagerLabel muted">
+            Page <strong><%= adminReportCurrentPage || 1 %></strong> of <strong><%= adminReportTotalPages || 1 %></strong>
+          </div>
+          <% if (adminReportHasNextPage) { %>
+            <a class="reportAdminActionLink" href="<%= adminReportNextPageHref %>">Next</a>
+          <% } %>
+        </div>
+      <% } %>
+
+      <% if (adminReportItems && adminReportItems.length) { %>
+        <div class="reportAdminList">
+          <% adminReportItems.forEach((item) => { %>
+            <% const meta = item.meta || {}; %>
+            <% const isCommandHistoryReport = meta.source === "command_history"; %>
+            <% const isGroupChatMessageReport = meta.sourceKind === "group_chat_message"; %>
+            <% const isCommunityGroupReport = item.subjectType === "community_group"; %>
+            <article class="reportAdminItem">
+              <div class="reportAdminTop">
+                <div class="reportAdminReason"><%= item.reasonLabel %></div>
+                <time class="reportAdminTime" datetime="<%= item.createdIso %>"><%= item.createdLabel %></time>
+              </div>
+
+              <div class="reportAdminLine">
+                Reported <%= (item.subjectTypeLabel || "subject").toLowerCase() %>:
+                <strong><%= item.subjectDisplayName %></strong>
+              </div>
+
+              <div class="reportAdminLine muted">
+                Reported by <strong><%= item.reporterDisplayName %></strong>
+              </div>
+
+              <% if (item.isResolved) { %>
+                <div class="reportAdminLine muted">
+                  Resolved by
+                  <strong><%= item.resolvedByDisplayName || item.resolvedByUserId || "Unknown admin" %></strong>
+                  <% if (item.resolvedLabel) { %>
+                    · <%= item.resolvedLabel %>
+                  <% } %>
+                </div>
+              <% } %>
+
+              <div class="reportAdminIds">
+                <span class="reportAdminIdChip">Subject type: <span class="mono"><%= item.subjectTypeLabel %></span></span>
+                <span class="reportAdminIdChip">Subject ID: <span class="mono"><%= item.subjectId %></span></span>
+                <span class="reportAdminIdChip">Reporter ID: <span class="mono"><%= item.reporterUserId %></span></span>
+                <% if (item.isResolved && item.resolvedByUserId) { %>
+                  <span class="reportAdminIdChip">Resolved by ID: <span class="mono"><%= item.resolvedByUserId %></span></span>
+                <% } %>
+                <% if (item.isResolved) { %>
+                  <span class="reportAdminIdChip">Strikes issued: <span class="mono"><%= Number(item.resolvedStrikeCount || 0) %></span></span>
+                <% } %>
+                <% if (item.currentPairCode) { %>
+                  <span class="reportAdminIdChip">Current pair code: <span class="mono"><%= item.currentPairCode %></span></span>
+                <% } else if (item.subjectPairCode) { %>
+                  <span class="reportAdminIdChip">Reported pair code: <span class="mono"><%= item.subjectPairCode %></span></span>
+                <% } %>
+                <% if (item.mediaBackupOriginalName) { %>
+                  <span class="reportAdminIdChip">
+                    Saved backup:
+                    <span class="mono">
+                      <%= item.mediaBackupOriginalName %><%= item.mediaBackupSizeLabel ? " (" + item.mediaBackupSizeLabel + ")" : "" %>
+                    </span>
+                  </span>
+                <% } %>
+                <% if (isCommandHistoryReport) { %>
+                  <span class="reportAdminIdChip">Source: <span class="mono">Command history</span></span>
+                  <% if (meta.commandTypeLabel) { %>
+                    <span class="reportAdminIdChip">Command: <span class="mono"><%= meta.commandTypeLabel %></span></span>
+                  <% } %>
+                  <% if (meta.commandId) { %>
+                    <span class="reportAdminIdChip">Command ID: <span class="mono"><%= meta.commandId %></span></span>
+                  <% } %>
+                  <% if (meta.sourceEventId) { %>
+                    <span class="reportAdminIdChip">Event ID: <span class="mono"><%= meta.sourceEventId %></span></span>
+                  <% } %>
+                <% } %>
+                <% if (isGroupChatMessageReport) { %>
+                  <span class="reportAdminIdChip">Source: <span class="mono">Group chat</span></span>
+                  <span class="reportAdminIdChip">
+                    Group: <span class="mono"><%= meta.groupLabel || meta.groupKey || "Unknown" %></span>
+                  </span>
+                  <% if (meta.messageId) { %>
+                    <span class="reportAdminIdChip">Message ID: <span class="mono"><%= meta.messageId %></span></span>
+                  <% } %>
+                <% } %>
+                <% if (isCommunityGroupReport) { %>
+                  <span class="reportAdminIdChip">Group key: <span class="mono"><%= meta.groupKey || item.subjectId %></span></span>
+                  <% if (meta.ownerUserId) { %>
+                    <span class="reportAdminIdChip">Owner ID: <span class="mono"><%= meta.ownerUserId %></span></span>
+                  <% } %>
+                <% } %>
+              </div>
+
+              <% if (isCommandHistoryReport && meta.message) { %>
+                <div class="reportAdminDetails">
+                  <strong>Command message:</strong><br>
+                  <%= meta.message %>
+                </div>
+              <% } %>
+
+              <% if (isCommandHistoryReport && meta.url) { %>
+                <div class="reportAdminDetails">
+                  <strong>Command URL:</strong><br>
+                  <%= meta.url %>
+                </div>
+              <% } %>
+
+              <% if (isGroupChatMessageReport && meta.messageBody) { %>
+                <div class="reportAdminDetails">
+                  <strong>Reported group message:</strong><br>
+                  <%= meta.messageBody %>
+                </div>
+              <% } %>
+
+              <% if (item.details) { %>
+                <div class="reportAdminDetails"><%= item.details %></div>
+              <% } %>
+
+              <div class="reportAdminActions">
+                <% if (adminReportShowResolveAction) { %>
+                  <form
+                    class="reportAdminActionForm reportAdminResolveForm"
+                    method="POST"
+                    action="/admin/reports/<%= encodeURIComponent(item.id) %>/resolve"
+                    onsubmit="return confirm('Resolve this report, apply the selected strikes, and clear any saved backups?');"
+                  >
+                    <label class="reportAdminStrikeField">
+                      <span class="muted">Strikes</span>
+                      <select name="strike_count" class="reportAdminStrikeSelect">
+                        <% for (let i = 0; i <= 3; i += 1) { %>
+                          <option value="<%= i %>"><%= i %></option>
+                        <% } %>
+                      </select>
+                    </label>
+                    <button class="reportAdminActionBtn reportAdminActionBtn--resolve" type="submit">Resolve</button>
+                  </form>
+                <% } %>
+                <% if (item.mediaBackupUrl) { %>
+                  <a class="reportAdminActionLink" href="<%= item.mediaBackupUrl %>" target="_blank" rel="noopener noreferrer">Open saved backup</a>
+                <% } %>
+                <% if (item.subjectLinkUrl) { %>
+                  <a class="reportAdminActionLink" href="<%= item.subjectLinkUrl %>">Open control link</a>
+                <% } %>
+                <% if (item.subjectAdminUrl) { %>
+                  <a class="reportAdminActionLink" href="<%= item.subjectAdminUrl %>">View reported user</a>
+                <% } %>
+                <% if (item.reporterAdminUrl) { %>
+                  <a class="reportAdminActionLink" href="<%= item.reporterAdminUrl %>">View reporter</a>
+                <% } %>
+              </div>
+            </article>
+          <% }) %>
+        </div>
+      <% } else { %>
+        <div class="notificationEmpty"><%= adminReportEmptyText || "No reports have been submitted yet." %></div>
+      <% } %>
+
+      <% if ((adminReportTotalPages || 1) > 1) { %>
+        <div class="reportAdminPager reportAdminPager--bottom">
+          <% if (adminReportHasPrevPage) { %>
+            <a class="reportAdminActionLink" href="<%= adminReportPrevPageHref %>">Previous</a>
+          <% } %>
+          <div class="reportAdminPagerLabel muted">
+            Page <strong><%= adminReportCurrentPage || 1 %></strong> of <strong><%= adminReportTotalPages || 1 %></strong>
+          </div>
+          <% if (adminReportHasNextPage) { %>
+            <a class="reportAdminActionLink" href="<%= adminReportNextPageHref %>">Next</a>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</body>
+</html>

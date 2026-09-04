@@ -1,0 +1,123 @@
+<link rel="stylesheet" href="/css/admin_activity.css">
+
+<%
+  const series = adminActivitySelected || {
+    key: "24h",
+    label: "24 Hours",
+    bucketLabel: "Hour",
+    description: "",
+    rangeSummary: "",
+    totalLabel: "0",
+    maxLabel: "0",
+    averageLabel: "0",
+    peakLabel: "No activity recorded.",
+    hasData: false,
+    points: [],
+  };
+%>
+
+<div class="card activityPageCard">
+  <div class="cardHd activityPageHd">
+    <div>
+      <div>Admin Activity</div>
+      <div class="muted activityPageSubhead">
+        Command activity across the site over time.
+      </div>
+    </div>
+
+    <div class="activityPageActions">
+      <a class="btn btn--ghost" href="/admin">Back to Admin</a>
+    </div>
+  </div>
+
+  <div class="cardBd">
+    <div class="activityRangeRow">
+      <a
+        class="btn <%= adminActivityRange === '24h' ? '' : 'btn--ghost' %>"
+        href="/admin/activity?range=24h"
+      >
+        24 Hours
+      </a>
+      <a
+        class="btn <%= adminActivityRange === '7d' ? '' : 'btn--ghost' %>"
+        href="/admin/activity?range=7d"
+      >
+        7 Days
+      </a>
+    </div>
+
+    <div class="activityMeta">
+      <div class="muted"><%= series.description %></div>
+      <div class="muted"><%= series.rangeSummary %></div>
+      <div class="muted"><%= adminActivityIncludesLabel %></div>
+    </div>
+
+    <div class="activityStatsGrid">
+      <div class="activityStatCard">
+        <div class="activityStatLabel">Total Commands</div>
+        <div class="activityStatValue"><%= series.totalLabel %></div>
+      </div>
+      <div class="activityStatCard">
+        <div class="activityStatLabel">Busiest <%= series.bucketLabel %></div>
+        <div class="activityStatValue"><%= series.maxLabel %></div>
+      </div>
+      <div class="activityStatCard">
+        <div class="activityStatLabel">Average Per <%= series.bucketLabel %></div>
+        <div class="activityStatValue"><%= series.averageLabel %></div>
+      </div>
+    </div>
+
+    <div class="activityChartCard">
+      <% if (series.hasData && series.points.length) { %>
+        <div class="activityChartLayout">
+          <div class="activityChartScale" aria-hidden="true">
+            <div><%= series.maxLabel %></div>
+            <div>0</div>
+          </div>
+
+          <div
+            class="activityChart"
+            role="img"
+            aria-label="<%= series.label %> command activity graph"
+          >
+            <div
+              class="activityChartGrid"
+              style="
+                grid-template-columns: repeat(<%= Math.max(1, series.points.length) %>, minmax(26px, 1fr));
+                min-width: <%= Math.max(420, series.points.length * 34) %>px;
+              "
+            >
+              <% series.points.forEach((point) => { %>
+                <div class="activityBarWrap" title="<%= point.tooltip %>" aria-label="<%= point.tooltip %>">
+                  <div class="activityBarValue"><%= point.countLabel %></div>
+                  <div class="activityBarTrack">
+                    <div
+                      class="activityBar<%= point.isPeak ? ' isPeak' : '' %>"
+                      style="height:<%= point.heightPct %>%"
+                    ></div>
+                  </div>
+                  <div class="activityBarLabel"><%= point.tickLabel || "" %></div>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+        </div>
+      <% } else { %>
+        <div class="activityEmptyState">
+          No command activity was recorded in this range.
+        </div>
+      <% } %>
+    </div>
+
+    <div class="activityFootnotes">
+      <div class="activityFootnote">
+        <div class="activityFootnoteLabel">Peak Bucket</div>
+        <div class="activityFootnoteValue"><%= series.peakLabel %></div>
+      </div>
+      <div class="activityFootnote">
+        <div class="activityFootnoteLabel">View</div>
+        <div class="activityFootnoteValue"><%= series.label %></div>
+      </div>
+    </div>
+  </div>
+</div>

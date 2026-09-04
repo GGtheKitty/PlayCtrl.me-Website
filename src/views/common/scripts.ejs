@@ -1,69 +1,443 @@
 <% if (user) { %>
 <script>
-    (function(){
-        const dd = document.getElementById("dd");
-        if (dd) {
-            const btn = document.getElementById("ddBtn");
-            const menu = document.getElementById("ddMenu");
+  (function() {
+    const dd = document.getElementById("dd");
+    const ddBtn = document.getElementById("ddBtn");
+    const ddMenu = document.getElementById("ddMenu");
+    const notifShell = document.getElementById("notifShell");
+    const notifBtn = document.getElementById("notifBellBtn");
+    const notifMenu = document.getElementById("notifMenu");
+    const ham = document.getElementById("hamburgerBtn");
+    const drawer = document.getElementById("drawer");
+    const overlay = document.getElementById("drawerOverlay");
+    const closeBtn = document.getElementById("drawerClose");
+    let currentUnreadCount = Number(notifShell?.getAttribute("data-unread-count") || 0) || 0;
+    let currentTotalCount = Number(notifShell?.getAttribute("data-total-count") || 0) || 0;
+    let notificationsMarkedRead =
+      String(notifBtn?.getAttribute("data-has-unread") || "") !== "1";
+    let notificationReadPromise = null;
 
-            function close(){
-                menu.classList.remove("open");
-                btn.setAttribute("aria-expanded", "false");
-            }
-            
-            function toggle(){
-                const open = menu.classList.toggle("open");
-                btn.setAttribute("aria-expanded", open ? "true" : "false");
-            }
+    function closeUserMenu() {
+      if (!ddBtn || !ddMenu) return;
+      ddMenu.classList.remove("open");
+      ddBtn.setAttribute("aria-expanded", "false");
+    }
 
-            btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                toggle();
-            });
+    function setUserMenuOpen(open) {
+      if (!ddBtn || !ddMenu) return;
+      ddMenu.classList.toggle("open", !!open);
+      ddBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
 
-            document.addEventListener("click", (e) => {
-                if (!dd.contains(e.target)) close();
-            });
+    function setNotifMenuOpen(open) {
+      if (!notifBtn || !notifMenu) return;
+      notifMenu.classList.toggle("open", !!open);
+      notifBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
 
-            document.addEventListener("keydown", (e) => {
-                if (e.key === "Escape") close();
-            });
+    function closeNotifMenu() {
+      setNotifMenuOpen(false);
+    }
+
+    function openDrawer() {
+      if (!ham || !drawer || !overlay) return;
+      drawer.classList.add("open");
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      ham.setAttribute("aria-expanded", "true");
+      document.body.style.overflow = "hidden";
+    }
+
+    function closeDrawer() {
+      if (!ham || !drawer || !overlay) return;
+      drawer.classList.remove("open");
+      overlay.classList.remove("open");
+      overlay.setAttribute("aria-hidden", "true");
+      ham.setAttribute("aria-expanded", "false");
+      document.body.style.overflow = "";
+    }
+
+    function getNotificationLists() {
+      return Array.from(document.querySelectorAll("[data-notification-list]"));
+    }
+
+    function getCompactNotificationLists() {
+      return Array.from(
+        document.querySelectorAll(
+          '[data-notification-list][data-notification-compact="1"]',
+        ),
+      );
+    }
+
+    function createNotificationItemElement(item) {
+      const article = document.createElement("article");
+      article.className =
+        "notificationItem" + (item && item.isUnread ? " notificationItem--unread" : "");
+      article.setAttribute("data-notification-id", String(item?.id || ""));
+
+      const row = document.createElement("div");
+      row.className = "notificationItemRow";
+
+      const main = item && item.actionUrl
+        ? document.createElement("a")
+        : document.createElement("div");
+      main.className = "notificationItemMain";
+
+      if (main instanceof HTMLAnchorElement) {
+        main.href = String(item.actionUrl || "");
+      }
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "notificationItemTitleRow";
+
+      const title = document.createElement("div");
+      title.className = "notificationItemTitle";
+      title.textContent = String(item?.title || "").trim() || "Untitled notification";
+      titleRow.appendChild(title);
+
+      if (item && item.isUnread) {
+        const dot = document.createElement("span");
+        dot.className = "notificationItemDot";
+        dot.setAttribute("aria-hidden", "true");
+        titleRow.appendChild(dot);
+      }
+
+      const message = document.createElement("div");
+      message.className = "notificationItemMessage";
+      message.textContent = String(item?.message || "").trim();
+
+      const meta = document.createElement("div");
+      meta.className = "notificationItemMeta";
+
+      const time = document.createElement("time");
+      time.className = "notificationItemTime";
+      time.dateTime = String(item?.createdIso || "");
+      time.textContent = String(item?.createdLabel || "").trim();
+      meta.appendChild(time);
+
+      if (item && item.actionUrl && item.actionLabel) {
+        const action = document.createElement("span");
+        action.className = "notificationItemAction";
+        action.textContent = String(item.actionLabel || "").trim();
+        meta.appendChild(action);
+      }
+
+      main.appendChild(titleRow);
+      main.appendChild(message);
+      main.appendChild(meta);
+
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "notificationItemClear";
+      clearBtn.type = "button";
+      clearBtn.setAttribute("data-notification-clear", String(item?.id || ""));
+      clearBtn.setAttribute("aria-label", "Clear notification");
+      clearBtn.title = "Clear notification";
+      clearBtn.textContent = "x";
+
+      row.appendChild(main);
+      row.appendChild(clearBtn);
+      article.appendChild(row);
+
+      return article;
+    }
+
+    function renderNotificationItems(list, items) {
+      if (!list) return;
+      list.innerHTML = "";
+
+      const nextItems = Array.isArray(items) ? items : [];
+      if (!nextItems.length) {
+        ensureNotificationListState(list);
+        return;
+      }
+
+      nextItems.forEach((item) => {
+        list.appendChild(createNotificationItemElement(item));
+      });
+    }
+
+    function setNotificationCountLabel(unreadCount, totalCount) {
+      document.querySelectorAll("[data-notification-count-label]").forEach((node) => {
+        if (unreadCount > 0) {
+          node.textContent = unreadCount + " new";
+        } else if (totalCount > 0) {
+          node.textContent = "All caught up";
+        } else {
+          node.textContent = "No notifications";
         }
+      });
+    }
 
-        const ham = document.getElementById("hamburgerBtn");
-        const drawer = document.getElementById("drawer");
-        const overlay = document.getElementById("drawerOverlay");
-        const closeBtn = document.getElementById("drawerClose");
+    function setNotificationBellUnread(hasUnread) {
+      document.querySelectorAll("[data-notification-bell]").forEach((button) => {
+        button.setAttribute("data-has-unread", hasUnread ? "1" : "0");
+      });
 
-        if (!ham || !drawer || !overlay || !closeBtn) return;
+      document.querySelectorAll("[data-notification-badge]").forEach((badge) => {
+        badge.hidden = !hasUnread;
+      });
+    }
 
-        function openDrawer(){
-            drawer.classList.add("open");
-            overlay.classList.add("open");
-            overlay.setAttribute("aria-hidden", "false");
-            ham.setAttribute("aria-expanded", "true");
-            document.body.style.overflow = "hidden";
+    function clearUnreadNotificationStyles() {
+      document.querySelectorAll(".notificationItem--unread").forEach((item) => {
+        item.classList.remove("notificationItem--unread");
+      });
+
+      document.querySelectorAll(".notificationItemDot").forEach((dot) => {
+        dot.remove();
+      });
+    }
+
+    function ensureNotificationListState(list) {
+      if (!list) return;
+
+      const hasItems = !!list.querySelector("[data-notification-id]");
+      const emptyNode = list.querySelector("[data-notification-empty]");
+
+      if (hasItems) {
+        if (emptyNode) emptyNode.remove();
+        return;
+      }
+
+      if (emptyNode) return;
+
+      const empty = document.createElement("div");
+      empty.className = "notificationEmpty";
+      empty.setAttribute("data-notification-empty", "1");
+      empty.textContent = list.getAttribute("data-empty-message") || "No notifications yet.";
+      list.appendChild(empty);
+    }
+
+    function syncNotificationClearAllButtons() {
+      const hasAnyItems = !!document.querySelector("[data-notification-id]");
+      document
+        .querySelectorAll("[data-notification-clear-all]")
+        .forEach((button) => {
+          button.disabled = !hasAnyItems;
+        });
+    }
+
+    function syncNotificationUi(unreadCount, totalCount) {
+      currentUnreadCount = Math.max(0, Number(unreadCount || 0) || 0);
+      currentTotalCount = Math.max(0, Number(totalCount || 0) || 0);
+      notificationsMarkedRead = currentUnreadCount === 0;
+
+      if (notifShell) {
+        notifShell.setAttribute("data-unread-count", String(currentUnreadCount));
+        notifShell.setAttribute("data-total-count", String(currentTotalCount));
+      }
+
+      setNotificationBellUnread(unreadCount > 0);
+      window.PlayCtrlTabBadge?.setSourceUnread(
+        "notifications",
+        currentUnreadCount > 0,
+      );
+      setNotificationCountLabel(currentUnreadCount, currentTotalCount);
+      getNotificationLists().forEach(ensureNotificationListState);
+      syncNotificationClearAllButtons();
+    }
+
+    function removeNotificationElements(notificationId) {
+      const id = String(notificationId || "");
+      if (!id) return;
+
+      document.querySelectorAll("[data-notification-id]").forEach((node) => {
+        if (String(node.getAttribute("data-notification-id") || "") === id) {
+          node.remove();
         }
+      });
 
-        function closeDrawer(){
-            drawer.classList.remove("open");
-            overlay.classList.remove("open");
-            overlay.setAttribute("aria-hidden", "true");
-            ham.setAttribute("aria-expanded", "false");
-            document.body.style.overflow = "";
-        }
+      getNotificationLists().forEach(ensureNotificationListState);
+      syncNotificationClearAllButtons();
+    }
 
-        ham.addEventListener("click", (e) => {
-            e.preventDefault();
-            openDrawer();
+    async function postNotificationAction(path) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.message) || ("HTTP " + res.status));
+      }
+
+      return data;
+    }
+
+    async function refreshNotificationSummary() {
+      if (!notifShell) return;
+
+      try {
+        const res = await fetch("/notifications/summary", {
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
         });
 
-        closeBtn.addEventListener("click", closeDrawer);
-        overlay.addEventListener("click", closeDrawer);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) return;
 
-        document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") closeDrawer();
+        getCompactNotificationLists().forEach((list) => {
+          renderNotificationItems(list, data.items);
         });
-    })();
+
+        syncNotificationUi(
+          Number(data.unreadCount || 0),
+          Number(data.totalCount || 0),
+        );
+
+        if (notifMenu?.classList.contains("open") && Number(data.unreadCount || 0) > 0) {
+          markNotificationsRead();
+        }
+      } catch (_err) {}
+    }
+
+    function markNotificationsRead() {
+      if (notificationsMarkedRead) return;
+      notificationsMarkedRead = true;
+
+      clearUnreadNotificationStyles();
+      syncNotificationUi(0, currentTotalCount);
+
+      notificationReadPromise = postNotificationAction("/notifications/mark-read")
+        .then((data) => {
+          syncNotificationUi(Number(data.unreadCount || 0), Number(data.totalCount || 0));
+        })
+        .catch(() => {
+          notificationsMarkedRead = false;
+        })
+        .finally(() => {
+          notificationReadPromise = null;
+        });
+    }
+
+    if (dd && ddBtn && ddMenu) {
+      ddBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeNotifMenu();
+        setUserMenuOpen(!ddMenu.classList.contains("open"));
+      });
+    }
+
+    if (notifShell && notifBtn && notifMenu) {
+      notifBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeUserMenu();
+        const nextOpen = !notifMenu.classList.contains("open");
+        setNotifMenuOpen(nextOpen);
+        if (nextOpen) {
+          markNotificationsRead();
+        }
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      if (dd && !dd.contains(event.target)) closeUserMenu();
+      if (notifShell && !notifShell.contains(event.target)) closeNotifMenu();
+    });
+
+    document.addEventListener("click", async (event) => {
+      const clearBtn = event.target.closest("[data-notification-clear]");
+      const clearAllBtn = event.target.closest("[data-notification-clear-all]");
+
+      if (clearBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const notificationId = String(
+          clearBtn.getAttribute("data-notification-clear") || "",
+        ).trim();
+        if (!notificationId) return;
+
+        clearBtn.disabled = true;
+        try {
+          const data = await postNotificationAction(
+            "/notifications/" + encodeURIComponent(notificationId) + "/clear",
+          );
+          removeNotificationElements(notificationId);
+          syncNotificationUi(
+            Number(data.unreadCount || 0),
+            Number(data.totalCount || 0),
+          );
+        } catch (err) {
+          clearBtn.disabled = false;
+          const message = "Couldn't clear notification.";
+          if (window.showToast?.error) window.showToast.error(message);
+          else if (window.showToast) window.showToast(message, { type: "error" });
+          else window.alert(message);
+        }
+        return;
+      }
+
+      if (clearAllBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (clearAllBtn.disabled) return;
+        if (!window.confirm("Clear all notifications?")) return;
+
+        clearAllBtn.disabled = true;
+        try {
+          const data = await postNotificationAction("/notifications/clear-all");
+          document.querySelectorAll("[data-notification-id]").forEach((node) => {
+            node.remove();
+          });
+          syncNotificationUi(
+            Number(data.unreadCount || 0),
+            Number(data.totalCount || 0),
+          );
+        } catch (err) {
+          clearAllBtn.disabled = false;
+          const message = "Couldn't clear notifications.";
+          if (window.showToast?.error) window.showToast.error(message);
+          else if (window.showToast) window.showToast(message, { type: "error" });
+          else window.alert(message);
+        }
+      }
+    });
+
+    if (ham && drawer && overlay && closeBtn) {
+      ham.addEventListener("click", (event) => {
+        event.preventDefault();
+        openDrawer();
+      });
+
+      closeBtn.addEventListener("click", closeDrawer);
+      overlay.addEventListener("click", closeDrawer);
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      closeUserMenu();
+      closeNotifMenu();
+      closeDrawer();
+    });
+
+    syncNotificationUi(
+      currentUnreadCount,
+      currentTotalCount,
+    );
+
+    if (notifShell) {
+      const refreshIntervalMs = 15000;
+      refreshNotificationSummary();
+      window.setInterval(() => {
+        refreshNotificationSummary();
+      }, refreshIntervalMs);
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          refreshNotificationSummary();
+        }
+      });
+    }
+  })();
 </script>
 <% } %>

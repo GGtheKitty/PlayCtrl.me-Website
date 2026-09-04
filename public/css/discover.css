@@ -1,3 +1,13 @@
+.discoverToolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 560px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+  margin: 12px 0 0;
+  min-height: 44px;
+}
+
 .uGrid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -25,16 +35,85 @@
 
 .uCard {
     position: relative;
-    padding: 16px;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     text-align: center;
     border-radius: 16px;
     border: 1px solid rgba(255, 255, 255, .10);
     background: var(--panel3);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .18);
     overflow: hidden;
+}
+
+.uCardBanner {
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 74px;
+    background:
+        linear-gradient(135deg, rgba(139, 92, 246, .28), rgba(20, 20, 28, .18) 42%, rgba(20, 20, 28, .08) 100%),
+        linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, 0));
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    pointer-events: none;
+}
+
+.uCardBody {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+}
+
+.uCard--skeleton {
+    pointer-events: none;
+}
+
+.uCard--skeleton .uCardBanner,
+.uSkeletonAvatar,
+.uSkeletonLine,
+.uSkeletonButton {
+    background:
+        linear-gradient(
+            90deg,
+            rgba(255, 255, 255, .05) 0%,
+            rgba(255, 255, 255, .12) 50%,
+            rgba(255, 255, 255, .05) 100%
+        );
+    background-size: 220% 100%;
+    animation: discoverShimmer 1.35s linear infinite;
+}
+
+.uSkeletonAvatar {
+    width: 88px;
+    height: 88px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+    border: 3px solid rgba(12, 12, 20, .92);
+}
+
+.uSkeletonLine {
+    height: 12px;
+    border-radius: 999px;
+}
+
+.uSkeletonLine--title {
+    width: 68%;
+}
+
+.uSkeletonLine--handle {
+    width: 42%;
+    margin-top: 8px;
+}
+
+.uSkeletonButton {
+    width: 88px;
+    height: 34px;
+    margin-top: 12px;
+    border-radius: 10px;
 }
 
 .uAvi {
@@ -42,14 +121,22 @@
     height: 88px;
     border-radius: 999px;
     object-fit: cover;
-    border: 1px solid rgba(255, 255, 255, .12);
+    border: 3px solid rgba(12, 12, 20, .92);
+    background: rgba(255, 255, 255, .04);
+    box-shadow:
+        0 14px 28px rgba(0, 0, 0, .24),
+        0 0 0 1px rgba(255, 255, 255, .08);
     margin-bottom: 10px;
+    position: relative;
+    z-index: 1;
 }
 
 .display {
+    font-family: var(--decorative-name);
     font-weight: 800;
     font-size: 16px;
     line-height: 1.1;
+    overflow-wrap: anywhere;
 }
 
 .handle {
@@ -80,8 +167,8 @@
 
 .statusDot {
     position: absolute;
-    top: 10px;
-    right: 10px;
+    top: 12px;
+    right: 12px;
     width: 12px;
     height: 12px;
     border-radius: 999px;
@@ -95,6 +182,13 @@
     box-shadow:
         0 0 0 2px rgba(0, 0, 0, .55),
         0 0 10px rgba(34, 197, 94, .45);
+}
+
+.statusDot--away {
+    background: #f59e0b;
+    box-shadow:
+        0 0 0 2px rgba(0, 0, 0, .55),
+        0 0 10px rgba(245, 158, 11, .38);
 }
 
 .statusDot--offline {
@@ -116,4 +210,1079 @@
     100% {
         transform: scale(1);
     }
+}
+
+@keyframes discoverShimmer {
+    0% {
+        background-position: 100% 0;
+    }
+
+    100% {
+        background-position: -100% 0;
+    }
+}
+
+.discoverToggle {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  max-width: 560px;
+  margin: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0, 0, 0, .10);
+  justify-self: center;
+}
+
+.discoverToggleBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.discoverToggleBtn.isActive {
+  background: rgba(255, 255, 255, .12);
+}
+
+.discoverToggleIcon {
+  opacity: .9;
+}
+
+.discoverToolbarActions {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 420px);
+  min-width: 0;
+}
+
+.discoverSearchWrap {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.discoverSearchWrap.isDisabled {
+  opacity: .6;
+}
+
+.discoverSearchInput {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0, 0, 0, .10);
+  color: var(--text);
+  outline: none;
+}
+
+.discoverSearchInput::placeholder {
+  color: rgba(255, 255, 255, .5);
+}
+
+.discoverSearchInput:focus {
+  border-color: rgba(167, 139, 250, .55);
+  background: rgba(255, 255, 255, .12);
+}
+
+.discoverSearchInput:disabled {
+  cursor: not-allowed;
+}
+
+.discoverSearchInput::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  background-color: rgba(167, 139, 250, .22);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.47 4.47a.75.75 0 0 1 1.06 0L8 6.94l2.47-2.47a.75.75 0 1 1 1.06 1.06L9.06 8l2.47 2.47a.75.75 0 0 1-1.06 1.06L8 9.06l-2.47 2.47a.75.75 0 0 1-1.06-1.06L6.94 8 4.47 5.53a.75.75 0 0 1 0-1.06Z' fill='white'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+}
+
+.discoverSearchInput::-webkit-search-cancel-button:hover {
+  background-color: rgba(167, 139, 250, .32);
+}
+
+.discoverFilterWrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.discoverFilterBtn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0, 0, 0, .10);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.discoverFilterBtnIcon {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.discoverFilterBtn:hover,
+.discoverFilterWrap.isOpen .discoverFilterBtn {
+  border-color: rgba(167, 139, 250, .55);
+  background: rgba(255, 255, 255, .12);
+}
+
+.discoverFilterBtn.isFiltered {
+  border-color: rgba(245, 158, 11, .55);
+  background: rgba(245, 158, 11, .14);
+}
+
+.discoverFilterBtn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.discoverFilterMenu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 200px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: var(--panel3);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .28);
+  z-index: 10;
+}
+
+.discoverFilterTitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .72;
+  margin-bottom: 8px;
+}
+
+.discoverFilterOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.discoverFilterOption input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.discoverPager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 18px auto 0;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, .16);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .10),
+    0 10px 24px rgba(0, 0, 0, .18);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.discoverPager--top {
+  margin: 0 auto 18px;
+}
+
+.discoverPager--bottom {
+  margin: 18px auto 0;
+}
+
+.discoverPageList {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.discoverPagerNav,
+.discoverPageBtn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 16px;
+}
+
+.discoverPageBtn {
+  min-width: 40px;
+  font-size: 15px;
+}
+
+.discoverPagerNav:hover:not(:disabled),
+.discoverPageBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .10);
+}
+
+.discoverPagerNav:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.discoverPageBtn.isActive {
+  background: rgba(255, 255, 255, .14);
+  color: var(--text);
+  font-weight: 800;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .10),
+    0 0 0 1px rgba(167, 139, 250, .12);
+}
+
+.discoverPagerEllipsis {
+  color: rgba(255, 255, 255, .62);
+  font-weight: 700;
+  letter-spacing: .18em;
+  padding: 0 2px;
+}
+
+@media (max-width: 1040px) {
+  .discoverToolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .discoverToggle {
+    grid-column: auto;
+  }
+
+  .discoverToolbarActions {
+    grid-column: auto;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .discoverFilterBtn {
+    height: 44px;
+  }
+}
+
+@media (max-width: 520px) {
+  .discoverToolbar {
+    gap: 12px;
+  }
+
+  .discoverToolbarActions {
+    gap: 10px;
+  }
+
+  .discoverToggleBtn {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .discoverPager {
+    gap: 6px;
+    padding: 8px;
+  }
+}
+
+.gGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.gCard {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: var(--panel3);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+  overflow: hidden;
+}
+
+.gIcon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0,0,0,.10);
+}
+
+.gControl {
+  font-weight: 900;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, .16);
+  padding: 10px 14px;
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, .12);
+  white-space: nowrap;
+}
+
+.gControl:hover {
+  border-color: rgba(167, 139, 250, .55);
+}
+
+.gActions { display: flex; gap: 10px; align-items: center; }
+
+.gJoinBtn {
+  font-weight: 900;
+  border: 1px solid rgba(255, 255, 255, .16);
+  padding: 10px 14px;
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, .12);
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gJoinBtn:hover { border-color: rgba(167, 139, 250, .55); }
+
+.gJoinBtn.isJoined {
+  background: rgba(34, 197, 94, .14);
+  border-color: rgba(34, 197, 94, .55);
+}
+
+.gJoinBtn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.gGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.gCard {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: var(--panel3);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .03);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.gMain {
+  min-width: 0;
+}
+
+.gIcon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0,0,0,.10);
+  flex-shrink: 0;
+}
+
+.gTitle {
+  font-weight: 900;
+  font-size: 28px;
+  line-height: 1.05;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gMeta {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  opacity: .85;
+}
+
+.gMeta > .gMetaText {
+  font-weight: 400 !important;
+  color: rgba(255, 255, 255, 1) !important;
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+}
+
+.gDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.gDot--online {
+  background: #22c55e;
+  box-shadow: 0 0 10px rgba(34, 197, 94, .35);
+}
+
+.gDot--members {
+  background: rgba(255, 255, 255, .45);
+}
+
+.gControl {
+  font-weight: 900;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, .16);
+  padding: 10px 14px;
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, .12);
+  white-space: nowrap;
+}
+
+.gControl:hover {
+  border-color: rgba(167, 139, 250, .55);
+}
+
+.gActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.gJoinBtn {
+  font-weight: 900;
+  border: 1px solid rgba(255, 255, 255, .16);
+  padding: 10px 14px;
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, .12);
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gJoinBtn:hover { border-color: rgba(167, 139, 250, .55); }
+
+.gJoinBtn.isJoined {
+  background: rgba(34, 197, 94, .14);
+  border-color: rgba(34, 197, 94, .55);
+}
+
+.gJoinBtn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .gCard {
+    grid-template-columns: 60px 1fr;
+    gap: 12px;
+  }
+
+  .gIcon {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+  }
+
+  .gTitle {
+    font-size: 22px;
+  }
+
+  .gActions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    margin-top: 2px;
+  }
+}
+
+@media (max-width: 640px) {
+  .gCard {
+    grid-template-columns: 52px 1fr;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .gIcon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+
+  .gTitle {
+    font-size: 18px;
+  }
+
+  .gMeta {
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 13px;
+    flex-wrap: nowrap;
+  }
+
+  .gMetaText {
+    display: none;
+  }
+
+  .gOnlineCount,
+  .gMemberCount {
+    min-width: 2ch;
+    text-align: left;
+  }
+
+  .gActions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .gJoinBtn,
+  .gControl {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding: 9px 10px;
+    font-size: 14px;
+  }
+}
+
+.communityWorkspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 310px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 4px;
+}
+
+.communitySidebar {
+  display: grid;
+  gap: 14px;
+}
+
+.communityMain {
+  min-width: 0;
+}
+
+.communityToolCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--panel3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .18);
+}
+
+.communityToolCard--create {
+  background:
+    linear-gradient(180deg, rgba(56, 189, 248, .08), transparent 40%),
+    var(--panel3);
+}
+
+.communityToolTitle {
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.communityField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.communityField span {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .03em;
+}
+
+.communityField input,
+.communityField textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(0, 0, 0, .14);
+  color: var(--text);
+  padding: 12px 14px;
+  outline: none;
+  resize: vertical;
+}
+
+.communityField textarea {
+  min-height: 96px;
+}
+
+.communityField input:focus,
+.communityField textarea:focus {
+  border-color: rgba(56, 189, 248, .55);
+  background: rgba(255, 255, 255, .12);
+}
+
+.communityCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.communityCheckbox input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.communityHint,
+.communityGroupHint,
+.communityLoading {
+  color: rgba(255, 255, 255, .68);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.communityPrimaryBtn,
+.communitySecondaryBtn,
+.communityActionLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+
+.communitySidebar .communityPrimaryBtn,
+.communitySidebar .communitySecondaryBtn {
+  width: 100%;
+}
+
+.communityPrimaryBtn {
+  border: 1px solid rgba(56, 189, 248, .45);
+  background: rgba(56, 189, 248, .16);
+  color: var(--text);
+}
+
+.communityPrimaryBtn:hover {
+  border-color: rgba(56, 189, 248, .7);
+  background: rgba(56, 189, 248, .22);
+}
+
+.communitySecondaryBtn,
+.communityActionLink.communitySecondaryBtn {
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(0, 0, 0, .12);
+  color: var(--text);
+}
+
+.communitySecondaryBtn:hover,
+.communityActionLink.communitySecondaryBtn:hover {
+  border-color: rgba(255, 255, 255, .28);
+  background: rgba(255, 255, 255, .09);
+}
+
+.communityPrimaryBtn:disabled,
+.communitySecondaryBtn:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
+
+.communitySection {
+  margin-top: 24px;
+}
+
+.communitySection--first {
+  margin-top: 0;
+}
+
+.communitySectionHead {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.communitySectionHead h4 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.communitySectionHead p {
+  margin: 0;
+  color: rgba(255, 255, 255, .68);
+}
+
+.communityGroupList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.communityGroupCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .03), transparent 52%),
+    var(--panel3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, .16);
+}
+
+.communityGroupTop {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.communityOwner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.communityOwnerAvatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .06);
+  flex-shrink: 0;
+}
+
+.communityOwnerText {
+  min-width: 0;
+}
+
+.communityGroupName {
+  font-size: 21px;
+  font-weight: 900;
+  line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.communityOwnerMeta {
+  margin-top: 5px;
+  color: rgba(255, 255, 255, .64);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.communityBadgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.communityBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.communityBadge--public {
+  background: rgba(34, 197, 94, .14);
+  color: #bbf7d0;
+  border: 1px solid rgba(34, 197, 94, .28);
+}
+
+.communityBadge--private {
+  background: rgba(245, 158, 11, .14);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, .28);
+}
+
+.communityBadge--owner,
+.communityBadge--member {
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+
+.communityGroupDescription {
+  margin: 0;
+  color: rgba(255, 255, 255, .78);
+  line-height: 1.5;
+}
+
+.communityGroupStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.communityGroupStat {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .14);
+  border: 1px solid rgba(255, 255, 255, .06);
+  font-weight: 700;
+}
+
+.communityActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.communityActionBtn,
+.communityActionLink {
+  flex: 1 1 140px;
+}
+
+.communityPager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.communityPager[hidden] {
+  display: none;
+}
+
+.communityPagerBtn {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .12);
+  color: var(--text);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.communityPagerBtn:hover {
+  border-color: rgba(255, 255, 255, .28);
+  background: rgba(255, 255, 255, .09);
+}
+
+.communityPagerBtn:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.communityPagerLabel {
+  color: rgba(255, 255, 255, .62);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.communityModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.communityModalBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .7);
+}
+
+.communityModalCard {
+  position: relative;
+  z-index: 1;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(92vh, 860px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  background: rgba(18, 18, 22, .98);
+  border: 1px solid rgba(255, 255, 255, .10);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+
+.communityModalCard--compact {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.communityModalHd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .10);
+}
+
+.communityModalTitle {
+  font-weight: 900;
+}
+
+.communityModalClose {
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.communityModalBody {
+  padding: 16px;
+  overflow: auto;
+}
+
+.communityModalForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.communityModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.communityInvitePrompt {
+  margin: 0;
+  color: rgba(255, 255, 255, .78);
+  line-height: 1.5;
+}
+
+.communityInviteDetails {
+  margin: 14px 0;
+}
+
+.communityInviteGroupCard {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.communityInviteGroupCard .communityGroupName {
+  font-size: 18px;
+}
+
+.communityInviteGroupCard .communityGroupDescription {
+  margin-top: 12px;
+}
+
+.communityInviteGroupCard .communityGroupStats {
+  margin-top: 12px;
+}
+
+@media (max-width: 1040px) {
+  .communityWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .communitySidebar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .communitySectionHead {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .communitySidebar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .communityTitle {
+    font-size: 24px;
+  }
+
+  .communityActionRow {
+    flex-direction: column;
+  }
+
+  .communityActionBtn,
+  .communityActionLink {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .communityModalActions {
+    flex-direction: column-reverse;
+  }
+
+  .communityGroupTop {
+    flex-direction: column;
+  }
+
+  .communityBadgeRow {
+    justify-content: flex-start;
+  }
 }

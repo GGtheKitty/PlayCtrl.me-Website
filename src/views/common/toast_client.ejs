@@ -1,0 +1,79 @@
+<script>
+  (function() {
+    if (window.showToast) return;
+
+    const MAX_TOASTS = 3;
+    const DEFAULT_DURATION = 3800;
+    const VALID_TYPES = new Set(["success", "error", "warning", "info"]);
+
+    function getToastRegion() {
+      let region = document.getElementById("toastRegion");
+      if (region) return region;
+
+      region = document.createElement("div");
+      region.id = "toastRegion";
+      region.className = "toastRegion";
+      region.setAttribute("aria-live", "polite");
+      region.setAttribute("aria-atomic", "false");
+      (document.body || document.documentElement).appendChild(region);
+      return region;
+    }
+
+    function normalizeType(type) {
+      const normalized = String(type || "info").toLowerCase();
+      return VALID_TYPES.has(normalized) ? normalized : "info";
+    }
+
+    function dismissToast(toast) {
+      if (!toast || toast.dataset.dismissed === "1") return;
+      toast.dataset.dismissed = "1";
+      toast.classList.remove("toastItem--show");
+      toast.classList.add("toastItem--leaving");
+      window.setTimeout(() => toast.remove(), 180);
+    }
+
+    window.showToast = function(message, options) {
+      const text = String(message || "").trim();
+      if (!text) return null;
+
+      const opts = typeof options === "string" ? { type: options } : (options || {});
+      const type = normalizeType(opts.type);
+      const region = getToastRegion();
+      const toast = document.createElement("div");
+
+      toast.className = "toastItem toastItem--" + type;
+      toast.setAttribute("role", type === "error" ? "alert" : "status");
+      toast.textContent = text;
+      region.appendChild(toast);
+
+      while (region.children.length > MAX_TOASTS) {
+        region.firstElementChild?.remove();
+      }
+
+      window.requestAnimationFrame(() => {
+        toast.classList.add("toastItem--show");
+      });
+
+      const duration = Number(opts.duration || DEFAULT_DURATION);
+      if (duration > 0) {
+        window.setTimeout(() => dismissToast(toast), duration);
+      }
+
+      toast.addEventListener("click", () => dismissToast(toast));
+      return toast;
+    };
+
+    window.showToast.success = function(message, options) {
+      return window.showToast(message, Object.assign({}, options || {}, { type: "success" }));
+    };
+    window.showToast.error = function(message, options) {
+      return window.showToast(message, Object.assign({}, options || {}, { type: "error" }));
+    };
+    window.showToast.warning = function(message, options) {
+      return window.showToast(message, Object.assign({}, options || {}, { type: "warning" }));
+    };
+    window.showToast.info = function(message, options) {
+      return window.showToast(message, Object.assign({}, options || {}, { type: "info" }));
+    };
+  })();
+</script>

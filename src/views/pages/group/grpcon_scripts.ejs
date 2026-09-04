@@ -1,0 +1,1807 @@
+<% if (user) { %>
+<script>
+  const respBox = document.getElementById("respBox");
+  const clearBtn = document.getElementById("clearResp");
+
+  const groupKey = <%- inlineScriptJson(groupKey) %>;
+  const isCommunityGroup = <%- inlineScriptJson(!!isCommunityGroup) %>;
+  const isOwner = <%- inlineScriptJson(!!isOwner) %>;
+  const viewerUserId = <%- inlineScriptJson(String(user?.discord_id || "")) %>;
+  const viewerIsGroupChatAdmin = <%- inlineScriptJson(!!viewerIsGroupChatAdmin) %>;
+  const communityGroupCommandOptions = <%- inlineScriptJson(communityGroupCommandOptions || []) %>;
+  let communityGroupCommandPrefs = <%- inlineScriptJson(communityGroupCommandPrefs || {}) %>;
+  let groupBoardMessages = <%- inlineScriptJson(groupBoardMsgs || []) %>;
+  let canPostGroupBoard = <%- inlineScriptJson(!!canPostGroupBoard) %>;
+  let activeGroupName = <%- inlineScriptJson(groupLabel || "") %>;
+  let activeGroupAbout = <%- inlineScriptJson(communityGroupDescription || "") %>;
+  let activeGroupAvatarUrl = <%- inlineScriptJson(groupIconUrl || "/default-avatar.svg") %>;
+  let activeGroupBannerUrl = <%- inlineScriptJson(groupBannerUrl || "") %>;
+  let activeGroupAvatarVersion = <%- inlineScriptJson(Number(groupAvatarVersion || 0) || 0) %>;
+  let activeGroupBannerVersion = <%- inlineScriptJson(Number(groupBannerVersion || 0) || 0) %>;
+  let activeGroupHasCustomAvatar = <%- inlineScriptJson(!!groupHasCustomAvatar) %>;
+  let activeGroupHasCustomBanner = <%- inlineScriptJson(!!groupHasCustomBanner) %>;
+  const reportedGroupMessageIds = new Set();
+
+  function addLine(text, kind) {
+    if (!respBox) return;
+
+    const row = document.createElement("div");
+    row.className = "respRow";
+
+    const time = document.createElement("div");
+    time.className = "respBubble respTime";
+    time.textContent = new Date().toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    });
+
+    const msg = document.createElement("div");
+    msg.className = "respBubble respMsg";
+    msg.textContent = text;
+
+    row.appendChild(time);
+    row.appendChild(msg);
+
+    respBox.prepend(row);
+  }
+
+  function clearFormFields(form) {
+    form.querySelectorAll("input[type=text], input[type=url], input:not([type]), textarea").forEach(el => {
+      el.value = "";
+    });
+  }
+
+  function setGroupBoardStatus(text) {
+    if (groupBoardStatus) groupBoardStatus.textContent = text || "";
+  }
+
+  function groupBoardRelTime(ms) {
+    const seconds = Math.max(0, Math.floor((Date.now() - Number(ms || 0)) / 1000));
+    if (seconds < 60) return seconds + "s ago";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + "m ago";
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + "h ago";
+    const days = Math.floor(hours / 24);
+    return days + " day" + (days === 1 ? "" : "s") + " ago";
+  }
+
+  function scrollGroupBoardToBottom() {
+    if (!groupBoardList) return;
+    requestAnimationFrame(() => {
+      groupBoardList.scrollTop = groupBoardList.scrollHeight;
+    });
+  }
+
+  function syncGroupBoardPostState() {
+    if (groupBoardForm) groupBoardForm.hidden = !canPostGroupBoard;
+    if (groupBoardReadonly) groupBoardReadonly.hidden = !!canPostGroupBoard;
+  }
+
+  function renderGroupBoard({ scrollToBottom = false } = {}) {
+    if (!groupBoardList) return;
+
+    groupBoardList.innerHTML = "";
+    if (!groupBoardMessages.length) {
+      const empty = document.createElement("div");
+      empty.className = "boardEmpty";
+      empty.textContent = "No group messages yet.";
+      groupBoardList.appendChild(empty);
+      return;
+    }
+
+    const ordered = [...groupBoardMessages].sort((a, b) => {
+      const createdDiff = Number(a.created_at || 0) - Number(b.created_at || 0);
+      if (createdDiff) return createdDiff;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+
+    for (const msg of ordered) {
+      const row = document.createElement("div");
+      row.className = "boardRow";
+
+      const avatar = document.createElement("img");
+      avatar.className = "boardAvatar";
+      avatar.src = String(msg.author_avatar_url || "/img/default-avatar.png");
+      avatar.alt = "";
+
+      const body = document.createElement("div");
+      body.className = "boardBody";
+
+      const bubble = document.createElement("div");
+      bubble.className = "boardBubble";
+      bubble.textContent = String(msg.body || "");
+
+      const meta = document.createElement("div");
+      meta.className = "boardMeta";
+      const author = String(msg.author_display_name || "Member").trim() || "Member";
+      meta.textContent = author + " - " + groupBoardRelTime(msg.created_at);
+
+      body.appendChild(bubble);
+      body.appendChild(meta);
+      row.appendChild(avatar);
+      row.appendChild(body);
+
+      const messageId = String(msg.id || "").trim();
+      const canReport =
+        messageId && String(msg.author_user_id || "").trim() !== viewerUserId;
+      if (canReport || viewerIsGroupChatAdmin) {
+        const actions = document.createElement("div");
+        actions.className = "groupMessageActions";
+        actions.setAttribute("aria-label", "Message actions");
+
+        if (canReport) {
+          const reportBtn = document.createElement("button");
+          const alreadyReported = reportedGroupMessageIds.has(messageId);
+          reportBtn.type = "button";
+          reportBtn.className = "groupMessageActionBtn";
+          reportBtn.dataset.groupMessageAction = "report";
+          reportBtn.dataset.messageId = messageId;
+          reportBtn.disabled = alreadyReported;
+          reportBtn.title = alreadyReported ? "Message reported" : "Report message";
+          reportBtn.setAttribute("aria-label", reportBtn.title);
+          reportBtn.innerHTML = '<img src="/icons/group-chat-report.svg" alt="" aria-hidden="true">';
+          actions.appendChild(reportBtn);
+        }
+
+        if (viewerIsGroupChatAdmin) {
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "groupMessageActionBtn groupMessageActionBtn--delete";
+          deleteBtn.dataset.groupMessageAction = "delete";
+          deleteBtn.dataset.messageId = messageId;
+          deleteBtn.title = "Delete message";
+          deleteBtn.setAttribute("aria-label", "Delete message");
+          deleteBtn.innerHTML = '<img src="/icons/group-chat-delete.svg" alt="" aria-hidden="true">';
+          actions.appendChild(deleteBtn);
+        }
+
+        row.appendChild(actions);
+      }
+      groupBoardList.appendChild(row);
+    }
+
+    if (scrollToBottom) scrollGroupBoardToBottom();
+  }
+
+  async function refreshGroupBoard({ forceRender = false } = {}) {
+    if (!groupBoardList) return;
+
+    try {
+      const res = await fetch("/api/group/" + encodeURIComponent(groupKey) + "/board", {
+        headers: { "Accept": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) return;
+
+      const nextMessages = Array.isArray(data.messages) ? data.messages : [];
+      const changed =
+        nextMessages.length !== groupBoardMessages.length ||
+        Number(nextMessages[0]?.id || 0) !== Number(groupBoardMessages[0]?.id || 0);
+
+      canPostGroupBoard = !!data.canPost;
+      syncGroupBoardPostState();
+
+      if (!changed && !forceRender) return;
+      groupBoardMessages = nextMessages;
+      renderGroupBoard({ scrollToBottom: true });
+    } catch {}
+  }
+
+  async function postGroupBoardMessage(body) {
+    setGroupBoardStatus("Posting...");
+    const res = await fetch("/api/group/" + encodeURIComponent(groupKey) + "/board", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: new URLSearchParams({ body }).toString(),
+      credentials: "include",
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data?.message || data?.error || "Could not post.");
+    }
+
+    groupBoardMessages = Array.isArray(data.messages) ? data.messages : groupBoardMessages;
+    renderGroupBoard({ scrollToBottom: true });
+    setGroupBoardStatus("Posted.");
+    window.setTimeout(() => setGroupBoardStatus(""), 900);
+  }
+
+  function openGroupMessageReport(messageId) {
+    const message = groupBoardMessages.find(
+      (item) => String(item?.id || "") === String(messageId || ""),
+    );
+    if (!message) {
+      setGroupBoardStatus("Message not found.");
+      return;
+    }
+
+    showCmdModal("Report Group Message", "tpl_group_message_report");
+    const form = cmdModalBody?.querySelector("#groupMessageReportForm");
+    if (!form) return;
+    form.querySelector('input[name="messageId"]').value = String(message.id || "");
+    const preview = form.querySelector("[data-group-message-report-preview]");
+    if (preview) {
+      const author = String(message.author_display_name || "Member");
+      preview.textContent = author + ": “" + String(message.body || "") + "”";
+    }
+  }
+
+  async function deleteGroupMessage(messageId, button) {
+    const message = groupBoardMessages.find(
+      (item) => String(item?.id || "") === String(messageId || ""),
+    );
+    if (!message || !window.confirm("Delete this group chat message?")) return;
+
+    if (button) button.disabled = true;
+    try {
+      const res = await fetch(
+        "/api/group/" + encodeURIComponent(groupKey) + "/board/" + encodeURIComponent(messageId),
+        {
+          method: "DELETE",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || "Could not delete message.");
+      }
+      groupBoardMessages = Array.isArray(data.messages) ? data.messages : [];
+      renderGroupBoard();
+      setGroupBoardStatus("Message deleted.");
+      window.setTimeout(() => setGroupBoardStatus(""), 1200);
+    } catch (err) {
+      setGroupBoardStatus(err?.message || "Could not delete message.");
+      if (button) button.disabled = false;
+    }
+  }
+
+  const cmdModal = document.getElementById("cmdModal");
+  const cmdModalTitle = document.getElementById("cmdModalTitle");
+  const cmdModalBody = document.getElementById("cmdModalBody");
+  const cmdList = document.getElementById("cmdList");
+  const groupCommandsEmpty = document.getElementById("groupCommandsEmpty");
+  const groupCommandSettingsBtn = document.getElementById("groupCommandSettingsBtn");
+  const groupReportBtn = document.getElementById("groupReportBtn");
+  const groupBoardList = document.getElementById("groupBoardList");
+  const groupBoardForm = document.getElementById("groupBoardForm");
+  const groupBoardInput = document.getElementById("groupBoardInput");
+  const groupBoardStatus = document.getElementById("groupBoardStatus");
+  const groupBoardReadonly = document.getElementById("groupBoardReadonly");
+  const groupAvatarImg = document.getElementById("groupAvatarImg");
+  const groupBannerImage = document.getElementById("groupBannerImage");
+  const groupDisplayNameEl = document.querySelector(".controlProfileDisplayName");
+  const groupAboutTextEl = document.getElementById("groupAboutText");
+  const groupAboutCard = document.getElementById("groupAboutCard");
+
+  // Keep the modal outside the isolated group control-page stacking context so
+  // it covers the sticky topbar, matching individual control links.
+  function hoistGroupOverlayToBody(node) {
+    if (!node || !document.body || node.parentElement === document.body) return;
+    node.style.setProperty("--control-accent-rgb", "var(--ctl-accent-rgb, 167, 139, 250)");
+    node.style.setProperty("--control-accent-deep-rgb", "var(--ctl-accent-deep-rgb, 139, 92, 246)");
+    node.style.setProperty("--control-accent-glow-rgb", "var(--ctl-accent-glow-rgb, 139, 92, 246)");
+    node.style.setProperty("--control-surface-rgb", "var(--ctl-surface-rgb, 20, 20, 28)");
+    node.style.setProperty("--control-surface-2-rgb", "var(--ctl-surface-2-rgb, 14, 14, 24)");
+    node.style.setProperty("--control-panel-rgb", "var(--ctl-panel-rgb, 18, 18, 30)");
+    node.style.setProperty("--control-panel-2-rgb", "var(--ctl-panel-2-rgb, 12, 12, 22)");
+    node.style.setProperty("--control-accent-strong", "rgb(var(--control-accent-rgb))");
+    document.body.appendChild(node);
+  }
+
+  hoistGroupOverlayToBody(cmdModal);
+
+  <%- include("../../common/upload_modal_client") %>
+
+  (() => {
+    const notificationBadgeSourceKey = "notifications";
+
+    async function refreshNotificationBadge() {
+      try {
+        const res = await fetch("/notifications/summary", {
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) return;
+
+        window.PlayCtrlTabBadge?.setSourceUnread(
+          notificationBadgeSourceKey,
+          Number(data.unreadCount || 0) > 0
+        );
+      } catch {}
+    }
+
+    refreshNotificationBadge();
+    window.setInterval(refreshNotificationBadge, 15000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        refreshNotificationBadge();
+      }
+    });
+    window.addEventListener("pagehide", () => {
+      window.PlayCtrlTabBadge?.clearSource(notificationBadgeSourceKey);
+    });
+  })();
+
+  function hideCmdModal() {
+    if (!cmdModal || !cmdModalBody) return;
+    if (window.stopUploadAudioPreview) window.stopUploadAudioPreview();
+    cmdModalBody.innerHTML = "";
+    cmdModal.style.display = "none";
+    cmdModal.setAttribute("aria-hidden", "true");
+  }
+
+  function normalizeCommunityGroupPrefs(nextPrefs) {
+    const normalized = {};
+    for (const option of communityGroupCommandOptions) {
+      const field = String(option?.field || "").trim();
+      if (!field) continue;
+      normalized[field] = !!nextPrefs?.[field];
+    }
+    return normalized;
+  }
+
+  function syncGroupCommandSettingsTemplate() {
+    const template = document.getElementById("tpl_group_command_settings");
+    const content = template?.content;
+    if (!content) return;
+
+    for (const option of communityGroupCommandOptions) {
+      const field = String(option?.field || "").trim();
+      if (!field) continue;
+      const input = content.querySelector(`input[name="${field}"]`);
+      if (!input) continue;
+      input.checked = !!communityGroupCommandPrefs[field];
+    }
+  }
+
+  function applyCommunityGroupCommandPrefs(nextPrefs) {
+    if (!isCommunityGroup) return;
+
+    communityGroupCommandPrefs = normalizeCommunityGroupPrefs({
+      ...communityGroupCommandPrefs,
+      ...nextPrefs,
+    });
+
+    const optionsByKey = new Map(
+      communityGroupCommandOptions.map((option) => [String(option?.key || "").trim(), option]),
+    );
+
+    document.querySelectorAll(".cmdBtn[data-cmd]").forEach((btn) => {
+      const option = optionsByKey.get(String(btn.dataset.cmd || "").trim());
+      if (!option?.field) return;
+      btn.hidden = !communityGroupCommandPrefs[option.field];
+    });
+
+    const hasEnabledCommands = communityGroupCommandOptions.some(
+      (option) => !!communityGroupCommandPrefs[option.field],
+    );
+
+    if (cmdList) {
+      cmdList.hidden = !hasEnabledCommands;
+    }
+    if (groupCommandsEmpty) {
+      groupCommandsEmpty.hidden = hasEnabledCommands;
+    }
+
+    syncGroupCommandSettingsTemplate();
+  }
+
+  function setGroupEditStatus(form, text, type) {
+    const status = form?.querySelector("#groupEditStatus");
+    if (!status) return;
+    status.textContent = text || "";
+    status.dataset.type = type || "";
+  }
+
+  function setGroupEditBusy(form, busy) {
+    form?.querySelectorAll("button, input, textarea").forEach((el) => {
+      el.disabled = !!busy;
+    });
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Could not read file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function appendVersion(url, version) {
+    const value = String(url || "").trim();
+    if (!value) return "";
+    const sep = value.includes("?") ? "&" : "?";
+    return value + sep + "v=" + encodeURIComponent(String(version || Date.now()));
+  }
+
+  function setBackgroundImage(el, url) {
+    if (!el) return;
+    el.hidden = !url;
+    el.style.backgroundImage = url ? "url('" + url + "')" : "";
+  }
+
+  function escapeGroupAboutHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function applyGroupProfile({ name, about, avatarUrl, bannerUrl, avatarVersion, bannerVersion }) {
+    if (typeof name !== "undefined") activeGroupName = String(name || "").trim();
+    if (typeof about !== "undefined") activeGroupAbout = String(about || "");
+    if (typeof avatarUrl !== "undefined" && String(avatarUrl || "").trim()) {
+      activeGroupAvatarUrl = String(avatarUrl || "").trim();
+    }
+    if (typeof bannerUrl !== "undefined") {
+      activeGroupBannerUrl = String(bannerUrl || "").trim();
+    }
+    if (avatarVersion) activeGroupAvatarVersion = Number(avatarVersion || Date.now()) || Date.now();
+    if (bannerVersion) activeGroupBannerVersion = Number(bannerVersion || Date.now()) || Date.now();
+
+    if (groupDisplayNameEl && activeGroupName) {
+      groupDisplayNameEl.textContent = activeGroupName;
+    }
+    if (groupAboutTextEl) {
+      const trimmed = activeGroupAbout.trim();
+      groupAboutTextEl.innerHTML = trimmed
+        ? escapeGroupAboutHtml(activeGroupAbout)
+        : "This group hasn't added an About yet.";
+    }
+    if (groupAboutCard) {
+      groupAboutCard.classList.toggle("controlProfileAbout--empty", !activeGroupAbout.trim());
+    }
+    if (groupAvatarImg && activeGroupAvatarUrl) {
+      if (groupAvatarImg.tagName === "IMG") {
+        groupAvatarImg.src = appendVersion(activeGroupAvatarUrl, activeGroupAvatarVersion);
+      }
+    }
+    setBackgroundImage(
+      groupBannerImage,
+      activeGroupBannerUrl
+        ? appendVersion(activeGroupBannerUrl, activeGroupBannerVersion)
+        : "",
+    );
+  }
+
+  async function saveGroupProfile(form, params) {
+    const action = form?.getAttribute("action");
+    if (!action) return null;
+    const bodyParams = params || new URLSearchParams(new FormData(form));
+    const res = await fetch(action, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: bodyParams.toString(),
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data?.message || data?.error || "Could not save group profile.");
+    }
+    return data;
+  }
+
+  async function saveGroupCommandSettings(form, params) {
+    const bodyParams = params || new URLSearchParams(new FormData(form));
+    const res = await fetch("/api/community/groups/" + encodeURIComponent(groupKey) + "/commands", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: bodyParams.toString(),
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !data.ok) {
+      throw new Error(data?.message || data?.error || "Could not save command settings.");
+    }
+    return data;
+  }
+
+  async function submitGroupCommandSettings(form) {
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const previousLabel = submitBtn?.textContent || "Save Group";
+    const params = new URLSearchParams(new FormData(form));
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Saving...";
+    }
+    setGroupEditBusy(form, true);
+    setGroupEditStatus(form, "Saving...");
+
+    try {
+      const profileData = await saveGroupProfile(form, params);
+      const commandData = await saveGroupCommandSettings(form, params);
+      applyCommunityGroupCommandPrefs(commandData?.prefs || {});
+      applyGroupProfile({
+        name: profileData?.group?.name,
+        about: profileData?.group?.description,
+        avatarUrl: profileData?.group?.iconUrl,
+        bannerUrl: profileData?.group?.bannerUrl,
+        avatarVersion: profileData?.group?.avatarVersion,
+        bannerVersion: profileData?.group?.bannerVersion,
+      });
+      setGroupEditStatus(form, "Group saved.", "success");
+      addLine("Group settings saved.", "ok");
+      window.setTimeout(hideCmdModal, 220);
+    } catch (err) {
+      setGroupEditStatus(form, err?.message || "Could not save group.", "error");
+      addLine(err?.message || "Could not save group settings.", "error");
+    } finally {
+      setGroupEditBusy(form, false);
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = previousLabel;
+      }
+    }
+  }
+
+  function initPlaySoundForm(form) {
+    const urlEnabled = form.dataset.psUrlEnabled === "1";
+
+    const select = form.querySelector(".psSelect");
+    const urlInput = form.querySelector(".psUrlInput");
+
+    const hidKind = form.querySelector('input[type="hidden"][name="kind"]');
+    const hidName = form.querySelector('input[type="hidden"][name="name"]');
+    const hidUrl  = form.querySelector('input[type="hidden"][name="url"]');
+
+    form.addEventListener("submit", (e) => {
+      const selected = String(select?.value || "").trim();
+      const typedUrl = urlEnabled ? String(urlInput?.value || "").trim() : "";
+
+      if (urlEnabled && typedUrl) {
+        hidKind.value = "url";
+        hidUrl.value = typedUrl;
+        hidName.value = "";
+        return;
+      }
+
+      if (selected) {
+        hidKind.value = "builtin";
+        hidName.value = selected;
+        hidUrl.value = "";
+        return;
+      }
+
+      e.preventDefault();
+      addLine("Pick a built-in sound, or enter a URL.", "error");
+    }, { capture: true });
+  }
+
+  function createSubliminalMessageRow() {
+    const row = document.createElement("div");
+    row.className = "subliminalMessageRow subliminalMessageRow--removable";
+
+    const textarea = document.createElement("textarea");
+    textarea.name = "messages";
+    textarea.maxLength = 2000;
+    textarea.placeholder = "Another message";
+    textarea.dataset.subliminalMessage = "1";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "subliminalMessageRemoveBtn";
+    removeBtn.dataset.subliminalRemove = "1";
+    removeBtn.setAttribute("aria-label", "Remove message");
+    removeBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm-1 10h12l1-12H5l1 12Z" fill="currentColor"></path>
+      </svg>
+    `;
+
+    row.appendChild(textarea);
+    row.appendChild(removeBtn);
+    return row;
+  }
+
+  function initSubliminalMessageForm(form) {
+    if (!form || form.dataset.subliminalInit === "1") return;
+    form.dataset.subliminalInit = "1";
+
+    const list = form.querySelector('[data-subliminal-message-list="1"]');
+    const addBtn = form.querySelector('[data-subliminal-add="1"]');
+    if (!list || !addBtn) return;
+
+    addBtn.addEventListener("click", () => {
+      const row = createSubliminalMessageRow();
+      list.appendChild(row);
+      row.querySelector("textarea")?.focus();
+    });
+
+    form.addEventListener("click", (e) => {
+      const removeBtn = e.target?.closest?.('[data-subliminal-remove="1"]');
+      if (!removeBtn) return;
+      e.preventDefault();
+      removeBtn.closest(".subliminalMessageRow")?.remove();
+    });
+  }
+
+  function initGroupEditForm(form) {
+    if (!form || form.dataset.groupEditInit === "1") return;
+    form.dataset.groupEditInit = "1";
+
+    const nameInput = form.querySelector("#groupEditNameInput");
+    const aboutInput = form.querySelector("#groupEditAboutInput");
+    const aboutCount = form.querySelector("#groupEditAboutCount");
+    const avatarPreview = form.querySelector("#groupEditAvatarPreview");
+    const avatarInput = form.querySelector("#groupEditAvatarInput");
+    const avatarUploadBtn = form.querySelector("#groupEditAvatarUploadBtn");
+    const avatarDeleteBtn = form.querySelector("#groupEditAvatarDeleteBtn");
+    const bannerPreview = form.querySelector("#groupEditBannerPreview");
+    const bannerInput = form.querySelector("#groupEditBannerInput");
+    const bannerUploadBtn = form.querySelector("#groupEditBannerUploadBtn");
+    const bannerDeleteBtn = form.querySelector("#groupEditBannerDeleteBtn");
+    const groupDeleteBtn = form.querySelector("#groupDeleteBtn");
+    let busy = false;
+
+    function syncAboutCount() {
+      if (!aboutInput || !aboutCount) return;
+      const max = Number(aboutInput.getAttribute("maxlength") || 220) || 220;
+      if (aboutInput.value.length > max) {
+        aboutInput.value = aboutInput.value.slice(0, max);
+      }
+      aboutCount.textContent = aboutInput.value.length + "/" + max;
+    }
+
+    function renderAssetControls() {
+      if (avatarPreview) {
+        avatarPreview.src = appendVersion(activeGroupAvatarUrl || "/default-avatar.svg", activeGroupAvatarVersion);
+      }
+      if (avatarDeleteBtn) avatarDeleteBtn.hidden = !activeGroupHasCustomAvatar;
+      setBackgroundImage(
+        bannerPreview,
+        activeGroupBannerUrl
+          ? appendVersion(activeGroupBannerUrl, activeGroupBannerVersion)
+          : "",
+      );
+      if (bannerDeleteBtn) bannerDeleteBtn.hidden = !activeGroupHasCustomBanner;
+    }
+
+    async function uploadAsset(kind, file) {
+      if (!file || busy) return;
+      busy = true;
+      setGroupEditBusy(form, true);
+      setGroupEditStatus(form, "Uploading...");
+
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        const res = await fetch(
+          "/api/community/groups/" + encodeURIComponent(groupKey) + "/" + kind,
+          {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              filename: file.name || kind + "-upload",
+              mime: file.type || "application/octet-stream",
+              data: dataUrl,
+            }),
+            credentials: "include",
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error(data?.message || data?.error || "Could not upload image.");
+        }
+
+        if (kind === "avatar") {
+          activeGroupHasCustomAvatar = !!data.hasCustomAvatar;
+          activeGroupAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+          activeGroupAvatarUrl = data.avatarUrl || activeGroupAvatarUrl;
+          applyGroupProfile({
+            avatarUrl: activeGroupAvatarUrl,
+            avatarVersion: activeGroupAvatarVersion,
+          });
+        } else {
+          activeGroupHasCustomBanner = !!data.hasCustomBanner;
+          activeGroupBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+          activeGroupBannerUrl = data.bannerUrl || activeGroupBannerUrl;
+          applyGroupProfile({
+            bannerUrl: activeGroupBannerUrl,
+            bannerVersion: activeGroupBannerVersion,
+          });
+        }
+        renderAssetControls();
+        setGroupEditStatus(form, kind === "avatar" ? "Avatar uploaded." : "Banner uploaded.", "success");
+      } catch (err) {
+        setGroupEditStatus(form, err?.message || "Could not upload image.", "error");
+      } finally {
+        busy = false;
+        setGroupEditBusy(form, false);
+        if (avatarInput) avatarInput.value = "";
+        if (bannerInput) bannerInput.value = "";
+      }
+    }
+
+    async function deleteAsset(kind) {
+      if (busy) return;
+      busy = true;
+      setGroupEditBusy(form, true);
+      setGroupEditStatus(form, "Removing...");
+
+      try {
+        const res = await fetch(
+          "/api/community/groups/" + encodeURIComponent(groupKey) + "/" + kind + "/delete",
+          {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "include",
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error(data?.message || data?.error || "Could not remove image.");
+        }
+
+        if (kind === "avatar") {
+          activeGroupHasCustomAvatar = false;
+          activeGroupAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+          activeGroupAvatarUrl = data.avatarUrl || activeGroupAvatarUrl;
+          applyGroupProfile({
+            avatarUrl: activeGroupAvatarUrl,
+            avatarVersion: activeGroupAvatarVersion,
+          });
+        } else {
+          activeGroupHasCustomBanner = false;
+          activeGroupBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+          activeGroupBannerUrl = "";
+          applyGroupProfile({ bannerUrl: "" });
+        }
+        renderAssetControls();
+        setGroupEditStatus(form, kind === "avatar" ? "Avatar removed." : "Banner removed.", "success");
+      } catch (err) {
+        setGroupEditStatus(form, err?.message || "Could not remove image.", "error");
+      } finally {
+        busy = false;
+        setGroupEditBusy(form, false);
+      }
+    }
+
+    async function deleteGroup() {
+      if (busy) return;
+      const groupName = (activeGroupName || groupKey || "this group").trim();
+      if (!window.confirm("Delete " + groupName + "? This permanently removes the group, chat, members, invites, and command settings.")) {
+        return;
+      }
+
+      busy = true;
+      setGroupEditBusy(form, true);
+      setGroupEditStatus(form, "Deleting group...");
+
+      try {
+        const res = await fetch("/api/community/groups/" + encodeURIComponent(groupKey), {
+          method: "DELETE",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error(data?.message || data?.error || "Could not delete group.");
+        }
+
+        setGroupEditStatus(form, "Group deleted.", "success");
+        window.location.assign(data.redirectUrl || "/discover?tab=community");
+      } catch (err) {
+        busy = false;
+        setGroupEditBusy(form, false);
+        setGroupEditStatus(form, err?.message || "Could not delete group.", "error");
+      }
+    }
+
+    if (nameInput) nameInput.value = activeGroupName;
+    if (aboutInput) aboutInput.value = activeGroupAbout;
+    syncAboutCount();
+    renderAssetControls();
+
+    aboutInput?.addEventListener("input", syncAboutCount);
+    avatarUploadBtn?.addEventListener("click", () => avatarInput?.click());
+    bannerUploadBtn?.addEventListener("click", () => bannerInput?.click());
+    avatarInput?.addEventListener("change", () => uploadAsset("avatar", avatarInput.files && avatarInput.files[0]));
+    bannerInput?.addEventListener("change", () => uploadAsset("banner", bannerInput.files && bannerInput.files[0]));
+    avatarDeleteBtn?.addEventListener("click", () => {
+      if (!activeGroupHasCustomAvatar || !window.confirm("Remove this group avatar?")) return;
+      deleteAsset("avatar");
+    });
+    bannerDeleteBtn?.addEventListener("click", () => {
+      if (!activeGroupHasCustomBanner || !window.confirm("Remove this group banner?")) return;
+      deleteAsset("banner");
+    });
+    groupDeleteBtn?.addEventListener("click", deleteGroup);
+  }
+
+  function showCmdModal(title, templateId) {
+    if (!cmdModal || !cmdModalBody || !cmdModalTitle) return;
+
+    const tpl = document.getElementById(templateId);
+    if (!tpl) {
+      addLine("Missing template: " + templateId, "error");
+      return;
+    }
+
+    cmdModalTitle.textContent = title || "Command";
+    cmdModalBody.innerHTML = "";
+    cmdModalBody.appendChild(tpl.content.cloneNode(true));
+
+    cmdModal.style.display = "flex";
+    cmdModal.setAttribute("aria-hidden", "false");
+
+    const psForm = cmdModalBody.querySelector('form.cmdForm[data-cmd="play_sound"]');
+    if (psForm) initPlaySoundForm(psForm);
+    const subliminalForm = cmdModalBody.querySelector(
+      'form.cmdForm[data-cmd="subliminal_message"]',
+    );
+    if (subliminalForm) initSubliminalMessageForm(subliminalForm);
+    const groupEditForm = cmdModalBody.querySelector("#groupCommandSettingsForm");
+    if (groupEditForm) initGroupEditForm(groupEditForm);
+    initUploadPanels(cmdModalBody);
+
+    const first = cmdModalBody.querySelector("textarea, input:not(.uploadInput), select, button, [data-upload-dropzone]");
+    if (first && first.focus) first.focus();
+  }
+
+  document.addEventListener("click", (e) => {
+    const close = e.target && e.target.closest && e.target.closest('[data-cmd-modal-close="1"]');
+    if (close) {
+      e.preventDefault();
+      hideCmdModal();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideCmdModal();
+  });
+
+  function sanitizeWriteForMeMessage(value, maxLength = 4000) {
+    const limit = Math.max(0, Number(maxLength) || 4000);
+    return String(value || "")
+      .replace(/[^\x20-\x7E]/g, "")
+      .slice(0, limit);
+  }
+
+  function getWriteForMeTextarea(target) {
+    if (!target || typeof target.matches !== "function") return null;
+    if (!target.matches('textarea[data-write-for-me-message="1"]')) return null;
+    return target;
+  }
+
+  function sanitizeWriteForMeTextarea(textarea) {
+    if (!textarea) return "";
+
+    const maxLength = Number(textarea.getAttribute("maxlength") || 4000) || 4000;
+    const sanitized = sanitizeWriteForMeMessage(textarea.value, maxLength);
+
+    if (sanitized !== textarea.value) {
+      const caret = typeof textarea.selectionStart === "number"
+        ? Math.min(textarea.selectionStart, sanitized.length)
+        : sanitized.length;
+      textarea.value = sanitized;
+      try {
+        textarea.setSelectionRange(caret, caret);
+      } catch {}
+    }
+
+    return sanitized;
+  }
+
+  function insertWriteForMeText(textarea, text) {
+    if (!textarea) return;
+
+    const maxLength = Number(textarea.getAttribute("maxlength") || 4000) || 4000;
+    const start = typeof textarea.selectionStart === "number" ? textarea.selectionStart : textarea.value.length;
+    const end = typeof textarea.selectionEnd === "number" ? textarea.selectionEnd : textarea.value.length;
+    const remaining = Math.max(0, maxLength - (textarea.value.length - (end - start)));
+    const sanitized = sanitizeWriteForMeMessage(text, remaining);
+
+    if (!sanitized) return;
+
+    if (typeof textarea.setRangeText === "function") {
+      textarea.setRangeText(sanitized, start, end, "end");
+      return;
+    }
+
+    const nextValue = textarea.value.slice(0, start) + sanitized + textarea.value.slice(end);
+    textarea.value = nextValue.slice(0, maxLength);
+  }
+
+  function validateWriteForMeForm(form) {
+    if (!form || form.dataset.cmd !== "write_for_me") return true;
+
+    const textarea = form.querySelector('textarea[data-write-for-me-message="1"]');
+    if (!textarea) return true;
+
+    const original = String(textarea.value || "");
+    const sanitized = sanitizeWriteForMeTextarea(textarea);
+    if (sanitized.trim()) return true;
+
+    addLine(
+      original.trim()
+        ? "Message must be a single line with standard keyboard characters only."
+        : "Missing message",
+      "error"
+    );
+    textarea.focus();
+    return false;
+  }
+
+  function validateSubliminalMessageForm(form) {
+    if (!form || form.dataset.cmd !== "subliminal_message") return true;
+
+    const textareas = Array.from(
+      form.querySelectorAll('textarea[data-subliminal-message="1"]'),
+    );
+    if (!textareas.length) return true;
+
+    let hasMessage = false;
+    for (const textarea of textareas) {
+      const value = String(textarea.value || "").trim();
+      textarea.value = value;
+      if (value) hasMessage = true;
+    }
+
+    if (hasMessage) return true;
+
+    addLine("Add at least one message.", "error");
+    textareas[0]?.focus();
+    return false;
+  }
+
+  document.addEventListener("keydown", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener("paste", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+
+    const pasted = e.clipboardData?.getData("text") || "";
+    const sanitized = sanitizeWriteForMeMessage(pasted);
+    if (sanitized === pasted) return;
+
+    e.preventDefault();
+    insertWriteForMeText(textarea, pasted);
+  });
+
+  document.addEventListener("input", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+    sanitizeWriteForMeTextarea(textarea);
+  });
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest && e.target.closest(".cmdBtn");
+    if (!btn) return;
+
+    if (btn.hasAttribute("data-instant-cmd")) return;
+
+    const cmd = btn.getAttribute("data-cmd") || "command";
+    const tpl = btn.getAttribute("data-tpl") || "";
+    const title = btn.textContent || cmd;
+
+    e.preventDefault();
+    showCmdModal(title.trim(), tpl);
+  });
+
+  groupCommandSettingsBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showCmdModal("Edit Group", "tpl_group_command_settings");
+  });
+
+  groupReportBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showCmdModal("Report Community Group", "tpl_group_report");
+  });
+
+  function ensureImageModal() {
+    let modal = document.getElementById("imgModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.id = "imgModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.background = "rgba(0,0,0,0.72)";
+    modal.style.zIndex = "9999";
+    modal.style.padding = "18px";
+
+    modal.innerHTML = `
+      <div id="imgModalCard" style="
+        width: min(1100px, 96vw);
+        height: min(820px, 92vh);
+        background: rgba(18,18,22,0.98);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+        display:flex;
+        flex-direction:column;
+        overflow:hidden;
+      ">
+        <div style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          padding:12px 12px;
+          border-bottom:1px solid rgba(255,255,255,0.10);
+          gap:10px;
+        ">
+          <div id="imgModalTitle" class="muted" style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <a id="imgModalDownload" href="#" download="image.webp"
+              style="color:#fff; text-decoration:none; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.18);">
+              Download
+            </a>
+            <button id="imgModalClose" type="button" style="
+              color:#fff; background:transparent; border:1px solid rgba(255,255,255,0.18);
+              border-radius:10px; padding:8px 10px; cursor:pointer;
+            ">Close</button>
+          </div>
+        </div>
+
+        <div style="flex:1; overflow:auto; padding:12px;">
+          <img id="imgModalImg" alt="Image" style="
+            display:block;
+            max-width:100%;
+            height:auto;
+            margin:0 auto;
+            border-radius:12px;
+            background:#000;
+          "/>
+        </div>
+      </div>
+    `;
+
+    function hideImageModal() {
+      const img = modal.querySelector("#imgModalImg");
+      if (img) img.src = "";
+      modal.style.display = "none";
+    }
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) hideImageModal();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideImageModal();
+    });
+
+    modal.querySelector("#imgModalClose").addEventListener("click", hideImageModal);
+
+    document.body.appendChild(modal);
+
+    modal._hideImageModal = hideImageModal;
+
+    return modal;
+  }
+
+  function showImageModal({ src, title, filename }) {
+    const modal = ensureImageModal();
+    const img = modal.querySelector("#imgModalImg");
+    const titleEl = modal.querySelector("#imgModalTitle");
+    const dl = modal.querySelector("#imgModalDownload");
+
+    img.src = src;
+    titleEl.textContent = title || "Image";
+    dl.href = src;
+    dl.setAttribute("download", filename || "image.webp");
+
+    modal.style.display = "flex";
+  }
+
+  const COOLDOWN_APPLIES = <%- inlineScriptJson(!!cooldownApplies) %>;
+  const COOLDOWN_MS = 3000;
+
+  const overlay = document.getElementById("cooldownOverlay");
+  const overlaySeconds = document.getElementById("cooldownSeconds");
+
+  let nextAllowedAt = 0;
+  let countdownTimer = null;
+
+  function showOverlay(msLeft) {
+    if (!overlay) return;
+    const s = Math.max(0, Math.ceil(msLeft / 1000));
+    if (overlaySeconds) overlaySeconds.textContent = String(s);
+    overlay.setAttribute("data-show", "true");
+    overlay.setAttribute("aria-hidden", "false");
+  }
+
+  function hideOverlay() {
+    if (!overlay) return;
+    overlay.setAttribute("data-show", "false");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  function setButtonsDisabled(disabled) {
+    document.querySelectorAll(".cmdForm button[type=submit]").forEach(btn => {
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.65" : "";
+      btn.style.cursor = disabled ? "not-allowed" : "";
+    });
+  }
+
+  const HEAVY_COOLDOWN_MS = 8000;
+  let heavyUntil = 0;
+  let heavyTimer = null;
+
+  function setHeavyButtonsDisabled(disabled) {
+    document.querySelectorAll('[data-heavy="1"]').forEach((btn) => {
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.65" : "";
+      btn.style.cursor = disabled ? "not-allowed" : "";
+    });
+  }
+
+  function startHeavyCooldown() {
+    const now = Date.now();
+    heavyUntil = Math.max(heavyUntil, now + HEAVY_COOLDOWN_MS);
+
+    setHeavyButtonsDisabled(true);
+
+    if (heavyTimer) clearInterval(heavyTimer);
+    heavyTimer = setInterval(() => {
+      const left = heavyUntil - Date.now();
+      if (left <= 0) {
+        clearInterval(heavyTimer);
+        heavyTimer = null;
+        setHeavyButtonsDisabled(false);
+      }
+    }, 120);
+  }
+
+  function isHeavyCoolingDown() {
+    return Date.now() < heavyUntil;
+  }
+
+  function startCooldown() {
+    if (!COOLDOWN_APPLIES) return;
+
+    const now = Date.now();
+    nextAllowedAt = Math.max(nextAllowedAt, now + COOLDOWN_MS);
+
+    setButtonsDisabled(true);
+    showOverlay(nextAllowedAt - now);
+
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      const left = nextAllowedAt - Date.now();
+      if (left <= 0) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        hideOverlay();
+        setButtonsDisabled(false);
+        return;
+      }
+      showOverlay(left);
+    }, 120);
+  }
+
+  function isCoolingDown() {
+    return COOLDOWN_APPLIES && Date.now() < nextAllowedAt;
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (respBox) respBox.innerHTML = "";
+      addLine("Cleared.", "info");
+      pendingScreenshot = null;
+      pendingWebcam = null;
+    });
+  }
+
+  const RESP_ENDPOINT = "/api/group/" + encodeURIComponent(groupKey) + "/responses";
+
+  let baselineSeen = false;
+  let lastSeenId = null;
+  let lastSeenCreatedAt = 0;
+
+  let pendingScreenshot = null;
+  let pendingWebcam = null;
+
+  function normalizeResponseItem(it) {
+    const commandId =
+      it?.commandId ??
+      it?.command_id ??
+      it?.id ??
+      it?.cmdId ??
+      it?.command?.commandId ??
+      null;
+
+    const createdAt =
+      Number(it?.created_at ?? it?.createdAt ?? it?.ts ?? it?.time ?? 0) || 0;
+
+    const details = it?.details ?? it?.payload ?? it?.data ?? null;
+
+    const kind =
+      it?.kind ??
+      it?.type ??
+      it?.response_type ??
+      it?.responseType ??
+      details?.kind ??
+      details?.type ??
+      null;
+
+    const mime =
+      it?.mime ??
+      it?.content_type ??
+      it?.contentType ??
+      details?.mime ??
+      details?.content_type ??
+      null;
+
+    const url =
+      it?.url ??
+      it?.imageUrl ??
+      it?.image_url ??
+      details?.url ??
+      details?.imageUrl ??
+      null;
+
+    const webpB64 =
+      details?.webp_b64 ??
+      details?.webpB64 ??
+      it?.webp_b64 ??
+      it?.webpB64 ??
+      null;
+
+    return { raw: it, commandId, createdAt, details, kind, mime, url, webpB64 };
+  }
+
+  function markSeen(n) {
+    if (!n) return;
+    if (n.commandId) lastSeenId = String(n.commandId);
+    if (n.createdAt) lastSeenCreatedAt = Math.max(lastSeenCreatedAt, Number(n.createdAt) || 0);
+  }
+
+  function isNewerThanBaseline(n) {
+    if (n.commandId && lastSeenId && String(n.commandId) !== String(lastSeenId)) return true;
+    if (n.createdAt && n.createdAt > lastSeenCreatedAt) return true;
+    return false;
+  }
+
+  function isWebpImageResponse(n, wantKind) {
+    const k = (n.kind ? String(n.kind).toLowerCase() : "");
+    const m = (n.mime ? String(n.mime).toLowerCase() : "");
+    const kindOk = wantKind ? k.includes(String(wantKind).toLowerCase()) : false;
+    return kindOk || m.includes("image/webp") || !!n.webpB64;
+  }
+
+  function addImagePreviewUrl(url, label) {
+    const wrap = document.createElement("div");
+    wrap.className = "respRow";
+
+    const time = document.createElement("div");
+    time.className = "respBubble respTime";
+    time.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+    const img = document.createElement("img");
+    img.src = url;
+    img.className = "respBubble respMsg";
+    img.alt = label || "Image";
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "10px";
+    img.style.display = "block";
+    img.style.cursor = "zoom-in";
+
+    img.addEventListener("click", () => {
+      showImageModal({ src: url, title: label || "Image", filename: "image.webp" });
+    });
+
+    wrap.appendChild(time);
+    wrap.appendChild(img);
+
+    respBox.prepend(wrap);
+  }
+
+  async function fetchResponses() {
+    const res = await fetch(RESP_ENDPOINT, {
+      headers: { "Accept": "application/json" },
+      credentials: "include"
+    });
+
+    const ct = res.headers.get("content-type") || "";
+    let data = null;
+    if (ct.includes("application/json")) data = await res.json().catch(() => null);
+
+    if (!res.ok) throw new Error("responses_http_" + res.status);
+    if (!data) throw new Error("responses_not_json");
+
+    const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.responses) ? data.responses : []);
+    return items;
+  }
+
+  let pollTimer = null;
+  function startPoll(intervalMs = 1000) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const items = await fetchResponses();
+        if (!baselineSeen) {
+          if (items.length) markSeen(normalizeResponseItem(items[0]));
+          baselineSeen = true;
+          return;
+        }
+
+        const normalized = items.map(normalizeResponseItem);
+
+        if (pendingScreenshot) {
+          if (Date.now() > pendingScreenshot.timeoutAt) {
+            addLine("Timed out waiting for screenshot response.", "error");
+            pendingScreenshot = null;
+          } else {
+            const candidates = normalized.filter(n => isWebpImageResponse(n, "screenshot"));
+            let match = null;
+            if (pendingScreenshot.commandIdGuess) {
+              match = candidates.find(c => String(c.commandId) === String(pendingScreenshot.commandIdGuess)) || null;
+            }
+            if (!match) match = candidates.find(c => isNewerThanBaseline(c)) || null;
+
+            if (match && match.url) {
+              const bust = String(match.url) + (String(match.url).includes("?") ? "&" : "?") +
+                "t=" + encodeURIComponent(String(match.createdAt || Date.now()));
+              addImagePreviewUrl(bust, "Screenshot");
+              markSeen(match);
+              pendingScreenshot = null;
+              return;
+            }
+          }
+        }
+
+        if (pendingWebcam) {
+          if (Date.now() > pendingWebcam.timeoutAt) {
+            addLine("Timed out waiting for webcam capture response.", "error");
+            pendingWebcam = null;
+          } else {
+            const candidates = normalized.filter(n => isWebpImageResponse(n, "webcam"));
+            let match = null;
+            if (pendingWebcam.commandIdGuess) {
+              match = candidates.find(c => String(c.commandId) === String(pendingWebcam.commandIdGuess)) || null;
+            }
+            if (!match) match = candidates.find(c => isNewerThanBaseline(c)) || null;
+
+            if (match && match.url) {
+              const bust = String(match.url) + (String(match.url).includes("?") ? "&" : "?") +
+                "t=" + encodeURIComponent(String(match.createdAt || Date.now()));
+              addImagePreviewUrl(bust, "Webcam");
+              markSeen(match);
+              pendingWebcam = null;
+              return;
+            }
+          }
+        }
+
+        const newest = normalized[0];
+        if (newest && isNewerThanBaseline(newest)) {
+          addLine("New response: kind=" + (newest.kind || "?"), "info");
+          markSeen(newest);
+        }
+      } catch (e) {
+
+      }
+    }, intervalMs);
+  }
+
+  startPoll(1000);
+  
+  async function postForm(form) {
+    const action = form.getAttribute("action");
+    const cmd = form.dataset.cmd || "command";
+    if (!action) return;
+
+    if (isCoolingDown()) {
+      startCooldown();
+      addLine("Please wait for cooldown.", "cooldown");
+      return;
+    }
+
+    const params = new URLSearchParams(new FormData(form));
+    clearFormFields(form);
+
+    startCooldown();
+    addLine("Sending " + cmd + "...", "send");
+
+    let res, data = null, bodyText = null;
+    try {
+      res = await fetch(action, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: params.toString(),
+        credentials: "include"
+      });
+    } catch (e) {
+      addLine("Network error: " + (e?.message || String(e)), "error");
+      return;
+    }
+
+    const ct = (res.headers.get("content-type") || "");
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else bodyText = await res.text();
+    } catch {
+      bodyText = bodyText || "(failed to parse response)";
+    }
+
+    if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
+      const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
+      nextAllowedAt = Date.now() + Math.max(500, retryMs);
+      startCooldown();
+      addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
+      return;
+    }
+
+    if (!res.ok) {
+      if (data && data.message) addLine(data.message, "error");
+      else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
+      return;
+    }
+
+    addLine((data && (data.message || ("OK (sent=" + (data.sent ?? "?") + ")"))) || bodyText || "OK", "ok");
+    hideCmdModal();
+
+    if (cmd === "screenshot") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingScreenshot = { timeoutAt: Date.now() + 45000, commandIdGuess };
+      addLine("Waiting for screenshot response..." + (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""), "info");
+    }
+
+    if (cmd === "webcam_capture") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingWebcam = { timeoutAt: Date.now() + 45000, commandIdGuess };
+      addLine("Waiting for webcam capture response..." + (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""), "info");
+    }
+  }
+
+  async function postInstant(btn, action, cmd) {
+    if (!action) return;
+
+    if (isCoolingDown()) {
+      startCooldown();
+      addLine("Please wait for cooldown.", "cooldown");
+      return;
+    }
+
+    startCooldown();
+    if (btn) {
+      btn.disabled = true;
+      btn.style.opacity = "0.65";
+    }
+    addLine("Sending " + cmd + "...", "send");
+
+    let res, data = null, bodyText = null;
+    try {
+      res = await fetch(action, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: "",
+        credentials: "include"
+      });
+    } catch (e) {
+      addLine("Network error: " + (e?.message || String(e)), "error");
+      if (btn) { btn.disabled = false; btn.style.opacity = ""; }
+      return;
+    }
+
+    const ct = (res.headers.get("content-type") || "");
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else bodyText = await res.text();
+    } catch {
+      bodyText = bodyText || "(failed to parse response)";
+    } finally {
+      if (btn) { btn.disabled = false; btn.style.opacity = ""; }
+    }
+
+    if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
+      const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
+      nextAllowedAt = Date.now() + Math.max(500, retryMs);
+      startCooldown();
+      addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
+      return;
+    }
+
+    if (!res.ok) {
+      if (data && data.message) addLine(data.message, "error");
+      else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
+      return;
+    }
+
+    addLine((data && (data.message || "OK")) || bodyText || "OK", "ok");
+
+    if (cmd === "screenshot") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingScreenshot = { timeoutAt: Date.now() + 45000, commandIdGuess };
+      addLine("Waiting for screenshot response..." + (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""), "info");
+    }
+
+    if (cmd === "webcam_capture") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingWebcam = { timeoutAt: Date.now() + 45000, commandIdGuess };
+      addLine("Waiting for webcam capture response..." + (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""), "info");
+    }
+  }
+
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    if (!form || !form.classList || !form.classList.contains("cmdForm")) return;
+    e.preventDefault();
+    if (!validateWriteForMeForm(form)) return;
+    if (!validateSubliminalMessageForm(form)) return;
+    postForm(form);
+  });
+
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    if (!form || form.id !== "groupCommandSettingsForm") return;
+    e.preventDefault();
+    submitGroupCommandSettings(form);
+  });
+
+  document.addEventListener("submit", async (e) => {
+    const form = e.target;
+    if (!form || form.id !== "groupMessageReportForm") return;
+    e.preventDefault();
+
+    const messageId = String(form.querySelector('input[name="messageId"]')?.value || "").trim();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const status = form.querySelector("[data-group-message-report-status]");
+    if (!messageId || !form.reportValidity()) return;
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (status) status.textContent = "Sending report...";
+    try {
+      const res = await fetch(
+        "/api/group/" + encodeURIComponent(groupKey) + "/board/" + encodeURIComponent(messageId) + "/report",
+        {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: new URLSearchParams(new FormData(form)).toString(),
+          credentials: "include",
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || "Could not report message.");
+      }
+      reportedGroupMessageIds.add(messageId);
+      if (status) status.textContent = data.message || "Message reported.";
+      const reportButton = Array.from(
+        groupBoardList?.querySelectorAll('[data-group-message-action="report"]') || [],
+      ).find((button) => String(button.dataset.messageId || "") === messageId);
+      if (reportButton) {
+        reportButton.disabled = true;
+        reportButton.title = "Message reported";
+        reportButton.setAttribute("aria-label", "Message reported");
+      }
+      window.setTimeout(hideCmdModal, 700);
+    } catch (err) {
+      if (status) status.textContent = err?.message || "Could not report message.";
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  document.addEventListener("submit", async (e) => {
+    const form = e.target;
+    if (!form || form.id !== "groupReportForm") return;
+    e.preventDefault();
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const status = form.querySelector("[data-group-report-status]");
+    if (!form.reportValidity()) return;
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (status) status.textContent = "Sending report...";
+    try {
+      const res = await fetch(
+        "/api/group/" + encodeURIComponent(groupKey) + "/report",
+        {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: new URLSearchParams(new FormData(form)).toString(),
+          credentials: "include",
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || "Could not report group.");
+      }
+      if (status) status.textContent = data.message || "Report sent.";
+      if (groupReportBtn) {
+        groupReportBtn.disabled = true;
+        groupReportBtn.textContent = "Reported";
+      }
+      window.setTimeout(hideCmdModal, 700);
+    } catch (err) {
+      if (status) status.textContent = err?.message || "Could not report group.";
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  groupBoardForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!canPostGroupBoard || !groupBoardInput) return;
+
+    const body = String(groupBoardInput.value || "").trim();
+    if (!body) return;
+
+    groupBoardInput.value = "";
+    try {
+      await postGroupBoardMessage(body);
+    } catch (err) {
+      setGroupBoardStatus(err?.message || "Failed to post.");
+      groupBoardInput.value = body;
+    }
+  });
+
+  groupBoardList?.addEventListener("click", (e) => {
+    const button = e.target?.closest?.("[data-group-message-action]");
+    if (!button) return;
+    e.preventDefault();
+    const messageId = String(button.dataset.messageId || "").trim();
+    if (!messageId) return;
+
+    if (button.dataset.groupMessageAction === "report") {
+      openGroupMessageReport(messageId);
+    } else if (button.dataset.groupMessageAction === "delete") {
+      deleteGroupMessage(messageId, button);
+    }
+  });
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-instant-cmd]");
+    if (!btn) return;
+
+    e.preventDefault();
+
+    const cmd = String(btn.dataset.instantCmd || "");
+    const action = String(btn.dataset.action || "");
+    const isHeavy = btn.dataset.heavy === "1";
+
+    if (!cmd || !action) return;
+
+    if (isHeavy && isHeavyCoolingDown()) {
+      addLine("Please wait for heavy command cooldown.", "cooldown");
+      return;
+    }
+
+    if (isHeavy) startHeavyCooldown();
+    await postInstant(btn, action, cmd);
+  });
+
+  (() => {
+    const form = document.getElementById("groupMembershipForm");
+    const btn = document.getElementById("groupMembershipBtn");
+    const memberCountEl = document.getElementById("memberCount");
+
+    if (!form || !btn) return;
+
+    let busy = false;
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (busy) return;
+
+      busy = true;
+      const oldText = btn.textContent;
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(form.action, {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json"
+          },
+          credentials: "same-origin"
+        });
+
+        if (!res.ok) {
+          throw new Error("Request failed");
+        }
+
+        let data = null;
+        const contentType = res.headers.get("content-type") || "";
+
+        if (contentType.includes("application/json")) {
+          data = await res.json();
+        }
+
+        const wasMember = btn.dataset.isMember === "1";
+        const nowMember =
+          data && typeof data.isMember !== "undefined"
+            ? !!data.isMember
+            : !wasMember;
+        canPostGroupBoard = nowMember;
+        syncGroupBoardPostState();
+        refreshGroupBoard({ forceRender: true });
+
+        btn.dataset.isMember = nowMember ? "1" : "0";
+        btn.textContent = nowMember ? "Leave Group" : "Join Group";
+        btn.classList.toggle("isFav", nowMember);
+
+        form.action = `/api/group/<%= encodeURIComponent(groupKey) %>/${nowMember ? "leave" : "join"}`;
+
+        if (memberCountEl) {
+          if (data && typeof data.memberCount !== "undefined") {
+            memberCountEl.textContent = data.memberCount;
+          } else {
+            const current = parseInt(memberCountEl.textContent || "0", 10) || 0;
+            memberCountEl.textContent = Math.max(0, current + (nowMember ? 1 : -1));
+          }
+        }
+      } catch (err) {
+        btn.textContent = oldText;
+        alert("Could not update group membership.");
+      } finally {
+        btn.disabled = false;
+        busy = false;
+      }
+    });
+  })();
+
+  if (isCommunityGroup && isOwner) {
+    applyCommunityGroupCommandPrefs(communityGroupCommandPrefs);
+  }
+
+  syncGroupBoardPostState();
+  renderGroupBoard({ scrollToBottom: true });
+  refreshGroupBoard({ forceRender: true });
+  window.setInterval(refreshGroupBoard, 3000);
+  window.setInterval(() => renderGroupBoard(), 15000);
+</script>
+<% } %>

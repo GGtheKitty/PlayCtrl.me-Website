@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/users.css">
+</head>
+
+<body>
+  <div class="panel">
+    <div class="panelHd">
+      <h1>Media URL Resolvers</h1>
+      <a class="btn" href="/admin">Back</a>
+    </div>
+    <div class="panelBd">
+      <p class="muted">
+        Configure site-specific parsers that rewrite indirect media pages into the direct file URLs sent to clients for
+        <code>image_popup</code> and <code>fullscreen_popup</code>.
+        Paste a supported URL or host and the parser will be chosen automatically.
+      </p>
+
+      <% if (adminMediaResolverFlash) { %>
+        <div class="hint" style="margin-top:12px; color:<%= adminMediaResolverFlashIsError ? '#d44' : 'inherit' %>;">
+          <%= adminMediaResolverFlash %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:18px;">
+    <div class="panelHd">
+      <h2>Add Or Update Site</h2>
+    </div>
+    <div class="panelBd">
+      <form method="post" action="/admin/media-resolvers/site/save">
+        <div class="toolbar" style="flex-wrap:wrap;">
+          <input
+            name="host"
+            placeholder="https://www.redgifs.com/watch/... or hypnotube.com"
+            aria-label="URL or host"
+            style="min-width:360px;"
+          />
+          <select name="enabled" aria-label="Enabled state">
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+          <button class="btn" type="submit">Save Site</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:18px;">
+    <div class="panelHd">
+      <h2>Configured Sites</h2>
+    </div>
+    <div class="panelBd">
+      <% if (adminMediaResolverSites.length) { %>
+        <% for (const site of adminMediaResolverSites) { %>
+          <div class="uCard" style="margin-bottom:14px;">
+            <div class="uTop" style="align-items:flex-start;">
+              <div class="uLeft" style="width:100%;">
+                <div style="min-width:0; width:100%;">
+                  <div class="uName"><%= site.host %></div>
+                  <div class="uMeta">
+                    <span class="pill"><span class="k">resolver</span><span class="v"><%= site.resolver.label || site.resolverKey %></span></span>
+                    <span class="pill"><span class="k">status</span><span class="v"><%= site.enabled ? "enabled" : "disabled" %></span></span>
+                    <span class="pill"><span class="k">updated</span><span class="v"><%= site.updatedAt ? new Date(site.updatedAt).toLocaleString() : "n/a" %></span></span>
+                  </div>
+                  <div class="muted" style="margin-top:8px;">
+                    <%= site.resolver.description || "" %>
+                  </div>
+                  <% if (site.resolver.allowedOutputHosts && site.resolver.allowedOutputHosts.length) { %>
+                    <div class="muted" style="margin-top:6px;">
+                      Allowed direct media hosts:
+                      <%= site.resolver.allowedOutputHosts.join(", ") %>
+                    </div>
+                  <% } %>
+                  <% if (site.resolver.exampleUrl) { %>
+                    <div class="muted" style="margin-top:6px; word-break:break-all;">
+                      Example:
+                      <a class="link" href="<%= site.resolver.exampleUrl %>" target="_blank" rel="noreferrer"><%= site.resolver.exampleUrl %></a>
+                    </div>
+                  <% } %>
+                </div>
+              </div>
+            </div>
+
+            <div class="toolbar" style="margin-top:14px; flex-wrap:wrap;">
+              <form method="post" action="/admin/media-resolvers/site/save" style="display:flex; gap:10px; flex-wrap:wrap;">
+                <input type="hidden" name="host" value="<%= site.host %>" />
+                <select name="enabled" aria-label="Enabled state">
+                  <option value="1"<%= site.enabled ? " selected" : "" %>>Enabled</option>
+                  <option value="0"<%= !site.enabled ? " selected" : "" %>>Disabled</option>
+                </select>
+                <button class="btnSm" type="submit">Save</button>
+              </form>
+
+              <form method="post" action="/admin/media-resolvers/site/delete">
+                <input type="hidden" name="host" value="<%= site.host %>" />
+                <button class="btnSm btnDanger" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        <% } %>
+      <% } else { %>
+        <div class="hint">No resolver sites configured yet.</div>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:18px;">
+    <div class="panelHd">
+      <h2>Supported Resolver Types</h2>
+    </div>
+    <div class="panelBd">
+      <% if (adminMediaResolverSupported.length) { %>
+        <% for (const resolver of adminMediaResolverSupported) { %>
+          <div class="card" style="margin-bottom:14px;">
+            <div class="cardHd"><%= resolver.label %></div>
+            <div class="cardBd">
+              <div><code><%= resolver.key %></code></div>
+              <div class="muted" style="margin-top:8px;"><%= resolver.description %></div>
+              <% if (resolver.defaultHosts && resolver.defaultHosts.length) { %>
+                <div class="muted" style="margin-top:8px;">Default hosts: <%= resolver.defaultHosts.join(", ") %></div>
+              <% } %>
+              <% if (resolver.allowedOutputHosts && resolver.allowedOutputHosts.length) { %>
+                <div class="muted" style="margin-top:8px;">Direct media hosts: <%= resolver.allowedOutputHosts.join(", ") %></div>
+              <% } %>
+              <% if (resolver.exampleUrl) { %>
+                <div class="muted" style="margin-top:8px; word-break:break-all;">
+                  Example:
+                  <a class="link" href="<%= resolver.exampleUrl %>" target="_blank" rel="noreferrer"><%= resolver.exampleUrl %></a>
+                </div>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
+      <% } else { %>
+        <div class="hint">No supported resolver types are registered.</div>
+      <% } %>
+    </div>
+  </div>
+</body>
+
+</html>

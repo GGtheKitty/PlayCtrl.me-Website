@@ -1,19 +1,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title><%= meta?.ogTitle || title || "PlayCtrl.me" %></title>
+<title><%= title || "PlayCtrl.me" %></title>
+<meta name="robots" content="<%= meta?.robots || "noindex, nofollow, noarchive, nosnippet, noimageindex" %>" />
+<meta name="googlebot" content="<%= meta?.robots || "noindex, nofollow, noarchive, nosnippet, noimageindex" %>" />
+<link rel="canonical" href="<%= meta?.canonicalUrl || "https://playctrl.me/" %>" />
 
-<link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="apple-mobile-web-app-title" content="PlayCtrl.me" />
-<link rel="manifest" href="/icons/site.webmanifest" />
+<%- include("favicon_links") %>
 
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="PlayCtrl.me" />
 <meta property="og:title" content="<%= meta?.ogTitle || title || "PlayCtrl.me" %>" />
 <meta property="og:description" content="<%= meta?.ogDesc || "Remote play & control" %>" />
-<meta property="og:url" content="<%= meta?.ogUrl || "https://playctrl.me" %>" />
+<meta property="og:url" content="<%= meta?.ogUrl || meta?.canonicalUrl || "https://playctrl.me/" %>" />
 <meta property="og:image" content="<%= meta?.ogImage || "https://playctrl.me/favicon-96x96.png" %>" />
 
 <meta name="twitter:card" content="summary_large_image" />
@@ -22,3 +20,7 @@
 <meta name="twitter:image" content="<%= meta?.ogImage || "https://playctrl.me/favicon-96x96.png" %>" />
 
 <link rel="stylesheet" href="/css/main.css" />
+<% (typeof extraStylesheets !== "undefined" && Array.isArray(extraStylesheets) ? extraStylesheets : []).forEach((href) => { %>
+  <link rel="stylesheet" href="<%= href %>" />
+<% }) %>
+<%- include("toast_client") %>

@@ -1,0 +1,82 @@
+<%
+  const info = (uploadUi && uploadUi[context]) || {};
+  const uploadTitle =
+    typeof uploadPanelTitle !== "undefined"
+      ? uploadPanelTitle
+      : (info.title || "Upload file");
+  const uploadHintLines =
+    typeof hintLines !== "undefined"
+      ? hintLines
+      : (Array.isArray(info.hintLines) ? info.hintLines : (info.hint ? [info.hint] : []));
+  const uploadAccept = typeof accept !== "undefined" ? accept : (info.accept || "");
+  const uploadPickerAccept =
+    typeof pickerAccept !== "undefined" ? pickerAccept : (info.pickerAccept || uploadAccept);
+  const uploadTargetSelector =
+    typeof targetSelector !== "undefined" ? targetSelector : 'input[name="url"]';
+  const uploadRecentItemsSource =
+    typeof recentItemsByContext !== "undefined"
+      ? recentItemsByContext
+      : (uploadRecentItemsByContext || {});
+  const uploadInitialItems =
+    typeof initialItems !== "undefined"
+      ? initialItems
+      : (Array.isArray(uploadRecentItemsSource[context]) ? uploadRecentItemsSource[context] : []);
+  const uploadInputId =
+    "upload_input_" +
+    String(context || "file").replace(/[^a-zA-Z0-9_-]+/g, "_") +
+    "_" +
+    String(uploadTargetSelector || "target").replace(/[^a-zA-Z0-9_-]+/g, "_");
+%>
+<div
+  class="uploadPanel"
+  data-upload-context="<%= context %>"
+  data-upload-target="<%= uploadTargetSelector %>"
+  data-upload-accept="<%= uploadAccept %>"
+  data-upload-max-bytes="<%= Number(info.maxBytes || 0) %>"
+  data-upload-max-files="5"
+>
+  <input
+    id="<%= uploadInputId %>"
+    class="uploadInput"
+    type="file"
+    tabindex="-1"
+    multiple
+    <% if (uploadPickerAccept) { %>accept="<%= uploadPickerAccept %>"<% } %>
+  />
+
+  <label
+    for="<%= uploadInputId %>"
+    class="uploadDropzone"
+    data-upload-dropzone
+    role="button"
+    tabindex="0"
+    aria-label="Choose up to 5 files to upload"
+  >
+    <div class="uploadDropIcon" aria-hidden="true">
+      <span class="uploadDropIconGlyph"></span>
+    </div>
+
+    <div class="uploadPanelTitle"><%= uploadTitle %></div>
+    <div class="muted uploadDropCopy">Drag and drop or click to browse</div>
+
+    <% if (uploadHintLines.length) { %>
+      <div class="uploadHintStack" role="note" aria-label="Upload size limits">
+        <% uploadHintLines.forEach((line) => { %>
+          <div class="muted uploadHint"><%= line %></div>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <div class="uploadPickBtn">
+      <span>Choose files</span>
+    </div>
+  </label>
+
+  <div class="uploadStatus muted" data-upload-status aria-live="polite"></div>
+  <script type="application/json" data-upload-initial-items><%- inlineScriptJson(uploadInitialItems) %></script>
+
+  <div class="uploadRecent" data-upload-recent hidden>
+    <div class="muted uploadRecentTitle">Recent uploads</div>
+    <div class="uploadGrid" data-upload-grid></div>
+  </div>
+</div>

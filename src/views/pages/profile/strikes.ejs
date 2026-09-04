@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" href="/css/profile.css">
+</head>
+
+<body>
+
+  <div class="profileGrid profileGrid--single">
+    <div class="card">
+      <div class="cardHd">
+        <span>Strike History</span>
+        <a class="btnLink" href="/profile">Back to Profile</a>
+      </div>
+
+      <div class="cardBd">
+        <div class="strikeSummaryRow strikeSummaryRow--wide">
+          <div>
+            <div class="muted">Current strikes</div>
+            <div class="strikeSummaryValue"><%= Number(currentStrikeCount || 0) %> / <%= Number(maxUserStrikes || 3) %></div>
+          </div>
+
+          <div class="strikeMeter" aria-hidden="true">
+            <% for (let i = 0; i < Number(maxUserStrikes || 3); i += 1) { %>
+              <span class="strikeMeterDot <%= i < Number(currentStrikeCount || 0) ? "isOn" : "" %>"></span>
+            <% } %>
+          </div>
+        </div>
+
+        <div class="muted" style="margin-top:10px;">
+          This page shows the moderation actions recorded on your strike history. Reaching <%= Number(maxUserStrikes || 3) %> strikes results in an immediate ban.
+        </div>
+
+        <div class="muted" style="margin-top:6px;">
+          <% if (Number(currentStrikeCount || 0) > 0 && nextStrikeDecayLabel) { %>
+            If you avoid new strikes, 1 strike will expire after <%= nextStrikeDecayLabel %>. New strikes reset this timer.
+          <% } else { %>
+            Active strikes expire one at a time after 30 days without a new strike.
+          <% } %>
+        </div>
+
+        <% if (profileStrikeHistoryItems && profileStrikeHistoryItems.length) { %>
+          <div class="strikeHistoryList">
+            <% profileStrikeHistoryItems.forEach((item) => { %>
+              <article class="strikeHistoryItem">
+                <div class="strikeHistoryTop">
+                  <div class="strikeHistoryDelta <%= Number(item.strikeDelta || 0) > 0 ? "strikeHistoryDelta--plus" : "strikeHistoryDelta--minus" %>">
+                    <%= item.strikeDeltaLabel %>
+                  </div>
+                  <time class="strikeHistoryTime" datetime="<%= item.createdIso %>"><%= item.createdLabel %></time>
+                </div>
+
+                <div class="strikeHistoryReason"><%= item.reasonLabel %></div>
+
+                <div class="strikeHistoryMeta">
+                  <span><%= item.strikeDeltaSummary %></span>
+                  <% if (item.sourceLabel) { %>
+                    <span>Source: <%= item.sourceLabel %></span>
+                  <% } %>
+                </div>
+
+                <% if (item.details) { %>
+                  <div class="strikeHistoryDetails"><%= item.details %></div>
+                <% } %>
+              </article>
+            <% }) %>
+          </div>
+        <% } else { %>
+          <div class="strikeEmptyState">
+            You do not have any strike history yet.
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>

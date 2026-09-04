@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+<%
+  function escapeControlAboutHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function trimControlAboutLink(rawUrl, closingMarker) {
+    let end = String(rawUrl || "").length;
+
+    while (end > 0) {
+      const ch = rawUrl[end - 1];
+      if (/[.,!?;:]/.test(ch)) {
+        end -= 1;
+        continue;
+      }
+
+      if (ch === ")") {
+        const body = rawUrl.slice(0, end - 1);
+        const openCount = (body.match(/\(/g) || []).length;
+        const closeCount = (body.match(/\)/g) || []).length;
+        if (closeCount >= openCount) {
+          end -= 1;
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    if (closingMarker && rawUrl[end - 1] === closingMarker) {
+      end -= 1;
+    }
+
+    return rawUrl.slice(0, Math.max(0, end));
+  }
+
+  function renderControlAboutLink(linkText) {
+    const href = /^https?:\/\//i.test(linkText)
+      ? linkText
+      : `https://${linkText}`;
+
+    return (
+      `<a href="${escapeControlAboutHtml(href)}" target="_blank" rel="noopener noreferrer nofollow">` +
+      `${escapeControlAboutHtml(linkText)}</a>`
+    );
+  }
+
+  function renderControlAboutMarkup(value) {
+    const source = String(value || "");
+    const markerTags = {
+      "*": "em",
+      "#": "strong",
+      "-": "s",
+      "_": "u",
+    };
+    const linkPattern = /^(https?:\/\/[^\s<]+|www\.[^\s<]+)/i;
+
+    function walk(startIndex, closingMarker) {
+      let html = "";
+      let index = startIndex;
+
+      while (index < source.length) {
+        const ch = source[index];
+
+        if (ch === "\\") {
+          const next = source[index + 1] || "";
+          if (next && (markerTags[next] || next === "\\")) {
+            html += escapeControlAboutHtml(next);
+            index += 2;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch);
+          index += 1;
+          continue;
+        }
+
+        const linkMatch = source.slice(index).match(linkPattern);
+        if (linkMatch && linkMatch[0]) {
+          const linkText = trimControlAboutLink(linkMatch[0], closingMarker);
+          if (linkText) {
+            html += renderControlAboutLink(linkText);
+            index += linkText.length;
+            continue;
+          }
+        }
+
+        if (closingMarker && ch === closingMarker) {
+          return { html, index: index + 1, closed: true };
+        }
+
+        if (markerTags[ch]) {
+          const nested = walk(index + 1, ch);
+
+          if (nested.closed && nested.html.trim()) {
+            const tag = markerTags[ch];
+            html += `<${tag}>${nested.html}</${tag}>`;
+            index = nested.index;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch) + nested.html;
+          index = nested.index;
+          continue;
+        }
+
+        html += escapeControlAboutHtml(ch);
+        index += 1;
+      }
+
+      return { html, index, closed: false };
+    }
+
+    return walk(0, "").html;
+  }
+
+  const groupAboutRawText = String(groupAboutText || "");
+  const groupAboutHasText = !!groupAboutRawText.trim();
+  const groupAboutMarkup = groupAboutHasText
+    ? renderControlAboutMarkup(groupAboutRawText)
+    : "";
+%>
+<head>
+  <%- include("../../common/favicon_links") %>
+  <link rel="stylesheet" href="/css/control_link.css">
+</head>
+
+<body>
+
+  <%- include("../../common/commands_sent") %>
+
+  <div class="fullBleed controlPage controlPage--group" data-control-theme="purple">
+    <div class="controlProfileWrap controlProfileWrap--group">
+      <div class="card controlProfileCard">
+        <div class="controlProfileBanner">
+          <div
+            id="groupBannerImage"
+            class="controlProfileBannerImage"
+            <% if (groupBannerUrl) { %>
+              style="background-image:url('<%= groupBannerUrl %><%= groupBannerVersion ? `&v=${encodeURIComponent(groupBannerVersion)}` : "" %>')"
+            <% } else { %>
+              hidden
+            <% } %>
+          ></div>
+          <div class="controlProfileBannerGlow"></div>
+        </div>
+
+        <div class="controlProfileBody">
+          <div class="controlProfileAvatarWrap">
+            <% if (groupIconUrl) { %>
+              <img id="groupAvatarImg" class="controlProfileAvatar" src="<%= groupIconUrl %>" alt="" />
+            <% } else { %>
+              <div id="groupAvatarImg" class="controlProfileAvatar groupProfileAvatarFallback" aria-hidden="true">
+                #
+              </div>
+            <% } %>
+          </div>
+
+          <div class="controlProfileContent">
+            <div class="controlProfileIdentityRow">
+              <div class="controlProfileIdentity">
+                <div class="controlProfileNameRow">
+                  <span class="controlProfileDisplayName"><%= groupLabel || groupKey %></span>
+                </div>
+                <div class="controlProfileUsername muted">#<%= groupKey %></div>
+                <div class="controlProfileBadges groupProfileStats" aria-label="Group stats">
+                  <span class="controlProfileBadge groupProfileStatBadge">
+                    <span class="gDot gDot--online" aria-hidden="true"></span>
+                    <span id="onlineCount"><%= onlineCount || 0 %></span>
+                    <span>online</span>
+                  </span>
+                  <span class="controlProfileBadge groupProfileStatBadge">
+                    <span class="gDot gDot--members" aria-hidden="true"></span>
+                    <span id="memberCount"><%= memberCount || 0 %></span>
+                    <span>members</span>
+                  </span>
+                  <% if (isOwner) { %>
+                    <span class="controlProfileBadge groupProfileStatBadge groupProfileOwnerBadge" aria-label="Group owner">
+                      <span class="gDot gDot--owner" aria-hidden="true"></span>
+                      <span>Owner</span>
+                    </span>
+                  <% } %>
+                </div>
+              </div>
+
+              <div class="controlProfileActionRow">
+                <% if (canReportCommunityGroup) { %>
+                  <button
+                    id="groupReportBtn"
+                    class="controlReportBtn controlProfileActionBtn"
+                    type="button"
+                  >
+                    Report
+                  </button>
+                <% } %>
+                <% if (isOwner) { %>
+                  <% if (isCommunityGroup) { %>
+                    <button
+                      id="groupCommandSettingsBtn"
+                      class="favBtn controlEditBtn controlProfileActionBtn"
+                      type="button"
+                    >
+                      Edit
+                    </button>
+                  <% } %>
+                <% } else if (typeof isMember !== "undefined") { %>
+                  <form
+                    id="groupMembershipForm"
+                    method="POST"
+                    action="/api/group/<%= encodeURIComponent(groupKey) %>/<%= isMember ? "leave" : "join" %>"
+                  >
+                    <button
+                      id="groupMembershipBtn"
+                      class="favBtn controlProfileActionBtn <%= isMember ? "isFav" : "" %>"
+                      type="submit"
+                      data-is-member="<%= isMember ? "1" : "0" %>"
+                    >
+                      <%= isMember ? "Leave Group" : "Join Group" %>
+                    </button>
+                  </form>
+                <% } %>
+              </div>
+            </div>
+
+            <div
+              id="groupAboutCard"
+              class="controlProfileAbout <%= groupAboutHasText ? '' : 'controlProfileAbout--empty' %>"
+            >
+              <div id="groupAboutText" class="controlProfileAboutText"><% if (groupAboutHasText) { %><%- groupAboutMarkup %><% } else { %>This group hasn't added an About yet.<% } %></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controlGrid controlGrid--group">
+      <div class="areaControls">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Group Controls</span>
+          </div>
+
+          <div class="cardBd">
+              <% if (communityJoinRequired) { %>
+                <div class="muted" style="margin-bottom:12px;">
+                  Join this community group first, then you can send commands to everyone in it.
+                </div>
+              <% } %>
+              <div class="controlsWrap" id="controlsWrap">
+                <%
+                  const isCommandVisible = (field) => (
+                    !isCommunityGroup ||
+                    !!(communityGroupCommandPrefs && communityGroupCommandPrefs[field])
+                  );
+                %>
+
+                <div class="cooldownOverlay" id="cooldownOverlay" data-show="false" aria-hidden="true">
+                  <div class="cooldownBox">
+                    <div class="cooldownTitle">Please Wait</div>
+                    <div class="cooldownNum"><span id="cooldownSeconds">3</span>s</div>
+                    <div class="cooldownHint">
+                      New users can send one command every 3 seconds
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  class="cmdList"
+                  id="cmdList"
+                  <%= isCommunityGroup && !communityGroupHasAnyEnabledCommand ? "hidden" : "" %>
+                >
+                    <button class="cmdBtn" type="button" data-cmd="popup" data-tpl="tpl_cmd_popup" <%= isCommandVisible("allow_popup") ? "" : "hidden" %>>Send Message</button>
+                    <button class="cmdBtn" type="button" data-cmd="subliminal_message" data-tpl="tpl_cmd_subliminal_message" <%= isCommandVisible("allow_subliminal_message") ? "" : "hidden" %>>Send Subliminal Message</button>
+                    <button class="cmdBtn" type="button" data-cmd="image_popup" data-tpl="tpl_cmd_image_popup" <%= isCommandVisible("allow_image_popup") ? "" : "hidden" %>>Send Image Popup</button>
+                    <button class="cmdBtn" type="button" data-cmd="fullscreen_popup" data-tpl="tpl_cmd_fullscreen_popup" <%= isCommandVisible("allow_fullscreen_popup") ? "" : "hidden" %>>Send Fullscreen Popup</button>
+                    <button class="cmdBtn" type="button" data-cmd="spiral_overlay" data-tpl="tpl_cmd_spiral_overlay" hidden>Spiral Overlay</button>
+                    <button class="cmdBtn" type="button" data-cmd="open_url" data-tpl="tpl_cmd_open_url" <%= isCommandVisible("allow_open_url") ? "" : "hidden" %>>Open URL</button>
+                    <button class="cmdBtn" type="button" data-cmd="set_wallpaper" data-tpl="tpl_cmd_set_wallpaper" <%= isCommandVisible("allow_set_wallpaper") ? "" : "hidden" %>>Set Wallpaper</button>
+                    <button
+                      class="cmdBtn"
+                      type="button"
+                      data-cmd="play_sound"
+                      data-tpl="tpl_cmd_play_sound"
+                      data-ps-url-enabled="1"
+                      <%= isCommandVisible("allow_play_sound") ? "" : "hidden" %>
+                    >
+                      Play Sound Effect
+                    </button>
+                    <button class="cmdBtn" type="button" data-cmd="write_for_me" data-tpl="tpl_cmd_write_for_me" <%= isCommandVisible("allow_write_for_me") ? "" : "hidden" %>>Write For Me</button>
+                </div>
+
+                <div
+                  id="groupCommandsEmpty"
+                  class="groupCommandEmpty"
+                  <%= isCommunityGroup && !communityGroupHasAnyEnabledCommand ? "" : "hidden" %>
+                >
+                  This group does not have any control commands enabled right now.
+                </div>
+
+                <template id="tpl_cmd_popup">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/popup"
+                        data-cmd="popup">
+                    <textarea name="message" maxlength="2000" placeholder="Message" style="margin-top:8px;"></textarea>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_subliminal_message">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/subliminal_message"
+                        data-cmd="subliminal_message">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Messages</label>
+                      <div class="subliminalMessageList" data-subliminal-message-list="1">
+                        <div class="subliminalMessageRow">
+                          <textarea
+                            name="messages"
+                            maxlength="2000"
+                            data-subliminal-message="1"
+                            placeholder="Message"
+                            style="margin-top:8px;"
+                          ></textarea>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      class="subliminalMessageAddBtn"
+                      type="button"
+                      data-subliminal-add="1"
+                    >
+                      + Add New Message
+                    </button>
+
+                    <div class="muted" style="margin-top:8px;">Blank extra rows are ignored.</div>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_open_url">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/open_url"
+                        data-cmd="open_url">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input name="url" placeholder="https://example.com" />
+                    </div>
+                    <div style="margin-top:10px;"><button type="submit">Open</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_image_popup">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/image_popup"
+                        data-cmd="image_popup">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input name="url" placeholder="https://example.com/image.png" />
+                    </div>
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "image_popup",
+                      targetSelector: 'input[name="url"]',
+                    }) %>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_fullscreen_popup">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/fullscreen_popup"
+                        data-cmd="fullscreen_popup">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input name="url" placeholder="https://example.com/image.png" />
+                    </div>
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "image_popup",
+                      targetSelector: 'input[name="url"]',
+                    }) %>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_spiral_overlay">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/spiral_overlay"
+                        data-cmd="spiral_overlay">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter swirl.3bu.dev URL</label>
+                      <input name="url" placeholder="https://swirl.3bu.dev/..." />
+                      <div class="muted cmdHint">Only swirl.3bu.dev links are supported here.</div>
+                    </div>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_set_wallpaper">
+                  <%
+                    const wallpaperUploadContext = setWallpaperUploadContext || "set_wallpaper";
+                    const wallpaperPlaceholder = canSetWallpaperMedia
+                      ? "https://example.com/wallpaper.webm"
+                      : "https://example.com/wallpaper.png";
+                    const wallpaperHint = canSetWallpaperMedia
+                      ? "Images, GIFs, and .webm/.ogg/.ogv videos on supported clients"
+                      : "Only .png or .jpg/.jpeg";
+                  %>
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/set_wallpaper"
+                        data-cmd="set_wallpaper">
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input name="url" placeholder="<%= wallpaperPlaceholder %>" />
+                      <div class="muted cmdHint"><%= wallpaperHint %></div>
+                    </div>
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: wallpaperUploadContext,
+                      targetSelector: 'input[name="url"]',
+                    }) %>
+                    <div style="margin-top:10px;"><button type="submit">Set</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_play_sound">
+                  <form class="cmdForm cmdFormPlaySound" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/play_sound"
+                        data-cmd="play_sound"
+                        data-ps-url-enabled="1">
+                    <input type="hidden" name="kind" value="builtin" />
+                    <input type="hidden" name="name" value="" />
+                    <input type="hidden" name="url" value="" />
+
+                    <div class="cmdField" style="margin-top:10px;">
+                      <label class="muted cmdFieldLabel">Built-in sound</label>
+                      <select class="psSelect" style="width:100%;">
+                        <option value="" selected>— Select a sound —</option>
+                        <option value="clicker.mp3">Clicker</option>
+                        <option value="snap.mp3">Snap</option>
+                        <option value="pop.mp3">Pop</option>
+                        <option value="bell-ring.mp3">Bell Ring</option>
+                        <option value="dog-bark.mp3">Dog Bark</option>
+                        <option value="cat-meow.mp3">Cat Meow</option>
+                      </select>
+                    </div>
+
+                    <div class="muted cmdDivider">or</div>
+                    <div class="cmdField">
+                        <label class="muted cmdFieldLabel">Enter URL here</label>
+                        <input class="psUrlInput" placeholder="https://example.com/sound.mp3" />
+                    </div>
+
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "play_sound",
+                      targetSelector: ".psUrlInput",
+                    }) %>
+
+                    <div style="margin-top:12px;"><button type="submit">Play</button></div>
+                  </form>
+                </template>
+
+                <template id="tpl_cmd_write_for_me">
+                  <form class="cmdForm" method="POST"
+                        action="/api/group/<%= encodeURIComponent(groupKey) %>/write_for_me"
+                        data-cmd="write_for_me">
+                    <textarea name="message" maxlength="4000" data-write-for-me-message="1" placeholder="Text to type on their computer..." style="margin-top:8px;"></textarea>
+
+                    <label for="times">Times:</label>
+                    <input type="number" id="times" name="times" min="1" max="500" value="3">
+
+                    <div class="muted" style="margin-top:8px;">Sends a typing prompt to the client to type this text.</div>
+                    <div style="margin-top:10px;"><button type="submit">Send</button></div>
+                  </form>
+                </template>
+
+                <% if (isCommunityGroup && isOwner) { %>
+                  <template id="tpl_group_command_settings">
+                    <form
+                      id="groupCommandSettingsForm"
+                      class="groupCommandSettingsForm"
+                      method="POST"
+                      action="/api/community/groups/<%= encodeURIComponent(groupKey) %>/profile"
+                    >
+                      <div class="controlAvatarSection">
+                        <div class="controlAvatarPreviewWrap">
+                          <img
+                            id="groupEditAvatarPreview"
+                            class="controlAvatarPreview"
+                            src="<%= groupIconUrl || '/default-avatar.svg' %><%= groupAvatarVersion ? `&v=${encodeURIComponent(groupAvatarVersion)}` : "" %>"
+                            alt=""
+                          />
+                          <button
+                            id="groupEditAvatarDeleteBtn"
+                            class="controlAvatarDeleteBtn"
+                            type="button"
+                            title="Remove custom avatar"
+                            aria-label="Remove custom avatar"
+                            <%= groupHasCustomAvatar ? "" : "hidden" %>
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm-1 10h12l1-12H5l1 12Z" fill="currentColor"></path>
+                            </svg>
+                          </button>
+                        </div>
+                        <div class="controlAvatarMeta">
+                          <div>
+                            <div class="controlAvatarLabel">Group avatar</div>
+                            <div class="muted">PNG, JPG, WEBP, or GIF.</div>
+                          </div>
+                          <input
+                            id="groupEditAvatarInput"
+                            class="controlAvatarInput"
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                          />
+                          <button id="groupEditAvatarUploadBtn" class="controlAvatarUploadBtn" type="button">
+                            Set avatar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="controlBannerSection">
+                        <div class="controlBannerPreviewWrap">
+                          <div
+                            id="groupEditBannerPreview"
+                            class="controlBannerPreview"
+                            <% if (groupBannerUrl) { %>
+                              style="background-image:url('<%= groupBannerUrl %><%= groupBannerVersion ? `&v=${encodeURIComponent(groupBannerVersion)}` : "" %>')"
+                            <% } %>
+                          ></div>
+                          <button
+                            id="groupEditBannerDeleteBtn"
+                            class="controlAvatarDeleteBtn"
+                            type="button"
+                            title="Remove custom banner"
+                            aria-label="Remove custom banner"
+                            <%= groupHasCustomBanner ? "" : "hidden" %>
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm-1 10h12l1-12H5l1 12Z" fill="currentColor"></path>
+                            </svg>
+                          </button>
+                        </div>
+                        <div class="controlAvatarMeta">
+                          <div>
+                            <div class="controlAvatarLabel">Group banner</div>
+                            <div class="muted">Shown at the top of the group control page.</div>
+                          </div>
+                          <input
+                            id="groupEditBannerInput"
+                            class="controlAvatarInput"
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                          />
+                          <button id="groupEditBannerUploadBtn" class="controlAvatarUploadBtn" type="button">
+                            Set banner
+                          </button>
+                        </div>
+                      </div>
+
+                      <div class="cmdField">
+                        <label class="muted cmdFieldLabel" for="groupEditNameInput">
+                          Group name
+                        </label>
+                        <input
+                          id="groupEditNameInput"
+                          name="name"
+                          maxlength="48"
+                          value="<%= groupLabel || "" %>"
+                        />
+                      </div>
+
+                      <div class="cmdField">
+                        <label class="muted cmdFieldLabel" for="groupEditAboutInput">
+                          About
+                        </label>
+                        <textarea
+                          id="groupEditAboutInput"
+                          class="controlThemeAboutMeInput"
+                          name="description"
+                          maxlength="220"
+                          placeholder="Tell members what this group is for..."
+                        ><%= communityGroupDescription || "" %></textarea>
+                        <div class="controlThemeTextareaMeta">
+                          <div class="muted controlThemeHint controlThemeHint--left">
+                            Markdown: *italics* #bold# -strikethrough- _underline_
+                          </div>
+                          <div
+                            id="groupEditAboutCount"
+                            class="muted controlThemeCounter"
+                            aria-live="polite"
+                          >0/220</div>
+                        </div>
+                      </div>
+
+                      <div class="groupCommandSettingsIntro">
+                        Choose which control commands members of this group can use.
+                      </div>
+
+                      <div class="groupCommandSettingsList">
+                        <% for (const option of communityGroupCommandOptions || []) { %>
+                          <label class="groupCommandOption">
+                            <input
+                              name="<%= option.field %>"
+                              type="checkbox"
+                              value="1"
+                              <%= communityGroupCommandPrefs && communityGroupCommandPrefs[option.field] ? "checked" : "" %>
+                            />
+
+                            <span class="groupCommandOptionText">
+                              <span class="groupCommandOptionTitle"><%= option.label %></span>
+                              <% if (option.description) { %>
+                                <span class="groupCommandOptionDescription"><%= option.description %></span>
+                              <% } %>
+                            </span>
+                          </label>
+                        <% } %>
+                      </div>
+
+                      <div class="groupCommandSettingsHint">
+                        Disabled commands disappear from this page and are blocked by the server too.
+                      </div>
+
+                      <div class="groupCommandSettingsActions">
+                        <button type="submit">Save Group</button>
+                      </div>
+
+                      <div class="muted groupEditStatus" id="groupEditStatus"></div>
+
+                      <div class="groupDangerZone">
+                        <div class="groupDangerZoneText">
+                          <div class="groupDangerZoneTitle">Delete group</div>
+                          <div class="muted">
+                            Permanently removes the group, its chat, members, invites, and command settings.
+                          </div>
+                        </div>
+                        <button
+                          id="groupDeleteBtn"
+                          class="groupDeleteBtn"
+                          type="button"
+                        >
+                          Delete Group
+                        </button>
+                      </div>
+                    </form>
+                  </template>
+                <% } %>
+
+              </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="areaResponses" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Responses</span>
+            <button id="clearResp" type="button">Clear</button>
+          </div>
+          <div class="cardBd">
+            <div id="respBox" class="respBox"></div>
+            <div class="muted" style="margin-top:10px;">
+              Results and errors will appear here.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="areaGroupChat" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="card gridCard groupChatCard">
+          <div class="cardHd">
+            <span>Group Chat</span>
+            <span id="groupBoardStatus" class="muted groupBoardStatus"></span>
+          </div>
+          <div class="cardBd groupChatBody">
+            <div
+              id="groupBoardList"
+              class="boardList groupBoardList"
+              aria-label="Group chat"
+            ></div>
+
+            <form
+              id="groupBoardForm"
+              class="boardComposerInner groupBoardComposer"
+              <%= canPostGroupBoard ? "" : "hidden" %>
+            >
+              <input
+                id="groupBoardInput"
+                class="boardInput"
+                name="body"
+                maxlength="300"
+                placeholder="Message the group..."
+                autocomplete="off"
+              />
+              <button id="groupBoardSend" class="boardPostBtn" type="submit">Send</button>
+            </form>
+
+            <div
+              id="groupBoardReadonly"
+              class="muted boardReadonlyNote groupBoardReadonly"
+              <%= canPostGroupBoard ? "hidden" : "" %>
+            >
+              Join this group to post in chat.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  <template id="tpl_group_message_report">
+    <form id="groupMessageReportForm">
+      <input type="hidden" name="messageId" value="" />
+
+      <div class="groupMessageReportPreview" data-group-message-report-preview></div>
+
+      <label class="muted cmdFieldLabel" for="groupMessageReportReason">Reason</label>
+      <select id="groupMessageReportReason" name="reason" required>
+        <option value="">— Select a reason —</option>
+        <% (groupChatReportReasonOptions || []).forEach((option) => { %>
+          <option value="<%= option.key %>"><%= option.label %></option>
+        <% }) %>
+      </select>
+
+      <label class="muted cmdFieldLabel" for="groupMessageReportDetails" style="margin-top:12px;">
+        Additional details <span class="muted">(optional)</span>
+      </label>
+      <textarea
+        id="groupMessageReportDetails"
+        name="details"
+        maxlength="1000"
+        placeholder="Add any context that would help moderators review this message..."
+      ></textarea>
+
+      <div style="margin-top:12px;">
+        <button type="submit">Report Message</button>
+      </div>
+      <div class="muted groupMessageReportStatus" data-group-message-report-status aria-live="polite"></div>
+    </form>
+  </template>
+
+  <% if (canReportCommunityGroup) { %>
+    <template id="tpl_group_report">
+      <form id="groupReportForm">
+        <div class="muted controlReportIntro">
+          Report this community group to the moderation team.
+        </div>
+
+        <label class="muted cmdFieldLabel" for="groupReportReason">Reason</label>
+        <select id="groupReportReason" name="reason" required>
+          <option value="">— Select a reason —</option>
+          <% (communityGroupReportReasonOptions || []).forEach((option) => { %>
+            <option value="<%= option.key %>"><%= option.label %></option>
+          <% }) %>
+        </select>
+
+        <label class="muted cmdFieldLabel" for="groupReportDetails" style="margin-top:12px;">
+          Additional details <span class="muted">(optional)</span>
+        </label>
+        <textarea
+          id="groupReportDetails"
+          name="details"
+          maxlength="1000"
+          placeholder="Add any context that would help moderators review this group..."
+        ></textarea>
+
+        <div class="controlReportActions">
+          <button type="submit">Send Report</button>
+        </div>
+        <div class="muted controlReportStatus" data-group-report-status aria-live="polite"></div>
+      </form>
+    </template>
+  <% } %>
+
+  <!-- ========= Command Modal (single reusable) ========= -->
+  <div id="cmdModal" class="cmdModal" style="display:none;" aria-hidden="true">
+    <div class="cmdModalBackdrop" data-cmd-modal-close="1"></div>
+
+    <div class="cmdModalCard" role="dialog" aria-modal="true" aria-labelledby="cmdModalTitle">
+      <div class="cmdModalHd">
+        <div id="cmdModalTitle" class="cmdModalTitle">Command</div>
+        <button id="cmdModalClose" class="cmdModalClose" type="button" data-cmd-modal-close="1">Close</button>
+      </div>
+
+      <div id="cmdModalBody" class="cmdModalBody"></div>
+    </div>
+  </div>
+
+  </div>
+
+  <%- include("../../common/favicon_badge_client") %>
+  <%- include("grpcon_scripts", { user }) %>
+
+</body>
+</html>

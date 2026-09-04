@@ -1,0 +1,201 @@
+.activityPageCard {
+    margin-top: 16px;
+}
+
+.activityPageHd {
+    align-items: flex-start;
+}
+
+.activityPageSubhead {
+    margin-top: 6px;
+}
+
+.activityPageActions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.activityRangeRow {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.activityMeta {
+    display: grid;
+    gap: 4px;
+    margin-top: 14px;
+}
+
+.activityStatsGrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.activityStatCard {
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .03);
+    padding: 12px 14px;
+}
+
+.activityStatLabel {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.activityStatValue {
+    margin-top: 6px;
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1.1;
+}
+
+.activityChartCard {
+    margin-top: 16px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .16);
+    padding: 14px;
+}
+
+.activityChartLayout {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+}
+
+.activityChartScale {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 6px 0 26px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: right;
+}
+
+.activityChart {
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+}
+
+.activityChartGrid {
+    display: grid;
+    gap: 8px;
+    align-items: end;
+    min-height: 280px;
+    padding: 4px 0 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.activityBarWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.activityBarValue {
+    min-height: 16px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1;
+}
+
+.activityBarTrack {
+    width: 100%;
+    height: 220px;
+    min-height: 220px;
+    display: flex;
+    align-items: flex-end;
+    border-radius: 10px 10px 4px 4px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .24);
+    overflow: hidden;
+}
+
+.activityBar {
+    width: 100%;
+    background: linear-gradient(180deg, rgba(196, 181, 253, .95), rgba(139, 92, 246, .82));
+    border-radius: 8px 8px 0 0;
+}
+
+.activityBar.isPeak {
+    background: linear-gradient(180deg, rgba(221, 214, 254, .98), rgba(167, 139, 250, .9));
+}
+
+.activityBarLabel {
+    min-height: 14px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.activityEmptyState {
+    padding: 18px;
+    border: 1px dashed rgba(255, 255, 255, .14);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .02);
+    color: var(--muted);
+}
+
+.activityFootnotes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.activityFootnote {
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+}
+
+.activityFootnoteLabel {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.activityFootnoteValue {
+    margin-top: 6px;
+    font-weight: 800;
+    line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+    .activityStatsGrid,
+    .activityFootnotes {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .activityPageHd {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .activityChartLayout {
+        grid-template-columns: 1fr;
+    }
+
+    .activityChartScale {
+        display: none;
+    }
+
+    .activityChartCard {
+        padding: 12px;
+    }
+}

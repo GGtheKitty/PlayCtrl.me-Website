@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <%- include("../../common/favicon_links") %>
+  <link rel="stylesheet" href="/css/control_link.css">
+</head>
+
+<body>
+  <div
+    id="controlPageRoot"
+    class="fullBleed controlPage controlPage--locked"
+    data-control-theme="purple"
+  >
+    <div class="controlProfileWrap controlLockedShell" aria-hidden="true">
+      <div class="card controlProfileCard">
+        <div class="controlProfileBanner">
+          <div class="controlProfileBannerGlow"></div>
+        </div>
+
+        <div class="controlProfileBody">
+          <div class="controlProfileAvatarWrap">
+            <div class="controlLockedAvatar"></div>
+          </div>
+
+          <div class="controlProfileContent">
+            <div class="controlProfileIdentityRow">
+              <div class="controlProfileIdentity">
+                <div class="controlProfileNameRow">
+                  <span class="controlLockedLine controlLockedLine--name"></span>
+                  <div class="controlLockedBadgeRow">
+                    <span class="controlLockedBadge"></span>
+                    <span class="controlLockedBadge"></span>
+                  </div>
+                </div>
+                <div class="controlLockedLine controlLockedLine--username"></div>
+              </div>
+
+              <div class="controlProfileActionRow">
+                <button class="controlProfileActionBtn controlLockedActionBtn" type="button" disabled>
+                  Add to Favorites
+                </button>
+                <div class="statusPill statusPill--off" title="Live status">
+                  <span class="statusDot"></span>
+                  <span>Offline</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="controlProfileAbout controlLockedAbout">
+              <span class="controlLockedLine controlLockedLine--about"></span>
+              <span class="controlLockedLine controlLockedLine--about controlLockedLine--about-short"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controlGrid controlLockedShell" aria-hidden="true">
+      <div class="areaControls">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Commands</span>
+          </div>
+          <div class="cardBd">
+            <div class="controlLockedPanelGrid">
+              <span class="controlLockedTile"></span>
+              <span class="controlLockedTile"></span>
+              <span class="controlLockedTile"></span>
+              <span class="controlLockedTile"></span>
+              <span class="controlLockedTile"></span>
+              <span class="controlLockedTile"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="areaResponses">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Responses</span>
+          </div>
+          <div class="cardBd">
+            <div class="controlLockedStack">
+              <span class="controlLockedResponse"></span>
+              <span class="controlLockedResponse"></span>
+              <span class="controlLockedResponse"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="areaFavorites">
+        <div class="card gridCard">
+          <div class="cardHd">
+            <span>Lists</span>
+          </div>
+          <div class="cardBd">
+            <div class="controlLockedChipWrap">
+              <span class="controlLockedChip"></span>
+              <span class="controlLockedChip"></span>
+              <span class="controlLockedChip"></span>
+              <span class="controlLockedChip"></span>
+              <span class="controlLockedChip"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controlLockedOverlay" role="dialog" aria-modal="true" aria-labelledby="controlLockedTitle">
+      <div class="controlLockedModal">
+        <img class="controlLockedLogo" src="/favicon-96x96.png" alt="PlayCtrl.me" />
+        <h1 id="controlLockedTitle" class="controlLockedTitle">Login Required</h1>
+        <p class="controlLockedText">
+          To access a user's control link, you need to sign in with Discord first.
+        </p>
+
+        <div class="controlLockedActions">
+          <a class="btn" href="<%= controlLinkLoginUrl %>">Login with Discord</a>
+          <a class="btn btn--ghost" href="/">Back Home</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

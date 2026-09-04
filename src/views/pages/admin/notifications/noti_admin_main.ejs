@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <div class="card adminNotificationCard">
+    <div class="cardHd">
+      <div>
+        <div>Admin Notifications</div>
+        <div class="muted notificationPageSubhead">
+          Send an internal notification to every user account.
+        </div>
+      </div>
+      <a class="btn btn--ghost" href="/admin">Back to Admin</a>
+    </div>
+
+    <div class="cardBd">
+      <div class="notificationAdminAudience muted">
+        Current audience: <strong><%= adminNotificationAudienceCount || 0 %></strong> users
+      </div>
+
+      <% if (adminNotificationFlash) { %>
+        <div class="notificationAdminFlash <%= adminNotificationFlashIsError ? "notificationAdminFlash--error" : "" %>">
+          <%= adminNotificationFlash %>
+        </div>
+      <% } %>
+
+      <form id="adminNotificationForm" class="notificationAdminForm" method="POST" action="/admin/notifications/send">
+        <div class="cmdField">
+          <label class="muted cmdFieldLabel" for="adminNotificationTitle">Title</label>
+          <input
+            id="adminNotificationTitle"
+            name="title"
+            maxlength="120"
+            placeholder="Important update"
+            required
+          />
+        </div>
+
+        <div class="cmdField">
+          <label class="muted cmdFieldLabel" for="adminNotificationMessage">Message</label>
+          <textarea
+            id="adminNotificationMessage"
+            name="message"
+            maxlength="600"
+            placeholder="Write the notification users should receive..."
+            required
+          ></textarea>
+        </div>
+
+        <div class="notificationAdminGrid">
+          <div class="cmdField">
+            <label class="muted cmdFieldLabel" for="adminNotificationActionUrl">Action URL</label>
+            <input
+              id="adminNotificationActionUrl"
+              name="action_url"
+              maxlength="500"
+              placeholder="/discover or https://example.com"
+            />
+          </div>
+
+          <div class="cmdField">
+            <label class="muted cmdFieldLabel" for="adminNotificationActionLabel">Action label</label>
+            <input
+              id="adminNotificationActionLabel"
+              name="action_label"
+              maxlength="40"
+              placeholder="Open"
+            />
+          </div>
+        </div>
+
+        <div class="muted notificationAdminHint">
+          Later notification types can reuse the same storage format with different titles, messages, and actions.
+        </div>
+
+        <div class="notificationAdminActions">
+          <button id="adminNotificationSubmit" class="btn" type="submit">Send to all users</button>
+          <div id="adminNotificationStatus" class="muted" aria-live="polite"></div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card adminNotificationHistoryCard">
+    <div class="cardHd">
+      <div>Recent Sends</div>
+    </div>
+    <div class="cardBd">
+      <% if (adminNotificationEvents && adminNotificationEvents.length) { %>
+        <div class="notificationAdminHistory">
+          <% adminNotificationEvents.forEach((item) => { %>
+            <article class="notificationAdminHistoryItem">
+              <div class="notificationAdminHistoryTop">
+                <div class="notificationAdminHistoryTitle"><%= item.title || "Untitled notification" %></div>
+                <time class="notificationAdminHistoryTime" datetime="<%= item.createdIso %>"><%= item.createdLabel %></time>
+              </div>
+              <div class="notificationAdminHistoryMeta muted">
+                Sent by <strong><%= item.actorName %></strong> to <strong><%= item.targetCount %></strong> users
+              </div>
+              <div class="notificationAdminHistoryMessage"><%= item.message %></div>
+              <% if (item.actionUrl) { %>
+                <div class="notificationAdminHistoryAction muted">
+                  Action: <span class="mono"><%= item.actionLabel || "Open" %></span> -> <span class="mono"><%= item.actionUrl %></span>
+                </div>
+              <% } %>
+            </article>
+          <% }) %>
+        </div>
+      <% } else { %>
+        <div class="notificationEmpty">No admin notifications have been sent yet.</div>
+      <% } %>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const form = document.getElementById("adminNotificationForm");
+      const status = document.getElementById("adminNotificationStatus");
+      const submitBtn = document.getElementById("adminNotificationSubmit");
+      if (!form || !status || !submitBtn) return;
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const formData = new FormData(form);
+        const title = String(formData.get("title") || "").trim();
+        const message = String(formData.get("message") || "").trim();
+
+        if (!title || !message) {
+          status.textContent = "Title and message are required.";
+          return;
+        }
+
+        if (!window.confirm("Send this notification to all users?")) {
+          return;
+        }
+
+        status.textContent = "Sending...";
+        submitBtn.disabled = true;
+
+        try {
+          const res = await fetch(form.action, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams(formData).toString(),
+            credentials: "include",
+          });
+
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) {
+            throw new Error((data && data.message) || ("HTTP " + res.status));
+          }
+
+          status.textContent = "Sent to " + (data.sentCount || 0) + " users.";
+          form.reset();
+          window.setTimeout(() => window.location.reload(), 700);
+        } catch (err) {
+          status.textContent =
+            "Failed: " + (err && err.message ? err.message : String(err));
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

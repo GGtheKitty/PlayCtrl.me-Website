@@ -2,18 +2,714 @@ const path = require("path");
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
-const Database = require("better-sqlite3");
 const crypto = require("crypto");
 const cors = require("cors");
-const ENV = require("dotenv").config();
+const fs = require("fs");
+const { Readable } = require("stream");
+require("dotenv").config();
 const cookieParser = require("cookie-parser");
+const db = require("./db");
 const { renderWithLayout } = require("./views/render");
+const { createAuthMiddleware } = require("./middleware/auth");
+const { createAdminActivityService } = require("./services/admin_activity");
+const {
+  createMediaUrlResolverService,
+} = require("./services/media_url_resolvers");
+const { createNotificationService } = require("./services/notifications");
+const {
+  createClientPairingCredentialService,
+} = require("./services/client_pairing_credentials");
+const { createRealtimeService } = require("./realtime/devices");
+const { registerAdminRoutes } = require("./routes/admin");
+const { registerCommandRoutes } = require("./routes/commands");
+const { registerControlLinkRoutes } = require("./routes/control_links");
+const { registerDiscoveryRoutes } = require("./routes/discovery");
+const { registerProfileRoutes } = require("./routes/profile");
 
 const PORT = process.env.PORT || 8080;
+const SITE_ORIGIN = String(process.env.SITE_ORIGIN || "https://playctrl.me")
+  .trim()
+  .replace(/\/+$/, "");
+const INDEXABLE_ROBOTS_VALUE = "index, follow";
+const NOINDEX_ROBOTS_VALUE =
+  "noindex, nofollow, noarchive, nosnippet, noimageindex";
 
 const PEPPER = process.env.PEPPER || "pepper_change_me";
 
-const CATALOG_PRUNE = process.env.CATALOG_PRUNE;
+function isEnvFlagEnabled(...values) {
+  for (const raw of values) {
+    const value = String(raw ?? "").trim().toLowerCase();
+    if (!value) continue;
+    if (["1", "true", "yes", "on"].includes(value)) return true;
+    if (["0", "false", "no", "off"].includes(value)) return false;
+  }
+  return false;
+}
+
+const CATALOG_PRUNE = isEnvFlagEnabled(
+  process.env.LIST_CATALOG_PRUNE,
+  process.env.CATALOG_PRUNE,
+);
+
+const HEAVY_COOLDOWN_MS = 8000;
+
+const MB = 1024 * 1024;
+const GB = 1024 * 1024 * 1024;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const AWAY_WINDOW_MS = DAY_MS;
+const QUEUED_COMMAND_SEND_DELAY_MS = Number(
+  process.env.QUEUED_COMMAND_SEND_DELAY_MS || 5000,
+);
+const QUEUED_COMMAND_PURGE_EVERY_MS = Number(
+  process.env.QUEUED_COMMAND_PURGE_EVERY_MS || 60 * 1000,
+);
+const QUEUED_COMMAND_PURGE_LIMIT = Number(
+  process.env.QUEUED_COMMAND_PURGE_LIMIT || 200,
+);
+
+// How long to keep response files (default 6 hours)
+const RESP_TTL_MS = Number(process.env.RESP_TTL_MS || 6 * 60 * 60 * 1000);
+
+// How often to run cleanup (default every 10 minutes)
+const RESP_JANITOR_EVERY_MS = Number(process.env.RESP_JANITOR_EVERY_MS || 10 * 60 * 1000);
+
+// Safety: max deletions per run
+const RESP_JANITOR_LIMIT = Number(process.env.RESP_JANITOR_LIMIT || 250);
+
+const UPLOAD_TTL_MS = Number(
+  process.env.UPLOAD_TTL_MS || 24 * 60 * 60 * 1000,
+);
+const QUEUED_UPLOAD_REPORT_GRACE_MS = Number(
+  process.env.QUEUED_UPLOAD_REPORT_GRACE_MS || 10 * 60 * 1000,
+);
+const UPLOAD_JANITOR_EVERY_MS = Number(
+  process.env.UPLOAD_JANITOR_EVERY_MS || 10 * 60 * 1000,
+);
+const UPLOAD_JANITOR_LIMIT = Number(process.env.UPLOAD_JANITOR_LIMIT || 500);
+const UPLOADS_MAX_BYTES = Number(
+  process.env.UPLOADS_MAX_BYTES || 25 * GB,
+);
+const UPLOADS_PER_USER_MAX_BYTES = Number(
+  process.env.UPLOADS_PER_USER_MAX_BYTES || 250 * MB,
+);
+const UPLOADS_PER_USER_MAX_FILES = Number(
+  process.env.UPLOADS_PER_USER_MAX_FILES || 50,
+);
+const SITE_AVATAR_FETCH_SIZE = Number(
+  process.env.SITE_AVATAR_FETCH_SIZE || 256,
+);
+const UPLOAD_RECENT_LIST_LIMIT = Number(
+  process.env.UPLOAD_RECENT_LIST_LIMIT || 18,
+);
+const UPLOAD_IMAGE_MAX_BYTES = Number(
+  process.env.UPLOAD_IMAGE_MAX_BYTES || 8 * MB,
+);
+const UPLOAD_ANIMATED_MAX_BYTES = Number(
+  process.env.UPLOAD_ANIMATED_MAX_BYTES || 30 * MB,
+);
+const UPLOAD_AUDIO_MAX_BYTES = Number(
+  process.env.UPLOAD_AUDIO_MAX_BYTES || 15 * MB,
+);
+const UPLOAD_REQUEST_LIMIT_MB = Math.max(
+  10,
+  Math.ceil(
+    ((Math.max(
+      UPLOAD_IMAGE_MAX_BYTES,
+      UPLOAD_ANIMATED_MAX_BYTES,
+      UPLOAD_AUDIO_MAX_BYTES,
+    ) *
+      4) /
+      3 +
+      2 * MB) /
+      MB,
+  ),
+);
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, "../uploads");
+const REPORT_MEDIA_BACKUPS_DIR =
+  process.env.REPORT_MEDIA_BACKUPS_DIR ||
+  path.join(__dirname, "report_media_backups");
+const RESPONSES_DIR =
+  process.env.RESPONSES_DIR || path.join(__dirname, "responses_store");
+const SITE_AVATARS_DIR =
+  process.env.SITE_AVATARS_DIR || path.join(__dirname, "../site_avatars");
+const SITE_CUSTOM_AVATARS_DIR = path.join(SITE_AVATARS_DIR, "custom");
+const SITE_CUSTOM_BANNERS_DIR = path.join(SITE_AVATARS_DIR, "banners");
+const SITE_CUSTOM_BACKGROUNDS_DIR = path.join(SITE_AVATARS_DIR, "backgrounds");
+const DEFAULT_SITE_AVATAR_PATH = path.join(
+  __dirname,
+  "../public/default-avatar.svg",
+);
+const INLINE_DEFAULT_SITE_AVATAR_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Default avatar">
+  <rect width="128" height="128" rx="28" fill="#232733"/>
+  <circle cx="64" cy="46" r="24" fill="#9aa3b2"/>
+  <path d="M28 108c4-20 20-32 36-32s32 12 36 32" fill="#9aa3b2"/>
+</svg>
+`.trim();
+const CUSTOM_SITE_AVATAR_MAX_BYTES = Number(
+  process.env.CUSTOM_SITE_AVATAR_MAX_BYTES || 4 * MB,
+);
+const CUSTOM_SITE_BANNER_MAX_BYTES = Number(
+  process.env.CUSTOM_SITE_BANNER_MAX_BYTES || 8 * MB,
+);
+const CUSTOM_SITE_BACKGROUND_MAX_BYTES = Number(
+  process.env.CUSTOM_SITE_BACKGROUND_MAX_BYTES || 12 * MB,
+);
+const NOTIFICATION_MENU_LIMIT = Number(
+  process.env.NOTIFICATION_MENU_LIMIT || 6,
+);
+const NOTIFICATION_PAGE_LIMIT = Number(
+  process.env.NOTIFICATION_PAGE_LIMIT || 200,
+);
+const NOTIFICATION_TITLE_MAX_LEN = Number(
+  process.env.NOTIFICATION_TITLE_MAX_LEN || 120,
+);
+const NOTIFICATION_MESSAGE_MAX_LEN = Number(
+  process.env.NOTIFICATION_MESSAGE_MAX_LEN || 600,
+);
+const NOTIFICATION_ACTION_LABEL_MAX_LEN = Number(
+  process.env.NOTIFICATION_ACTION_LABEL_MAX_LEN || 40,
+);
+const NOTIFICATION_KIND_MAX_LEN = Number(
+  process.env.NOTIFICATION_KIND_MAX_LEN || 64,
+);
+const REPORTS_PAGE_LIMIT = Number(process.env.REPORTS_PAGE_LIMIT || 200);
+const REPORTS_PAGE_SIZE = Number(process.env.REPORTS_PAGE_SIZE || 25);
+const PROFILE_STRIKE_HISTORY_LIMIT = Number(
+  process.env.PROFILE_STRIKE_HISTORY_LIMIT || 100,
+);
+const CUSTOM_CONTROL_URL_MIN_COMMANDS = Number(
+  process.env.CUSTOM_CONTROL_URL_MIN_COMMANDS || 200,
+);
+const CUSTOM_CONTROL_URL_MIN_LEN = Number(
+  process.env.CUSTOM_CONTROL_URL_MIN_LEN || 4,
+);
+const CUSTOM_CONTROL_URL_MAX_LEN = Number(
+  process.env.CUSTOM_CONTROL_URL_MAX_LEN || 32,
+);
+const CUSTOM_CONTROL_URL_CHANGE_COOLDOWN_MS = Number(
+  process.env.CUSTOM_CONTROL_URL_CHANGE_COOLDOWN_MS || 24 * 60 * 60 * 1000,
+);
+const COMMUNITY_GROUP_PUBLIC_MIN_COMMANDS = Number(
+  process.env.COMMUNITY_GROUP_PUBLIC_MIN_COMMANDS || 100,
+);
+const COMMUNITY_GROUP_COMMAND_OPTIONS = Object.freeze([
+  {
+    key: "popup",
+    field: "allow_popup",
+    label: "Send Message",
+    description: "Allow regular text popups for this community group.",
+  },
+  {
+    key: "subliminal_message",
+    field: "allow_subliminal_message",
+    label: "Subliminal Message",
+    description: "Allow layered subliminal message sends.",
+  },
+  {
+    key: "image_popup",
+    field: "allow_image_popup",
+    label: "Image Popup",
+    description: "Allow normal image popup commands.",
+  },
+  {
+    key: "fullscreen_popup",
+    field: "allow_fullscreen_popup",
+    label: "Fullscreen Popup",
+    description: "Allow fullscreen image popups.",
+  },
+  {
+    key: "spiral_overlay",
+    field: "allow_spiral_overlay",
+    label: "Spiral Overlay",
+    description: "Allow swirl.3bu.dev spiral overlay links.",
+    hiddenFromCommunitySettings: true,
+  },
+  {
+    key: "open_url",
+    field: "allow_open_url",
+    label: "Open URL",
+    description: "Allow sending URLs to open on member devices.",
+  },
+  {
+    key: "set_wallpaper",
+    field: "allow_set_wallpaper",
+    label: "Set Wallpaper",
+    description: "Allow wallpaper and supported wallpaper media commands.",
+  },
+  {
+    key: "play_sound",
+    field: "allow_play_sound",
+    label: "Play Sound Effect",
+    description: "Allow built-in or uploaded sound playback.",
+  },
+  {
+    key: "write_for_me",
+    field: "allow_write_for_me",
+    label: "Write For Me",
+    description: "Allow typed-text automation prompts.",
+  },
+]);
+const PAIR_CODE_RESET_COOLDOWN_MS = Number(
+  process.env.PAIR_CODE_RESET_COOLDOWN_MS || 10 * 60 * 1000,
+);
+const WHITELIST_SEARCH_MIN_LEN = Number(
+  process.env.WHITELIST_SEARCH_MIN_LEN || 2,
+);
+const WHITELIST_SEARCH_RESULT_LIMIT = Number(
+  process.env.WHITELIST_SEARCH_RESULT_LIMIT || 8,
+);
+const COMMAND_BLOCKS_PAGE_LIMIT = Number(
+  process.env.COMMAND_BLOCKS_PAGE_LIMIT || 200,
+);
+const REPORT_DETAILS_MAX_LEN = Number(
+  process.env.REPORT_DETAILS_MAX_LEN || 1000,
+);
+const MAX_USER_STRIKES = 3;
+const REPORT_SUBJECT_TYPE_MAX_LEN = 64;
+const ADMIN_REPORT_QUEUE_KIND = "admin_report_queue";
+const ADMIN_REPORT_QUEUE_SOURCE_TYPE = "reports_queue";
+const ADMIN_REPORT_QUEUE_SOURCE_ID = "control_link_reports";
+const CONTROL_LINK_REPORT_REASON_OPTIONS = Object.freeze([
+  {
+    key: "non_consensual_or_harmful",
+    label: "Non-consensual or harmful behavior",
+    description: "Commands or behavior that feel coercive, threatening, or unsafe.",
+  },
+  {
+    key: "underage_or_age_concern",
+    label: "Underage or age concern",
+    description: "Anything suggesting the user may be under 18 or misrepresenting age.",
+  },
+  {
+    key: "spam_or_scam",
+    label: "Spam or scam",
+    description: "Mass messaging, phishing, scams, or deceptive links.",
+  },
+  {
+    key: "malicious_or_unsafe_link",
+    label: "Malicious or unsafe control link",
+    description: "Contains content that is abusive, malware-related, or dangerous.",
+  },
+  {
+    key: "impersonation_or_fake_profile",
+    label: "Impersonation or fake profile",
+    description: "Pretending to be someone else or misrepresenting identity.",
+  },
+  {
+    key: "other",
+    label: "Other",
+    description: "Something else that should be reviewed by an admin.",
+  },
+]);
+const COMMAND_HISTORY_REPORT_REASON_OPTIONS = Object.freeze([
+  {
+    key: "tos_non_consensual_or_harassment",
+    label: "Harassment or non-consensual commands",
+    description: "Commands that feel threatening, coercive, or targeted without consent.",
+  },
+  {
+    key: "tos_spam_scam_or_phishing",
+    label: "Spam, scam, or phishing",
+    description: "Repeated command spam, deceptive links, phishing attempts, or scams.",
+  },
+  {
+    key: "tos_malware_or_unsafe_media",
+    label: "Malware or unsafe media",
+    description: "Images, wallpapers, sounds, or URLs that appear malicious, exploitative, or unsafe.",
+  },
+  {
+    key: "underage_or_age_concern",
+    label: "Underage or age concern",
+    description: "Anything suggesting the sender may be under 18 or misrepresenting age.",
+  },
+  {
+    key: "command_abuse_or_disruption",
+    label: "Command abuse or disruption",
+    description: "Commands used to annoy, overwhelm, or repeatedly disrupt the recipient.",
+  },
+  {
+    key: "other",
+    label: "Other",
+    description: "Something else about this command activity should be reviewed by an admin.",
+  },
+]);
+const GROUP_CHAT_REPORT_REASON_OPTIONS = Object.freeze([
+  {
+    key: "group_chat_harassment",
+    label: "Harassment or hateful content",
+    description: "Abusive, threatening, hateful, or targeted messages.",
+  },
+  {
+    key: "group_chat_spam_or_scam",
+    label: "Spam, scam, or phishing",
+    description: "Repeated spam, deceptive links, phishing attempts, or scams.",
+  },
+  {
+    key: "group_chat_unsafe_content",
+    label: "Unsafe or prohibited content",
+    description: "Content that appears dangerous, exploitative, or otherwise prohibited.",
+  },
+  {
+    key: "underage_or_age_concern",
+    label: "Underage or age concern",
+    description: "Anything suggesting a user may be under 18 or misrepresenting age.",
+  },
+  {
+    key: "other",
+    label: "Other",
+    description: "Something else in this message should be reviewed by an admin.",
+  },
+]);
+const CONTROL_LINK_REPORT_REASON_BY_KEY = new Map(
+  CONTROL_LINK_REPORT_REASON_OPTIONS.map((option) => [option.key, option]),
+);
+const COMMAND_HISTORY_REPORT_REASON_BY_KEY = new Map(
+  COMMAND_HISTORY_REPORT_REASON_OPTIONS.map((option) => [option.key, option]),
+);
+const GROUP_CHAT_REPORT_REASON_BY_KEY = new Map(
+  GROUP_CHAT_REPORT_REASON_OPTIONS.map((option) => [option.key, option]),
+);
+const ALL_REPORT_REASON_BY_KEY = new Map(
+  [
+    ...CONTROL_LINK_REPORT_REASON_OPTIONS,
+    ...COMMAND_HISTORY_REPORT_REASON_OPTIONS,
+    ...GROUP_CHAT_REPORT_REASON_OPTIONS,
+  ].map((option) => [option.key, option]),
+);
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(REPORT_MEDIA_BACKUPS_DIR, { recursive: true });
+fs.mkdirSync(RESPONSES_DIR, { recursive: true });
+fs.mkdirSync(SITE_AVATARS_DIR, { recursive: true });
+fs.mkdirSync(SITE_CUSTOM_AVATARS_DIR, { recursive: true });
+fs.mkdirSync(SITE_CUSTOM_BANNERS_DIR, { recursive: true });
+fs.mkdirSync(SITE_CUSTOM_BACKGROUNDS_DIR, { recursive: true });
+
+function normalizedSitePath(pathname) {
+  const rawPath = String(pathname || "").trim();
+  if (!rawPath || rawPath === "/") return "/";
+  return rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+}
+
+function buildSiteUrl(pathname = "/") {
+  const safePath = normalizedSitePath(pathname);
+  if (safePath === "/") return `${SITE_ORIGIN}/`;
+  return `${SITE_ORIGIN}${safePath}`;
+}
+
+function requestAllowsIndexing(req) {
+  const method = String(req?.method || "").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  return normalizedSitePath(req?.path) === "/";
+}
+
+function formatBytesCompact(bytes) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return "0B";
+  if (n >= GB) return `${(n / GB).toFixed(n >= 10 * GB ? 0 : 1)}GB`;
+  if (n >= MB) return `${(n / MB).toFixed(n >= 10 * MB ? 0 : 1)}MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1)}KB`;
+  return `${Math.round(n)}B`;
+}
+
+function formatWholeMegabytes(bytes, { spaced = true } = {}) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return spaced ? "0 MB" : "0MB";
+  const value = Math.round(n / MB);
+  return spaced ? `${value} MB` : `${value}MB`;
+}
+
+const WALLPAPER_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg"];
+const WALLPAPER_MEDIA_IMAGE_EXTENSIONS = [
+  ...WALLPAPER_IMAGE_EXTENSIONS,
+  "webp",
+  "gif",
+];
+const WALLPAPER_MEDIA_VIDEO_EXTENSIONS = ["webm", "ogg", "ogv"];
+const WALLPAPER_MEDIA_EXTENSIONS = [
+  ...WALLPAPER_MEDIA_IMAGE_EXTENSIONS,
+  ...WALLPAPER_MEDIA_VIDEO_EXTENSIONS,
+];
+const IMAGE_POPUP_VISUAL_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "webm",
+  "mp4",
+];
+
+const UPLOAD_FILE_RULES = {
+  png: {
+    mimeTypes: ["image/png"],
+    contexts: new Set([
+      "image_popup",
+      "fullscreen_popup",
+      "set_wallpaper",
+      "set_wallpaper_media",
+    ]),
+    maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+    previewKind: "image",
+    mediaGroup: "visual",
+    wallpaperCompatible: 1,
+  },
+  jpg: {
+    mimeTypes: ["image/jpeg", "image/pjpeg"],
+    contexts: new Set([
+      "image_popup",
+      "fullscreen_popup",
+      "set_wallpaper",
+      "set_wallpaper_media",
+    ]),
+    maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+    previewKind: "image",
+    mediaGroup: "visual",
+    wallpaperCompatible: 1,
+  },
+  jpeg: {
+    mimeTypes: ["image/jpeg", "image/pjpeg"],
+    contexts: new Set([
+      "image_popup",
+      "fullscreen_popup",
+      "set_wallpaper",
+      "set_wallpaper_media",
+    ]),
+    maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+    previewKind: "image",
+    mediaGroup: "visual",
+    wallpaperCompatible: 1,
+  },
+  webp: {
+    mimeTypes: ["image/webp"],
+    contexts: new Set(["image_popup", "fullscreen_popup", "set_wallpaper_media"]),
+    maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+    previewKind: "image",
+    mediaGroup: "visual",
+    wallpaperCompatible: 0,
+  },
+  gif: {
+    mimeTypes: ["image/gif"],
+    contexts: new Set(["image_popup", "fullscreen_popup", "set_wallpaper_media"]),
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    previewKind: "image",
+    mediaGroup: "visual",
+    wallpaperCompatible: 0,
+  },
+  webm: {
+    mimeTypes: ["video/webm"],
+    contexts: new Set(["image_popup", "fullscreen_popup", "set_wallpaper_media"]),
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    previewKind: "video",
+    mediaGroup: "visual",
+    wallpaperCompatible: 0,
+  },
+  ogv: {
+    mimeTypes: ["video/ogg", "video/ogv", "application/ogg"],
+    contexts: new Set(["set_wallpaper_media"]),
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    previewKind: "video",
+    mediaGroup: "visual",
+    wallpaperCompatible: 0,
+  },
+  mp4: {
+    mimeTypes: ["video/mp4"],
+    contexts: new Set(["image_popup", "fullscreen_popup"]),
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    previewKind: "video",
+    mediaGroup: "visual",
+    wallpaperCompatible: 0,
+  },
+  mp3: {
+    mimeTypes: ["audio/mpeg", "audio/mp3"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  wav: {
+    mimeTypes: ["audio/wav", "audio/wave", "audio/x-wav", "audio/vnd.wave"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  m4a: {
+    mimeTypes: ["audio/mp4", "audio/x-m4a", "audio/m4a"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  aac: {
+    mimeTypes: ["audio/aac", "audio/x-aac"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  ogg: {
+    mimeTypes: ["audio/ogg", "application/ogg"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  oga: {
+    mimeTypes: ["audio/ogg", "application/ogg"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  flac: {
+    mimeTypes: ["audio/flac", "audio/x-flac"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  opus: {
+    mimeTypes: ["audio/opus", "audio/ogg"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  weba: {
+    mimeTypes: ["audio/webm"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  mpeg: {
+    mimeTypes: ["audio/mpeg", "audio/mp3"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  mpga: {
+    mimeTypes: ["audio/mpeg", "audio/mp3"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  wma: {
+    mimeTypes: ["audio/x-ms-wma", "audio/wma", "application/vnd.ms-asf"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  aif: {
+    mimeTypes: ["audio/aiff", "audio/x-aiff"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  aiff: {
+    mimeTypes: ["audio/aiff", "audio/x-aiff"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  mid: {
+    mimeTypes: ["audio/midi", "audio/x-midi", "audio/mid"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+  midi: {
+    mimeTypes: ["audio/midi", "audio/x-midi", "audio/mid"],
+    contexts: new Set(["play_sound"]),
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    previewKind: "audio",
+    mediaGroup: "audio",
+    wallpaperCompatible: 0,
+  },
+};
+
+const WALLPAPER_MEDIA_OGG_VIDEO_UPLOAD_RULE = {
+  mimeTypes: ["video/ogg", "video/ogv", "application/ogg"],
+  contexts: new Set(["set_wallpaper_media"]),
+  maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+  previewKind: "video",
+  mediaGroup: "visual",
+  wallpaperCompatible: 0,
+};
+
+const UPLOAD_CONTEXT_UI = {
+  image_popup: {
+    accept: toUploadAcceptAttr(IMAGE_POPUP_VISUAL_EXTENSIONS),
+    pickerAccept: toUploadAcceptAttr(IMAGE_POPUP_VISUAL_EXTENSIONS),
+    title: "Upload",
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    hintLines: [
+      `Images up to ${formatWholeMegabytes(UPLOAD_IMAGE_MAX_BYTES, { spaced: true })}`,
+      `Animations and Videos up to ${formatWholeMegabytes(UPLOAD_ANIMATED_MAX_BYTES, { spaced: false })}`,
+    ],
+  },
+  fullscreen_popup: {
+    accept: toUploadAcceptAttr(IMAGE_POPUP_VISUAL_EXTENSIONS),
+    pickerAccept: toUploadAcceptAttr(IMAGE_POPUP_VISUAL_EXTENSIONS),
+    title: "Upload",
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    hintLines: [
+      `Images up to ${formatWholeMegabytes(UPLOAD_IMAGE_MAX_BYTES, { spaced: true })}`,
+      `Animations and Videos up to ${formatWholeMegabytes(UPLOAD_ANIMATED_MAX_BYTES, { spaced: false })}`,
+    ],
+  },
+  set_wallpaper: {
+    accept: toUploadAcceptAttr(WALLPAPER_IMAGE_EXTENSIONS),
+    pickerAccept: toUploadAcceptAttr(WALLPAPER_IMAGE_EXTENSIONS),
+    title: "Upload",
+    maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+    hintLines: [
+      `Images up to ${formatWholeMegabytes(UPLOAD_IMAGE_MAX_BYTES, { spaced: true })}`,
+    ],
+  },
+  set_wallpaper_media: {
+    accept: toUploadAcceptAttr(WALLPAPER_MEDIA_EXTENSIONS),
+    pickerAccept: toUploadAcceptAttr(WALLPAPER_MEDIA_EXTENSIONS),
+    title: "Upload",
+    maxBytes: UPLOAD_ANIMATED_MAX_BYTES,
+    hintLines: [
+      `Images up to ${formatWholeMegabytes(UPLOAD_IMAGE_MAX_BYTES, { spaced: true })}`,
+      `GIFs and Videos (.webm, .ogg, .ogv) up to ${formatWholeMegabytes(UPLOAD_ANIMATED_MAX_BYTES, { spaced: false })}`,
+    ],
+  },
+  play_sound: {
+    accept: "audio/*,.mp3,.mpeg,.mpga,.wav,.m4a,.aac,.ogg,.oga,.flac,.opus,.weba,.wma,.aif,.aiff,.mid,.midi",
+    pickerAccept: "",
+    title: "Upload",
+    maxBytes: UPLOAD_AUDIO_MAX_BYTES,
+    hintLines: [
+      `Audio up to ${formatWholeMegabytes(UPLOAD_AUDIO_MAX_BYTES, { spaced: false })}`,
+    ],
+  },
+};
 
 const LISTS = {
   favorites: {
@@ -28,7 +724,22 @@ const LISTS = {
   },
 };
 
-const CATALOG = process.env.LIST_CATALOG || "";
+function resolveDataFilePath(value, defaultRelativePath) {
+  const raw = String(value || "").trim();
+  const target = raw || defaultRelativePath;
+  return path.isAbsolute(target) ? target : path.join(__dirname, target);
+}
+
+const CATALOG = resolveDataFilePath(
+  process.env.LIST_CATALOG,
+  "data/kink_catalog.json",
+);
+const CLI_COMMAND = String(process.argv[2] || "").trim();
+const IS_AVATAR_BACKFILL_CLI = CLI_COMMAND === "avatars:backfill";
+const GROUPS = resolveDataFilePath(
+  process.env.GROUPS_CATALOG,
+  "data/groups_catalog.json",
+);
 
 const DISCORD_AUTH = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN = "https://discord.com/api/oauth2/token";
@@ -44,6 +755,18 @@ function b64url(buf) {
 function hmac(s) {
   return crypto.createHmac("sha256", PEPPER).update(s).digest("hex");
 }
+const CLIENT_PAIRING_ENCRYPTION_KEY =
+  process.env.CLIENT_PAIRING_ENCRYPTION_KEY || `fallback:${PEPPER}`;
+if (!process.env.CLIENT_PAIRING_ENCRYPTION_KEY) {
+  console.warn(
+    "[pairing] CLIENT_PAIRING_ENCRYPTION_KEY is not set; using the PEPPER-derived fallback.",
+  );
+}
+const clientPairingCredentials = createClientPairingCredentialService({
+  db,
+  hmac,
+  encryptionKey: CLIENT_PAIRING_ENCRYPTION_KEY,
+});
 function randBase32(len) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -160,6 +883,17 @@ function escapeHtml(s) {
   );
 }
 
+function inlineScriptJson(value) {
+  const json = JSON.stringify(value);
+  if (typeof json !== "string") return "undefined";
+  return json
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function parseIntSafe(v, def) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.floor(n) : def;
@@ -177,11 +911,72 @@ function isHttpUrl(s) {
   return /^https?:\/\//i.test(String(s || "").trim());
 }
 
-function isAllowedWallpaperExt(url) {
-  const clean = String(url).split("#")[0].split("?")[0].toLowerCase();
-  return (
-    clean.endsWith(".png") || clean.endsWith(".jpg") || clean.endsWith(".jpeg")
-  );
+function toUploadAcceptAttr(extensions) {
+  const list = Array.isArray(extensions) ? extensions : [];
+  return list.map((ext) => `.${String(ext || "").trim().toLowerCase()}`).join(",");
+}
+
+function getUrlFileExtension(url) {
+  const clean = String(url || "").split("#")[0].split("?")[0].toLowerCase();
+  return path.extname(clean).slice(1);
+}
+
+function isAllowedWallpaperExt(url, { allowMedia = false } = {}) {
+  const ext = getUrlFileExtension(url);
+  const allowed = allowMedia
+    ? WALLPAPER_MEDIA_EXTENSIONS
+    : WALLPAPER_IMAGE_EXTENSIONS;
+  return allowed.includes(ext);
+}
+
+const PENDING_COMMAND_CONTEXT_TTL_MS = 24 * HOUR_MS;
+const pendingCommandContextById = new Map();
+
+function purgeExpiredPendingCommandContexts(now = Date.now()) {
+  const cutoff = Number(now || Date.now()) - PENDING_COMMAND_CONTEXT_TTL_MS;
+  for (const [commandId, entry] of pendingCommandContextById.entries()) {
+    if (Number(entry?.createdAt || 0) < cutoff) {
+      pendingCommandContextById.delete(commandId);
+    }
+  }
+}
+
+function rememberPendingCommandContext(
+  commandId,
+  {
+    actorUserId = null,
+    ownerUserId = null,
+    sourceKind = null,
+    sourceId = null,
+  } = {},
+) {
+  const id = String(commandId || "").trim();
+  if (!id) return;
+
+  purgeExpiredPendingCommandContexts();
+  pendingCommandContextById.set(id, {
+    actorUserId: String(actorUserId || "").trim() || null,
+    ownerUserId: String(ownerUserId || "").trim() || null,
+    sourceKind: String(sourceKind || "").trim() || null,
+    sourceId: String(sourceId || "").trim() || null,
+    createdAt: Date.now(),
+  });
+}
+
+function getPendingCommandContext(commandId) {
+  const id = String(commandId || "").trim();
+  if (!id) return null;
+
+  const entry = pendingCommandContextById.get(id) || null;
+  if (!entry) return null;
+
+  const createdAt = Number(entry.createdAt || 0);
+  if (createdAt > 0 && Date.now() - createdAt > PENDING_COMMAND_CONTEXT_TTL_MS) {
+    pendingCommandContextById.delete(id);
+    return null;
+  }
+
+  return entry;
 }
 
 function incrementCommandsSentTotal({ senderDiscordId, targetOwnerDiscordId }) {
@@ -190,13 +985,433 @@ function incrementCommandsSentTotal({ senderDiscordId, targetOwnerDiscordId }) {
 
   if (String(senderDiscordId) === String(targetOwnerDiscordId)) return;
 
-  db.prepare(
-    `
-    UPDATE users
-    SET commands_sent_total = commands_sent_total + 1
-    WHERE discord_id = ?
-  `,
-  ).run(senderDiscordId);
+  incrementCommandsSentTotalOnce(senderDiscordId, {
+    targetOwnerDiscordId,
+  });
+}
+
+const incrementCommandsSentTotalStmt = db.prepare(`
+  UPDATE users
+  SET commands_sent_total = commands_sent_total + 1
+  WHERE discord_id = ?
+`);
+
+const insertCommandSendCountStmt = db.prepare(`
+  INSERT INTO command_send_counts (created_at, actor_user_id, target_user_id)
+  VALUES (?, ?, ?)
+`);
+
+const recordCommandSendCount = db.transaction(
+  (senderDiscordId, targetOwnerDiscordId = null) => {
+    incrementCommandsSentTotalStmt.run(String(senderDiscordId));
+    insertCommandSendCountStmt.run(
+      Date.now(),
+      String(senderDiscordId),
+      targetOwnerDiscordId ? String(targetOwnerDiscordId) : null,
+    );
+  },
+);
+
+function incrementCommandsSentTotalOnce(
+  senderDiscordId,
+  { targetOwnerDiscordId = null } = {},
+) {
+  if (!senderDiscordId) return;
+  recordCommandSendCount(senderDiscordId, targetOwnerDiscordId);
+}
+
+const LIVE_REQUIRED_COMMAND_TYPES = new Set(["screenshot", "webcam_capture"]);
+const queueDrainTasksByUserId = new Map();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function getAwayDeadlineFromLastOnlineAt(lastOnlineAt) {
+  const last = Number(lastOnlineAt || 0);
+  if (!Number.isFinite(last) || last <= 0) return 0;
+  return last + AWAY_WINDOW_MS;
+}
+
+function computePresenceState({
+  awayEnabled = false,
+  lastOnlineAt = 0,
+  onlineCount = 0,
+  deviceCount = 0,
+  now = Date.now(),
+} = {}) {
+  const safeOnlineCount = Math.max(0, Number(onlineCount || 0));
+  const safeDeviceCount = Math.max(0, Number(deviceCount || 0));
+  const safeLastOnlineAt = Number(lastOnlineAt || 0);
+  const awayUntil = getAwayDeadlineFromLastOnlineAt(safeLastOnlineAt);
+  const status = safeOnlineCount > 0
+    ? "online"
+    : awayEnabled && awayUntil > now
+      ? "away"
+      : "offline";
+
+  return {
+    status,
+    online: status === "online",
+    away: status === "away",
+    offline: status === "offline",
+    onlineCount: safeOnlineCount,
+    deviceCount: safeDeviceCount,
+    awayEnabled: !!awayEnabled,
+    lastOnlineAt: safeLastOnlineAt > 0 ? safeLastOnlineAt : 0,
+    awayUntil: awayUntil > 0 ? awayUntil : 0,
+  };
+}
+
+function listDeviceIdsByUserIds(userIds) {
+  const ids = chunkUniqueStrings(userIds);
+  const out = new Map();
+  if (!ids.length) return out;
+
+  for (const chunk of ids) {
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `
+        SELECT user_id, device_id
+        FROM device_pairs
+        WHERE user_id IN (${placeholders})
+      `,
+      )
+      .all(...chunk);
+
+    for (const row of rows) {
+      const userId = String(row.user_id || "").trim();
+      const deviceId = String(row.device_id || "").trim();
+      if (!userId || !deviceId) continue;
+      if (!out.has(userId)) out.set(userId, []);
+      out.get(userId).push(deviceId);
+    }
+  }
+
+  return out;
+}
+
+function listPresenceStateByUserIds(userIds, { now = Date.now() } = {}) {
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(userIds) ? userIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const out = new Map();
+  if (!ids.length) return out;
+
+  const userRows = [];
+  for (const chunk of chunkUniqueStrings(ids)) {
+    const placeholders = chunk.map(() => "?").join(",");
+    userRows.push(
+      ...db
+        .prepare(
+          `
+          SELECT
+            discord_id,
+            IFNULL(away_enabled, 0) AS away_enabled,
+            last_online_at
+          FROM users
+          WHERE discord_id IN (${placeholders})
+        `,
+        )
+        .all(...chunk),
+    );
+  }
+  const userRowById = new Map(
+    userRows.map((row) => [String(row.discord_id || "").trim(), row]),
+  );
+  const deviceIdsByUser = listDeviceIdsByUserIds(ids);
+
+  for (const userId of ids) {
+    const row = userRowById.get(userId) || null;
+    const deviceIds = deviceIdsByUser.get(userId) || [];
+    let onlineCount = 0;
+    for (const deviceId of deviceIds) {
+      if (isDeviceOnline(deviceId)) onlineCount += 1;
+    }
+
+    out.set(
+      userId,
+      computePresenceState({
+        awayEnabled: !!Number(row?.away_enabled || 0),
+        lastOnlineAt: Number(row?.last_online_at || 0),
+        onlineCount,
+        deviceCount: deviceIds.length,
+        now,
+      }),
+    );
+  }
+
+  return out;
+}
+
+function getUserPresenceState(
+  userId,
+  { deviceIds = null, now = Date.now() } = {},
+) {
+  const safeUserId = String(userId || "").trim();
+  if (!safeUserId) {
+    return computePresenceState({ now });
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        IFNULL(away_enabled, 0) AS away_enabled,
+        last_online_at
+      FROM users
+      WHERE discord_id=?
+      LIMIT 1
+    `,
+    )
+    .get(safeUserId);
+
+  const ids = Array.isArray(deviceIds)
+    ? deviceIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : db
+        .prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`)
+        .all(safeUserId)
+        .map((entry) => String(entry.device_id || "").trim())
+        .filter(Boolean);
+
+  let onlineCount = 0;
+  for (const deviceId of ids) {
+    if (isDeviceOnline(deviceId)) onlineCount += 1;
+  }
+
+  return computePresenceState({
+    awayEnabled: !!Number(row?.away_enabled || 0),
+    lastOnlineAt: Number(row?.last_online_at || 0),
+    onlineCount,
+    deviceCount: ids.length,
+    now,
+  });
+}
+
+function markOwnerOnlineActivity(ownerUserId, at = Date.now()) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return;
+  const ts = Number(at || Date.now()) || Date.now();
+  try {
+    db.prepare(
+      `
+      UPDATE users
+      SET last_online_at=?, updated_at=?
+      WHERE discord_id=?
+    `,
+    ).run(ts, ts, userId);
+  } catch {}
+}
+
+function isAwayQueueableCommandType(commandType) {
+  const type = String(commandType || "").trim();
+  if (!type) return false;
+  return !LIVE_REQUIRED_COMMAND_TYPES.has(type);
+}
+
+function countQueuedCommandsForUser(ownerUserId) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return 0;
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS n
+      FROM queued_commands
+      WHERE owner_user_id=?
+    `,
+    )
+    .get(userId);
+  return Math.max(0, Number(row?.n || 0));
+}
+
+function clearQueuedCommandsForUser(ownerUserId) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return 0;
+  const info = db
+    .prepare(`DELETE FROM queued_commands WHERE owner_user_id=?`)
+    .run(userId);
+  return Math.max(0, Number(info?.changes || 0));
+}
+
+function enqueueQueuedCommand({
+  ownerUserId,
+  actorUserId = null,
+  sourceKind = "direct",
+  sourceId = null,
+  commandType,
+  payload,
+  uploadRows = [],
+}) {
+  const userId = String(ownerUserId || "").trim();
+  const type = String(commandType || payload?.type || "").trim();
+  if (!userId || !type || !payload || typeof payload !== "object") {
+    throw new Error("Invalid queued command.");
+  }
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const managedUploadRows = normalizeManagedUploadRows(uploadRows);
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `
+      INSERT INTO queued_commands (
+        id,
+        owner_user_id,
+        actor_user_id,
+        source_kind,
+        source_id,
+        command_type,
+        payload_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      id,
+      userId,
+      actorUserId ? String(actorUserId || "").trim() : null,
+      String(sourceKind || "direct").trim() || "direct",
+      sourceId == null ? null : String(sourceId || "").trim(),
+      type,
+      JSON.stringify(payload),
+      now,
+    );
+
+    for (const row of managedUploadRows) {
+      const uploadId = String(row?.id || "").trim();
+      if (!uploadId) continue;
+      insertQueuedCommandUploadRef.run(id, uploadId, now);
+    }
+  });
+
+  tx();
+
+  return { id, createdAt: now };
+}
+
+function getNextQueuedCommandForUser(ownerUserId) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return null;
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          id,
+          owner_user_id,
+          actor_user_id,
+          source_kind,
+          source_id,
+          command_type,
+          payload_json,
+          created_at
+        FROM queued_commands
+        WHERE owner_user_id=?
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `,
+      )
+      .get(userId) || null
+  );
+}
+
+function deleteQueuedCommandById(id) {
+  const safeId = String(id || "").trim();
+  if (!safeId) return 0;
+  const info = deleteQueuedCommandRow.run(safeId);
+  return Math.max(0, Number(info?.changes || 0));
+}
+
+function purgeExpiredQueuedCommandsForUser(
+  ownerUserId,
+  { now = Date.now(), log = false } = {},
+) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return 0;
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        IFNULL(away_enabled, 0) AS away_enabled,
+        last_online_at
+      FROM users
+      WHERE discord_id=?
+      LIMIT 1
+    `,
+    )
+    .get(userId);
+  const awayEnabled = !!Number(row?.away_enabled || 0);
+  const awayUntil = getAwayDeadlineFromLastOnlineAt(row?.last_online_at);
+  if (!awayEnabled || !awayUntil || awayUntil > now) {
+    return 0;
+  }
+
+  const clearedCount = clearQueuedCommandsForUser(userId);
+  if (clearedCount > 0 && log) {
+    logEvent({
+      type: "away_queue_expired",
+      actorUserId: userId,
+      targetUserId: userId,
+      payload: {
+        clearedCount,
+        awayUntil,
+      },
+    });
+  }
+
+  return clearedCount;
+}
+
+function purgeExpiredQueuedCommandsOnce(limit = QUEUED_COMMAND_PURGE_LIMIT) {
+  const rows = db
+    .prepare(
+      `
+      SELECT owner_user_id
+      FROM queued_commands
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?
+    `,
+    )
+    .all(Math.max(1, Number(limit || QUEUED_COMMAND_PURGE_LIMIT)));
+  if (!rows.length) return 0;
+
+  const ownerIds = Array.from(
+    new Set(
+      rows
+        .map((row) => String(row.owner_user_id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  let cleared = 0;
+  for (const ownerId of ownerIds) {
+    cleared += purgeExpiredQueuedCommandsForUser(ownerId, { log: true });
+  }
+  return cleared;
+}
+
+function getQueuedCommandTimeoutMs(commandType) {
+  const type = String(commandType || "").trim();
+  if (type === "popup" || type === "open_url") return 15000;
+  if (
+    type === "subliminal_message" ||
+    type === "image_popup" ||
+    type === "fullscreen_popup" ||
+    type === "spiral_overlay" ||
+    type === "set_wallpaper" ||
+    type === "play_sound" ||
+    type === "play_sound_loop" ||
+    type === "write_for_me"
+  ) {
+    return 20000;
+  }
+  return 20000;
 }
 
 async function verifyWallpaperUrl(url) {
@@ -272,6 +1487,79 @@ function ensurePairCode(userId) {
   return code;
 }
 
+function loadGroupsCatalog() {
+  try {
+    const stat = fs.statSync(GROUPS);
+    if (!stat.isFile()) return new Map();
+    const raw = fs.readFileSync(GROUPS, "utf8");
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed?.groups) ? parsed.groups : [];
+    const byKey = new Map();
+    for (const g of list) {
+      if (!g) continue;
+      if (g.enabled === false) continue;
+      const key = String(g.key || "").trim();
+      if (!key) continue;
+      byKey.set(key, {
+        key,
+        label: String(g.label || key).trim(),
+        icon: String(g.icon || "").trim(),
+      });
+    }
+    return byKey;
+  } catch {
+    return new Map();
+  }
+}
+
+function getCommunityGroupCatalogEntry(groupKey) {
+  const key = String(groupKey || "").trim();
+  if (!key) return null;
+
+  const row = db
+    .prepare(
+      `
+      SELECT group_key, owner_user_id, name, custom_avatar_path
+      FROM community_groups
+      WHERE group_key=?
+      LIMIT 1
+    `,
+    )
+    .get(key);
+  if (!row) return null;
+
+  const ownerUserId = String(row.owner_user_id || "").trim();
+  return {
+    kind: "community",
+    key,
+    label: String(row.name || key).trim() || key,
+    icon: row.custom_avatar_path
+      ? groupAvatarUrl(key, 128)
+      : ownerUserId
+        ? siteAvatarUrl({ discord_id: ownerUserId }, 128)
+        : "/groups/default.png",
+    ownerUserId: ownerUserId || null,
+  };
+}
+
+function getResolvedGroupCatalogEntry(groupKey) {
+  const key = String(groupKey || "").trim();
+  if (!key) return null;
+
+  const staticGroup = loadGroupsCatalog().get(key);
+  if (staticGroup) {
+    return {
+      kind: "static",
+      key,
+      label: String(staticGroup.label || key).trim() || key,
+      icon: String(staticGroup.icon || "").trim(),
+      ownerUserId: null,
+    };
+  }
+
+  return getCommunityGroupCatalogEntry(key);
+}
+
 const pendingAcks = new Map();
 
 function waitForAcks(commandId, expected, timeoutMs = 15000) {
@@ -325,19 +1613,254 @@ function sendToPairedDevices(deviceIds, msgObj) {
   return sentTo;
 }
 
-async function sendToAllAndWait(commandId, deviceIds, commandPayload, timeoutMs = 15000) {
-  const ids = Array.isArray(deviceIds) ? deviceIds : [];
-  const online = ids.filter((did) => isDeviceOnline(did));
+function isExplicitlyWhitelistedByOwner(ownerId, actorId) {
+  const safeOwnerId = String(ownerId || "").trim();
+  const safeActorId = String(actorId || "").trim();
+  if (!safeOwnerId || !safeActorId || safeOwnerId === safeActorId) {
+    return false;
+  }
 
-  if (!online.length) {
+  const row = db
+    .prepare(
+      `
+      SELECT 1
+      FROM user_whitelist
+      WHERE owner_id=? AND allowed_id=?
+    `,
+    )
+    .get(safeOwnerId, safeActorId);
+
+  return !!row;
+}
+
+function getCommandSenderContext(ownerUserId, actorUserId) {
+  const ownerId = String(ownerUserId || "").trim();
+  const actorId = String(actorUserId || "").trim();
+  const isEffectivelyWhitelistedByRecipient =
+    !actorId ||
+    (ownerId && ownerId === actorId) ||
+    isAdmin(actorId) ||
+    isExplicitlyWhitelistedByOwner(ownerId, actorId);
+
+  return {
+    actorUserId: actorId || null,
+    isExplicitlyWhitelistedByRecipient: isEffectivelyWhitelistedByRecipient,
+  };
+}
+
+function shouldUseWhitelistedSenderCapabilities(ownerUserId, actorUserId) {
+  const sender = getCommandSenderContext(ownerUserId, actorUserId);
+  return sender.isExplicitlyWhitelistedByRecipient === true;
+}
+
+function normalizeSelfPreviewMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "standard" || mode === "whitelisted") return mode;
+  return null;
+}
+
+function getResolvedEnabledCommandsForActor(
+  ownerUserId,
+  actorUserId = null,
+  { selfPreviewMode = null } = {},
+) {
+  const ownerId = String(ownerUserId || "").trim();
+  const actorId = String(actorUserId || "").trim();
+  if (!ownerId) return null;
+
+  const normalizedSelfPreviewMode = normalizeSelfPreviewMode(selfPreviewMode);
+  const forceStandardSelfPreview =
+    normalizedSelfPreviewMode === "standard" && actorId && actorId === ownerId;
+  const forceWhitelistedSelfPreview =
+    normalizedSelfPreviewMode === "whitelisted" &&
+    actorId &&
+    actorId === ownerId;
+  const useWhitelistedSenderCapabilities =
+    forceWhitelistedSelfPreview ||
+    (!forceStandardSelfPreview &&
+      shouldUseWhitelistedSenderCapabilities(ownerId, actorId || null));
+  const onlineCaps = useWhitelistedSenderCapabilities
+    ? getUnionCapsForWhitelistedSendersOnline(ownerId)
+    : getUnionCapsForOwnerOnline(ownerId);
+
+  if (onlineCaps.hasAnyReportingOnline) {
+    return onlineCaps.enabled;
+  }
+
+  const lastEnabled = useWhitelistedSenderCapabilities
+    ? getLastReportedCapabilitiesForWhitelistedSenders(ownerId)
+    : getLastReportedCapabilitiesForOwner(ownerId);
+  if (lastCapsByUserId.has(ownerId)) {
+    return lastEnabled instanceof Set ? lastEnabled : new Set();
+  }
+
+  return null;
+}
+
+function getReportedCapabilitiesForActor(
+  ownerUserId,
+  actorUserId = null,
+  { selfPreviewMode = null } = {},
+) {
+  const ownerId = String(ownerUserId || "").trim();
+  if (!ownerId) return new Set();
+
+  const actorId = String(actorUserId || "").trim();
+  const normalizedSelfPreviewMode = normalizeSelfPreviewMode(selfPreviewMode);
+  const forceStandardSelfPreview =
+    normalizedSelfPreviewMode === "standard" && actorId && actorId === ownerId;
+  const forceWhitelistedSelfPreview =
+    normalizedSelfPreviewMode === "whitelisted" &&
+    actorId &&
+    actorId === ownerId;
+
+  return forceWhitelistedSelfPreview ||
+    (!forceStandardSelfPreview &&
+      shouldUseWhitelistedSenderCapabilities(ownerId, actorId || null))
+    ? getReportedCapabilitiesForWhitelistedSenders(ownerId)
+    : getReportedCapabilitiesForOwner(ownerId);
+}
+
+function ownerHasReportedCapabilityForActor(
+  ownerUserId,
+  actorUserId,
+  capability,
+  options = {},
+) {
+  const cap = String(capability || "").trim();
+  if (!cap) return false;
+  return getReportedCapabilitiesForActor(ownerUserId, actorUserId, options).has(
+    cap,
+  );
+}
+
+function groupHasReportedCapabilityForActor(groupKey, actorUserId, capability) {
+  const key = String(groupKey || "").trim();
+  const cap = String(capability || "").trim();
+  if (!key || !cap) return false;
+
+  const rows = db
+    .prepare(`SELECT user_id FROM group_memberships WHERE group_key=?`)
+    .all(key);
+
+  for (const row of rows) {
+    if (
+      ownerHasReportedCapabilityForActor(
+        String(row.user_id || ""),
+        actorUserId,
+        cap,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function sanitizeCommandPayloadForDelivery(commandPayload) {
+  if (!commandPayload || typeof commandPayload !== "object" || Array.isArray(commandPayload)) {
+    return {};
+  }
+
+  const payload = { ...commandPayload };
+  delete payload.serverContext;
+  return payload;
+}
+
+function getServerCommandSourceContext(sourceKind = null, sourceId = null) {
+  const safeSourceKind =
+    sourceKind == null ? null : String(sourceKind || "").trim() || null;
+  const safeSourceId =
+    sourceId == null ? null : String(sourceId || "").trim() || null;
+  let sourceLabel = null;
+
+  if (safeSourceKind === "group" && safeSourceId) {
+    const groupLabel = String(
+      getResolvedGroupCatalogEntry(safeSourceId)?.label || "",
+    ).trim();
+    if (groupLabel) {
+      sourceLabel = groupLabel;
+    }
+  }
+
+  return {
+    sourceKind: safeSourceKind,
+    sourceId: safeSourceId,
+    sourceLabel,
+  };
+}
+
+function buildServerCommandMessage({
+  commandId,
+  commandPayload,
+  ownerUserId = null,
+  actorUserId = null,
+  sourceKind = null,
+  sourceId = null,
+}) {
+  const sourceContext = getServerCommandSourceContext(sourceKind, sourceId);
+
+  rememberPendingCommandContext(commandId, {
+    actorUserId,
+    ownerUserId,
+    sourceKind: sourceContext.sourceKind,
+    sourceId: sourceContext.sourceId,
+  });
+
+  return {
+    type: "command",
+    commandId,
+    command: sanitizeCommandPayloadForDelivery(commandPayload),
+    serverContext: {
+      version: 1,
+      evaluatedAt: Date.now(),
+      sourceKind: sourceContext.sourceKind,
+      sourceId: sourceContext.sourceId,
+      sourceLabel: sourceContext.sourceLabel,
+      sender: getCommandSenderContext(ownerUserId, actorUserId),
+    },
+  };
+}
+
+async function sendPreparedCommandMessagesAndWait(preparedMessages, timeoutMs = 15000) {
+  const list = Array.isArray(preparedMessages) ? preparedMessages : [];
+  const normalized = [];
+
+  for (const item of list) {
+    const commandId = String(item?.commandId || "").trim();
+    if (!commandId) continue;
+
+    const deviceIds = Array.isArray(item?.deviceIds)
+      ? item.deviceIds.map((did) => String(did || "").trim()).filter(Boolean)
+      : [];
+    const onlineDeviceIds = deviceIds.filter((did) => isDeviceOnline(did));
+    if (!onlineDeviceIds.length) continue;
+
+    normalized.push({
+      commandId,
+      onlineDeviceIds,
+      message: buildServerCommandMessage({
+        commandId,
+        commandPayload: item?.commandPayload,
+        ownerUserId: item?.ownerUserId,
+        actorUserId: item?.actorUserId,
+        sourceKind: item?.sourceKind,
+        sourceId: item?.sourceId,
+      }),
+    });
+  }
+
+  if (!normalized.length) {
     return { ok: false, error: "No devices online", sent: 0, acks: [] };
   }
 
-  const sent = sendToPairedDevices(online, {
-    type: "command",
-    commandId,
-    command: commandPayload,
-  });
+  let sent = 0;
+  let commandId = null;
+  for (const item of normalized) {
+    commandId = commandId || item.commandId;
+    sent += sendToPairedDevices(item.onlineDeviceIds, item.message);
+  }
 
   if (sent <= 0) {
     return { ok: false, error: "No devices online", sent: 0, acks: [] };
@@ -345,6 +1868,599 @@ async function sendToAllAndWait(commandId, deviceIds, commandPayload, timeoutMs 
 
   const acks = await waitForAcks(commandId, sent, timeoutMs);
   return { ok: true, commandId, sent, acks };
+}
+
+function isCommandEnabledForOwner(
+  ownerUserId,
+  cmdKey,
+  actorUserId = null,
+  options = {},
+) {
+  const ownerId = String(ownerUserId || "").trim();
+  const command = String(cmdKey || "").trim();
+  if (!ownerId || !command) return true;
+
+  const resolvedEnabledCommands = getResolvedEnabledCommandsForActor(
+    ownerId,
+    actorUserId,
+    options,
+  );
+  if (resolvedEnabledCommands) {
+    return resolvedEnabledCommands.has(command);
+  }
+
+  return isCommandEnabled(getCommandPrefsForUser(ownerId), command);
+}
+
+async function sendCommandToResolvedTarget({
+  resolved,
+  requestId = null,
+  actorUserId = null,
+  commandPayload,
+  timeoutMs = 15000,
+  sourceKind = "direct",
+  sourceId = null,
+  selfPreviewMode = null,
+  req = null,
+}) {
+  const ownerUserId = String(resolved?.ownerUserId || "").trim();
+  const deviceIds = Array.isArray(resolved?.deviceIds)
+    ? resolved.deviceIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  const commandType = String(commandPayload?.type || "").trim();
+  const presence = getUserPresenceState(ownerUserId, { deviceIds });
+
+  if (
+    !isCommandEnabledForOwner(ownerUserId, commandType, actorUserId, {
+      selfPreviewMode,
+    })
+  ) {
+    return {
+      ok: false,
+      delivery: "disabled",
+      code: "COMMAND_DISABLED",
+      error: "That command is disabled for this user right now.",
+      presence,
+      sent: 0,
+      acks: [],
+      queuedCount: 0,
+      queuedTargets: [],
+      targets: [],
+    };
+  }
+
+  if (presence.online) {
+    const commandId = requestId || crypto.randomUUID();
+    const liveResult = await sendPreparedCommandMessagesAndWait(
+      [
+        {
+          commandId,
+          deviceIds,
+          commandPayload,
+          ownerUserId,
+          actorUserId,
+          sourceKind,
+          sourceId,
+        },
+      ],
+      timeoutMs,
+    );
+    return {
+      ...liveResult,
+      delivery: "sent",
+      presence,
+      commandId,
+      queuedCount: 0,
+      queuedTargets: [],
+      targets: ownerUserId ? [{ ownerUserId, deviceIds }] : [],
+    };
+  }
+
+  if (presence.away) {
+    if (!isAwayQueueableCommandType(commandType)) {
+      return {
+        ok: false,
+        delivery: "away_blocked",
+        code: "COMMAND_UNAVAILABLE_WHILE_AWAY",
+        error: "That command can only be sent while the user is online.",
+        presence,
+        sent: 0,
+        acks: [],
+        queuedCount: 0,
+        queuedTargets: [],
+        targets: [],
+      };
+    }
+
+    let managedUploadRows = [];
+    try {
+      managedUploadRows = resolveManagedUploadRowsForQueuedCommand(
+        req,
+        commandPayload,
+      );
+    } catch (err) {
+      return {
+        ok: false,
+        delivery: "queue_failed",
+        code: "UPLOAD_UNAVAILABLE",
+        error:
+          String(err?.message || "").trim() ||
+          "The uploaded file for this command is no longer available.",
+        presence,
+        sent: 0,
+        acks: [],
+        queuedCount: 0,
+        queuedTargets: [],
+        targets: [],
+      };
+    }
+
+    const queued = enqueueQueuedCommand({
+      ownerUserId,
+      actorUserId,
+      sourceKind,
+      sourceId,
+      commandType,
+      payload: commandPayload,
+      uploadRows: managedUploadRows,
+    });
+
+    return {
+      ok: true,
+      delivery: "queued",
+      commandId: requestId || null,
+      presence,
+      sent: 0,
+      acks: [],
+      queuedCount: 1,
+      queuedTargets: ownerUserId ? [{ ownerUserId }] : [],
+      queuedCommandId: queued.id,
+      targets: [],
+    };
+  }
+
+  return {
+    ok: false,
+    delivery: "offline",
+    code: "DEVICE_OFFLINE",
+    error: "No devices online",
+    presence,
+    sent: 0,
+    acks: [],
+    queuedCount: 0,
+    queuedTargets: [],
+    targets: [],
+  };
+}
+
+function resolveGroupTargets(groupKey) {
+  const key = String(groupKey || "").trim();
+  if (!key) return { ok: false, error: "bad_group_key" };
+
+  if (!getResolvedGroupCatalogEntry(key)) {
+    return { ok: false, error: "unknown_group" };
+  }
+
+  const mems = db.prepare(`
+    SELECT user_id
+    FROM group_memberships
+    WHERE group_key = ?
+  `).all(key);
+
+  if (!mems.length) {
+    return {
+      ok: true,
+      groupKey: key,
+      members: [],
+      targets: [],
+    };
+  }
+
+  const userIds = Array.from(new Set(mems.map(r => String(r.user_id))));
+  const deviceIdsByUser = listDeviceIdsByUserIds(userIds);
+  const presenceByUserId = listPresenceStateByUserIds(userIds);
+
+  const targets = [];
+
+  for (const uid of userIds) {
+    const devs = deviceIdsByUser.get(uid) || [];
+    const onlineDeviceIds = devs.filter(did => isDeviceOnline(did));
+    targets.push({
+      ownerUserId: uid,
+      deviceIds: devs,
+      onlineDeviceIds,
+      presence: presenceByUserId.get(uid) || computePresenceState(),
+    });
+  }
+
+  return {
+    ok: true,
+    groupKey: key,
+    members: userIds,
+    targets,
+  };
+}
+
+function filterTargetsByCommandEnabled(targets, cmdKey, actorUserId = null) {
+  const allowedTargets = [];
+  const disabledOwnerUserIds = [];
+
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const ownerId = String(target?.ownerUserId || "").trim();
+    if (!ownerId || isCommandEnabledForOwner(ownerId, cmdKey, actorUserId)) {
+      allowedTargets.push(target);
+      continue;
+    }
+    disabledOwnerUserIds.push(ownerId);
+  }
+
+  return { allowedTargets, disabledOwnerUserIds };
+}
+
+function buildDirectDeliveryMessage(result) {
+  if (!result?.ok) return result?.error || "No devices online";
+  if (result.delivery === "queued") {
+    return "Command queued";
+  }
+
+  const failed = Array.isArray(result.acks)
+    ? result.acks.some((ack) => !ack?.ok)
+    : false;
+  if (failed) {
+    return renderAcks(result.acks);
+  }
+  return "Sent to device";
+}
+
+function buildGroupDeliveryMessage(result) {
+  if (!result?.ok) return result?.error || "No target users are online or away";
+
+  const liveRecipients = Array.isArray(result.targets) ? result.targets.length : 0;
+  const queuedRecipients = Array.isArray(result.queuedTargets)
+    ? result.queuedTargets.length
+    : 0;
+  const anyFail = Array.isArray(result.acks)
+    ? result.acks.some((ack) => !ack?.ok)
+    : false;
+  const parts = [];
+
+  if (liveRecipients > 0) {
+    parts.push(
+      `Sent to ${liveRecipients} online user${liveRecipients === 1 ? "" : "s"}`,
+    );
+  }
+  if (queuedRecipients > 0) {
+    parts.push(
+      `queued for ${queuedRecipients} away user${queuedRecipients === 1 ? "" : "s"}`,
+    );
+  }
+
+  if (!parts.length) {
+    return result.error || "No target users are online or away";
+  }
+
+  let message = parts.join(", ").replace(", queued", " and queued");
+  if (liveRecipients === 0 && queuedRecipients > 0) {
+    message = `Queued for ${queuedRecipients} away user${
+      queuedRecipients === 1 ? "" : "s"
+    }`;
+  }
+  if (!anyFail) return message + ".";
+  return `${message}. Some online devices rejected or failed.`;
+}
+
+async function sendToGroupAndWait({
+  groupKey,
+  cmdKey,
+  commandPayload,
+  timeoutMs = 20000,
+  actorUserId = null,
+  requestId = null,
+  req = null,
+}) {
+  const resolved = resolveGroupTargets(groupKey);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error || "group_resolve_failed", sent: 0, acks: [], targets: [] };
+  }
+
+  const {
+    allowedTargets: enabledTargets,
+    disabledOwnerUserIds,
+  } = filterTargetsByCommandEnabled(resolved.targets, cmdKey, actorUserId);
+  const {
+    allowedTargets: filteredTargets,
+    blockedOwnerUserIds,
+  } = filterTargetsBlockedByActor(enabledTargets, actorUserId);
+  const {
+    allowedTargets: allowedTargets,
+    whitelistDeniedOwnerUserIds,
+  } = filterTargetsByWhitelist(filteredTargets, actorUserId);
+
+  const onlineTargets = [];
+  const awayTargets = [];
+
+  for (const target of allowedTargets) {
+    const status = String(target?.presence?.status || "").trim();
+    if (status === "online" && Array.isArray(target.onlineDeviceIds) && target.onlineDeviceIds.length) {
+      onlineTargets.push(target);
+      continue;
+    }
+    if (status === "away" && isAwayQueueableCommandType(commandPayload?.type)) {
+      awayTargets.push(target);
+    }
+  }
+
+  let managedUploadRows = [];
+  if (awayTargets.length) {
+    try {
+      managedUploadRows = resolveManagedUploadRowsForQueuedCommand(
+        req,
+        commandPayload,
+      );
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          String(err?.message || "").trim() ||
+          "The uploaded file for this command is no longer available.",
+        sent: 0,
+        acks: [],
+        targets: [],
+        queuedTargets: [],
+        queuedCount: 0,
+        blockedOwnerUserIds,
+        disabledOwnerUserIds,
+        whitelistDeniedOwnerUserIds,
+      };
+    }
+  }
+
+  const onlineDeviceIds = [];
+  for (const target of onlineTargets) {
+    for (const deviceId of target.onlineDeviceIds) {
+      onlineDeviceIds.push(deviceId);
+    }
+  }
+
+  if (!onlineDeviceIds.length && !awayTargets.length) {
+    const error = blockedOwnerUserIds.length
+      ? disabledOwnerUserIds.length
+        ? "No available recipients can receive that command right now"
+        : "You are blocked by all available recipients"
+      : whitelistDeniedOwnerUserIds.length
+        ? "You are not whitelisted by any available recipients"
+      : disabledOwnerUserIds.length
+        ? "That command is disabled for all available recipients"
+        : "No target users are online or away";
+    return {
+      ok: false,
+      error,
+      sent: 0,
+      acks: [],
+      targets: onlineTargets,
+      queuedTargets: awayTargets,
+      queuedCount: 0,
+      blockedOwnerUserIds,
+      disabledOwnerUserIds,
+      whitelistDeniedOwnerUserIds,
+    };
+  }
+
+  let liveResult = {
+    ok: true,
+    commandId: requestId || crypto.randomUUID(),
+    sent: 0,
+    acks: [],
+  };
+
+  if (onlineDeviceIds.length) {
+    liveResult = await sendPreparedCommandMessagesAndWait(
+      onlineTargets.map((target) => ({
+        commandId: requestId || liveResult.commandId,
+        deviceIds: target.onlineDeviceIds,
+        commandPayload,
+        ownerUserId: target.ownerUserId,
+        actorUserId,
+        sourceKind: "group",
+        sourceId: groupKey,
+      })),
+      timeoutMs,
+    );
+  }
+
+  if (liveResult.ok && Number(liveResult.sent || 0) > 0) {
+    const deliveredCommandId = requestId || liveResult.commandId || null;
+    for (const target of onlineTargets) {
+      logDeliveredGroupCommandHistory({
+        actorUserId,
+        targetUserId: target?.ownerUserId,
+        groupKey,
+        commandPayload,
+        commandId: deliveredCommandId,
+        req,
+      });
+    }
+  }
+
+  const queuedTargets = [];
+  for (const target of awayTargets) {
+    enqueueQueuedCommand({
+      ownerUserId: target.ownerUserId,
+      actorUserId,
+      sourceKind: "group",
+      sourceId: groupKey,
+      commandType: commandPayload?.type,
+      payload: commandPayload,
+      uploadRows: managedUploadRows,
+    });
+    queuedTargets.push({ ownerUserId: target.ownerUserId });
+  }
+
+  const hasQueued = queuedTargets.length > 0;
+  if (!liveResult.ok && !hasQueued) {
+    return {
+      ok: false,
+      error: liveResult.error || "No target devices online",
+      sent: 0,
+      acks: [],
+      targets: onlineTargets,
+      queuedTargets,
+      queuedCount: 0,
+      blockedOwnerUserIds,
+      whitelistDeniedOwnerUserIds,
+    };
+  }
+
+  return {
+    ok: liveResult.ok || hasQueued,
+    delivery:
+      liveResult.sent > 0 && hasQueued
+        ? "sent_and_queued"
+        : hasQueued
+          ? "queued"
+          : "sent",
+    commandId: requestId || liveResult.commandId,
+    sent: liveResult.sent || 0,
+    acks: Array.isArray(liveResult.acks) ? liveResult.acks : [],
+    targets: onlineTargets,
+    queuedTargets,
+    queuedCount: queuedTargets.length,
+    blockedOwnerUserIds,
+    disabledOwnerUserIds,
+    whitelistDeniedOwnerUserIds,
+  };
+}
+
+async function drainQueuedCommandsForUser(ownerUserId) {
+  const userId = String(ownerUserId || "").trim();
+  if (!userId) return;
+  if (queueDrainTasksByUserId.has(userId)) {
+    return queueDrainTasksByUserId.get(userId);
+  }
+
+  const task = (async () => {
+    while (true) {
+      const presence = getUserPresenceState(userId);
+      if (!presence.online) break;
+
+      const nextItem = getNextQueuedCommandForUser(userId);
+      if (!nextItem) break;
+
+      let payload = null;
+      try {
+        payload = JSON.parse(String(nextItem.payload_json || "{}"));
+      } catch {
+        payload = null;
+      }
+
+      if (!payload || typeof payload !== "object" || !String(payload.type || "").trim()) {
+        deleteQueuedCommandById(nextItem.id);
+        continue;
+      }
+
+      const queuedActorUserId = String(nextItem.actor_user_id || "").trim() || null;
+      const queuedSourceKind = String(nextItem.source_kind || "direct").trim() || "direct";
+      const queuedSourceId = nextItem.source_id ? String(nextItem.source_id || "").trim() : null;
+
+      if (queuedActorUserId) {
+        const isBlocked = isCommandSenderBlockedByOwner(userId, queuedActorUserId);
+        const shouldRecheckWhitelist =
+          queuedSourceKind === "direct" ||
+          queuedSourceKind === "api" ||
+          queuedSourceKind === "group";
+        const isWhitelistedNow = shouldRecheckWhitelist
+          ? isAllowedByWhitelist(userId, queuedActorUserId)
+          : true;
+        const isBannedNow = !!getBanRecord(queuedActorUserId);
+
+        if (isBlocked || !isWhitelistedNow || isBannedNow) {
+          deleteQueuedCommandById(nextItem.id);
+          logEvent({
+            type: "queued_command_dropped",
+            actorUserId: queuedActorUserId,
+            targetUserId: userId,
+            payload: {
+              queuedCommandId: String(nextItem.id || ""),
+              commandType: String(nextItem.command_type || payload.type || ""),
+              sourceKind: queuedSourceKind,
+              sourceId: queuedSourceId,
+              reason: isBlocked
+                ? "sender_blocked"
+                : isBannedNow
+                  ? "actor_banned"
+                  : "whitelist_denied",
+            },
+          });
+          continue;
+        }
+      }
+
+      const deviceIds = db
+        .prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`)
+        .all(userId)
+        .map((row) => String(row.device_id || "").trim())
+        .filter(Boolean);
+
+      const commandId = crypto.randomUUID();
+      const sendResult = await sendPreparedCommandMessagesAndWait(
+        [
+          {
+            commandId,
+            deviceIds,
+            commandPayload: payload,
+            ownerUserId: userId,
+            actorUserId: queuedActorUserId,
+            sourceKind: queuedSourceKind,
+            sourceId: queuedSourceId,
+          },
+        ],
+        getQueuedCommandTimeoutMs(nextItem.command_type),
+      );
+
+      if (!sendResult.ok) break;
+
+      if (queuedSourceKind === "direct") {
+        logDeliveredDirectCommandHistory({
+          actorUserId: queuedActorUserId,
+          targetUserId: userId,
+          pairCode: queuedSourceId,
+          commandPayload: payload,
+          commandId,
+        });
+      } else if (queuedSourceKind === "group") {
+        logDeliveredGroupCommandHistory({
+          actorUserId: queuedActorUserId,
+          targetUserId: userId,
+          groupKey: queuedSourceId,
+          commandPayload: payload,
+          commandId,
+        });
+      }
+
+      finalizeDeliveredQueuedCommand(nextItem.id);
+      logEvent({
+        type: "queued_command_delivered",
+        actorUserId: queuedActorUserId,
+        targetUserId: userId,
+        payload: {
+          queuedCommandId: String(nextItem.id || ""),
+          commandId,
+          commandType: String(nextItem.command_type || payload.type || ""),
+          sourceKind: queuedSourceKind,
+          sourceId: queuedSourceId,
+          queuedAt: Number(nextItem.created_at || 0),
+        },
+      });
+
+      if (!getUserPresenceState(userId).online) break;
+      await sleep(QUEUED_COMMAND_SEND_DELAY_MS);
+    }
+  })().finally(() => {
+    queueDrainTasksByUserId.delete(userId);
+  });
+
+  queueDrainTasksByUserId.set(userId, task);
+  return task;
 }
 
 function renderAcks(acks) {
@@ -364,6 +2480,75 @@ function renderAcks(acks) {
       return `Failed: ${code}`;
     })
     .join("<br>");
+}
+
+function safeUnlink(filePath, label = "responses") {
+  try {
+    fs.unlinkSync(filePath);
+    return true;
+  } catch (e) {
+    if (e && (e.code === "ENOENT" || e.code === "ENOTDIR")) return false;
+    console.warn(`[${label}] unlink failed:`, filePath, e?.message || e);
+    return false;
+  }
+}
+
+function runResponsesJanitorOnce() {
+  const cutoff = Date.now() - RESP_TTL_MS;
+
+  let rows = [];
+  try {
+    rows = db.prepare(`
+      SELECT id, file_path, created_at
+      FROM device_responses
+      WHERE created_at < ?
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(cutoff, RESP_JANITOR_LIMIT);
+  } catch (e) {
+    console.warn("[responses] janitor query failed:", e?.message || e);
+    return;
+  }
+
+  if (!rows.length) return;
+
+  const delRow = db.prepare(`DELETE FROM device_responses WHERE id=?`);
+
+  const tx = db.transaction((items) => {
+    for (const r of items) {
+      const fp = String(r.file_path || "");
+      const abs = path.resolve(fp);
+      const base = path.resolve(RESPONSES_DIR) + path.sep;
+
+      if (!abs.startsWith(base)) {
+        console.warn("[responses] janitor refused to delete outside RESPONSES_DIR:", abs);
+        continue;
+      }
+
+      safeUnlink(abs);
+      delRow.run(String(r.id));
+    }
+  });
+
+  try {
+    tx(rows);
+    console.log("[responses] janitor deleted", rows.length, "expired responses");
+  } catch (e) {
+    console.warn("[responses] janitor tx failed:", e?.message || e);
+  }
+}
+
+const responsesJanitorTimer = setInterval(runResponsesJanitorOnce, RESP_JANITOR_EVERY_MS);
+responsesJanitorTimer.unref?.();
+const queuedCommandsPurgeTimer = setInterval(
+  purgeExpiredQueuedCommandsOnce,
+  QUEUED_COMMAND_PURGE_EVERY_MS,
+);
+queuedCommandsPurgeTimer.unref?.();
+
+if (!IS_AVATAR_BACKFILL_CLI) {
+  runResponsesJanitorOnce();
+  purgeExpiredQueuedCommandsOnce();
 }
 
 function mb(n) {
@@ -403,11 +2588,14 @@ async function sendCommandToOneOnlineAndWaitAck({ resolved, commandId, commandOb
     return { ok: false, httpStatus: 409, code: "DEVICE_OFFLINE", message: "No paired devices online." };
   }
 
-  const sent = sendToPairedDevices([targetDeviceId], {
-    type: "command",
-    commandId,
-    command: commandObj
-  });
+  const sent = sendToPairedDevices(
+    [targetDeviceId],
+    buildServerCommandMessage({
+      commandId,
+      commandPayload: commandObj,
+      ownerUserId: resolved?.ownerUserId || null,
+    }),
+  );
 
   if (sent <= 0) {
     return { ok: false, httpStatus: 409, code: "DEVICE_OFFLINE", message: "Target device not online." };
@@ -424,7 +2612,7 @@ async function sendCommandToOneOnlineAndWaitAck({ resolved, commandId, commandOb
 
 function enforceWebCooldownForNewUsers(req, res, next) {
   try {
-    const senderId = req.user?.discord_id;
+    const senderId = getRequestActorUserId(req);
     if (!senderId) return next();
 
     const row = db
@@ -464,8 +2652,6 @@ function enforceWebCooldownForNewUsers(req, res, next) {
     next();
   }
 }
-
-const fs = require("fs");
 
 const URL_DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(URL_DATA_DIR)) fs.mkdirSync(URL_DATA_DIR);
@@ -611,22 +2797,133 @@ function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl) {
   const block = getBlockSet();
 
   if (block.has(host)) {
-    banUserSilently(db, logEvent, req.user.discord_id, req, {
-      rule: "url_blocklist",
-      host,
-      url: String(rawUrl || "").slice(0, 800),
-    });
+    const actorDiscordId = String(
+      req.actorUser?.discord_id ||
+        req.apiUser?.discord_id ||
+        req.user?.discord_id ||
+        "",
+    ).trim();
+    if (actorDiscordId) {
+      banUserSilently(db, logEvent, actorDiscordId, req, {
+        rule: "url_blocklist",
+        host,
+        url: String(rawUrl || "").slice(0, 800),
+      });
+    }
 
     res.status(403).json({ ok: false, message: "Not allowed." });
     return { ok: false, blocked: true };
   }
-  
+
   if (allow.has(host)) {
     return { ok: true, host, status: "allowed" };
   }
 
   upsertVerificationHost(db, host, rawUrl);
   return { ok: true, host, status: "queued" };
+}
+
+function safeNowMs() {
+  return Date.now();
+}
+
+function b64ToBuffer(b64) {
+  const s = String(b64 || "");
+  const comma = s.indexOf(",");
+  const raw = comma >= 0 ? s.slice(comma + 1) : s;
+  return Buffer.from(raw, "base64");
+}
+
+function recordScreenshotResponseFromAck({ db, deviceId, ack, ownerUserId, responsesDir }) {
+  const details = ack && ack.details ? ack.details : null;
+  if (!details || !details.webp_b64) return false;
+
+  const buf = b64ToBuffer(details.webp_b64);
+
+  const createdAt = Number(details.created_at || ack.created_at || safeNowMs());
+  const width = Number(details.width || 0) || null;
+  const height = Number(details.height || 0) || null;
+  const monitors = Number(details.monitors || 0) || null;
+
+  const mime = String(details.mime || "image/webp");
+  const commandId = ack.commandId ? String(ack.commandId) : null;
+  const actorUserId = resolveActorUserIdByCommandId(commandId);
+
+  const id = crypto.randomUUID();
+
+  const filename = `screenshot_${createdAt}_${deviceId}_${id}.webp`;
+  const filePath = path.join(responsesDir, filename);
+
+  fs.writeFileSync(filePath, buf);
+
+  db.prepare(`
+    INSERT INTO device_responses
+      (id, owner_user_id, actor_user_id, device_id, created_at, response_type, mime, file_path, bytes, width, height, monitors, command_id)
+    VALUES
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    ownerUserId,
+    actorUserId,
+    deviceId,
+    createdAt,
+    "screenshot",
+    mime,
+    filePath,
+    buf.length,
+    width,
+    height,
+    monitors,
+    commandId
+  );
+
+  console.log("[responses] saved screenshot", {
+    id,
+    deviceId,
+    ownerUserId,
+    actorUserId,
+    file: filename,
+    bytes: buf.length,
+    width,
+    height,
+    monitors,
+    commandId,
+  });
+
+  return true;
+}
+
+function resolveActorUserIdByCommandId(commandId) {
+  const id = String(commandId || "").trim();
+  if (!id) return null;
+
+  const pendingContext = getPendingCommandContext(id);
+  const pendingActorUserId = String(pendingContext?.actorUserId || "").trim();
+  if (pendingActorUserId) {
+    return pendingActorUserId;
+  }
+
+  const rows = db
+    .prepare(
+      `
+    SELECT actor_user_id, payload
+    FROM events
+    WHERE actor_user_id IS NOT NULL
+      AND payload LIKE ?
+    ORDER BY created_at DESC
+    LIMIT 20
+  `,
+    )
+    .all(`%${id}%`);
+
+  for (const row of rows) {
+    const payload = tryJson(row.payload);
+    if (String(payload?.commandId || "").trim() === id) {
+      return String(row.actor_user_id || "").trim() || null;
+    }
+  }
+
+  return null;
 }
 
 function appendHostToFile(filePath, host) {
@@ -686,25 +2983,2723 @@ module.exports = {
   discordAvatarUrl,
 };
 
-const db = require("./db");
 const { resourceLimits } = require("worker_threads");
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS favorites (
-    user_id TEXT NOT NULL,               -- the logged in user
-    favorite_user_id TEXT NOT NULL,       -- the person they favorited
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    PRIMARY KEY (user_id, favorite_user_id)
+  CREATE TABLE IF NOT EXISTS group_memberships (
+    group_key TEXT NOT NULL,
+    user_id   TEXT NOT NULL,     -- your discord_id
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (group_key, user_id)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_favorites_user_created
-  ON favorites(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(user_id);
+  CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(group_key);
 `);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS heavy_cooldowns (
+    actor_id TEXT PRIMARY KEY,
+    last_ms INTEGER NOT NULL
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS uploaded_files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    original_name TEXT,
+    stored_name TEXT NOT NULL UNIQUE,
+    file_path TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    ext TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    preview_kind TEXT NOT NULL,
+    media_group TEXT NOT NULL,
+    wallpaper_compatible INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    protected_until INTEGER,
+    delete_after_queue INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_created
+    ON uploaded_files(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_uploaded_files_expires
+    ON uploaded_files(expires_at, created_at ASC);
+  CREATE INDEX IF NOT EXISTS idx_uploaded_files_created
+    ON uploaded_files(created_at ASC);
+  CREATE INDEX IF NOT EXISTS idx_uploaded_files_protected_until
+    ON uploaded_files(protected_until ASC, created_at ASC);
+`);
+
+try {
+  const uploadCols = db.prepare(`PRAGMA table_info(uploaded_files)`).all();
+  const hasDeleteAfterQueue = uploadCols.some(
+    (col) => String(col.name) === "delete_after_queue",
+  );
+  if (!hasDeleteAfterQueue) {
+    db.exec(
+      `ALTER TABLE uploaded_files ADD COLUMN delete_after_queue INTEGER NOT NULL DEFAULT 0`,
+    );
+    console.log("[db] added uploaded_files.delete_after_queue");
+  }
+} catch (e) {
+  console.warn(
+    "[db] could not ensure uploaded_files.delete_after_queue:",
+    e?.message || e,
+  );
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    action_url TEXT,
+    action_label TEXT,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    read_at INTEGER,
+    created_by TEXT,
+    source_type TEXT,
+    source_id TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+    ON notifications(user_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_read
+    ON notifications(user_id, read_at, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notifications_created_by
+    ON notifications(created_by, created_at DESC);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    subject_pair_code TEXT,
+    subject_display_name TEXT,
+    reporter_user_id TEXT NOT NULL,
+    reporter_display_name TEXT,
+    reason_key TEXT NOT NULL,
+    reason_label TEXT NOT NULL,
+    details TEXT,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    strike_count INTEGER NOT NULL DEFAULT 0,
+    resolved_at INTEGER,
+    resolved_by TEXT,
+    FOREIGN KEY(reporter_user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_reports_created
+    ON reports(created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_subject
+    ON reports(subject_type, subject_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_reporter
+    ON reports(reporter_user_id, created_at DESC);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_strikes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    strike_delta INTEGER NOT NULL,
+    reason_label TEXT NOT NULL,
+    source_label TEXT,
+    details TEXT,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    report_id TEXT,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    created_by TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(created_by) REFERENCES users(discord_id) ON DELETE SET NULL,
+    FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_strikes_user_created
+    ON user_strikes(user_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_user_strikes_report
+    ON user_strikes(report_id, created_at DESC, id DESC);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS report_media_backups (
+    id TEXT PRIMARY KEY,
+    report_id TEXT NOT NULL UNIQUE,
+    backup_kind TEXT NOT NULL,
+    source_url TEXT,
+    original_name TEXT,
+    stored_name TEXT NOT NULL UNIQUE,
+    file_path TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    ext TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_report_media_backups_created
+    ON report_media_backups(created_at DESC, id DESC);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS command_sender_blocks (
+    owner_user_id TEXT NOT NULL,
+    blocked_user_id TEXT NOT NULL,
+    source_event_id TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (owner_user_id, blocked_user_id),
+    FOREIGN KEY(owner_user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(blocked_user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_command_sender_blocks_owner_created
+    ON command_sender_blocks(owner_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_command_sender_blocks_blocked_created
+    ON command_sender_blocks(blocked_user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS command_history_likes (
+    event_id TEXT PRIMARY KEY,
+    liked_user_id TEXT NOT NULL,
+    liker_user_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL DEFAULT 'direct',
+    source_id TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(liked_user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(liker_user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_command_history_likes_liked_created
+    ON command_history_likes(liked_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_command_history_likes_liker_created
+    ON command_history_likes(liker_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_command_history_likes_source
+    ON command_history_likes(source_kind, source_id, created_at DESC);
+`);
+
+try {
+  db.exec(`ALTER TABLE device_responses ADD COLUMN actor_user_id TEXT`);
+  console.log("[db] added device_responses.actor_user_id");
+} catch {}
+
+try {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_device_responses_actor
+    ON device_responses(actor_user_id, created_at DESC)
+  `);
+} catch {}
+
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN allow_write_for_me INTEGER DEFAULT 1`);
+} catch {}
+
+try {
+  db.exec(
+    `ALTER TABLE users ADD COLUMN allow_subliminal_message INTEGER DEFAULT 1`,
+  );
+} catch {}
+
+try {
+  db.exec(`ALTER TABLE reports ADD COLUMN resolved_at INTEGER`);
+} catch {}
+
+try {
+  db.exec(`ALTER TABLE reports ADD COLUMN resolved_by TEXT`);
+} catch {}
+
+try {
+  db.exec(`ALTER TABLE reports ADD COLUMN strike_count INTEGER NOT NULL DEFAULT 0`);
+} catch {}
+
+try {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_reports_resolved
+    ON reports(resolved_at, created_at DESC, id DESC)
+  `);
+} catch {}
+
+try {
+  db.exec(
+    `ALTER TABLE users ADD COLUMN has_supporter_badge INTEGER NOT NULL DEFAULT 0`,
+  );
+} catch {}
+
+try {
+  db.exec(
+    `ALTER TABLE users ADD COLUMN command_likes_total INTEGER NOT NULL DEFAULT 0`,
+  );
+} catch {}
+
+try {
+  const cols = db.prepare(`PRAGMA table_info(users)`).all();
+  const has = cols.some(c => String(c.name) === "client_prefs_imported_at");
+  if (!has) {
+    db.exec(`ALTER TABLE users ADD COLUMN client_prefs_imported_at INTEGER`);
+    console.log("[db] added users.client_prefs_imported_at");
+  }
+} catch (e) {
+  console.warn("[db] could not ensure client_prefs_imported_at:", e?.message || e);
+}
 
 function tableExists(name) {
   return !!db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
     .get(name);
+}
+
+const deleteUploadedFileRow = db.prepare(`DELETE FROM uploaded_files WHERE id=?`);
+const deleteQueuedCommandRow = db.prepare(`DELETE FROM queued_commands WHERE id=?`);
+const updateDeviceResponseActorUserId = db.prepare(`
+  UPDATE device_responses
+  SET actor_user_id=?
+  WHERE id=?
+`);
+const insertQueuedCommandUploadRef = db.prepare(`
+  INSERT INTO queued_command_upload_refs (queue_id, upload_id, created_at)
+  VALUES (?, ?, ?)
+  ON CONFLICT(queue_id, upload_id) DO NOTHING
+`);
+const listQueuedCommandUploadRefs = db.prepare(`
+  SELECT upload_id
+  FROM queued_command_upload_refs
+  WHERE queue_id=?
+  ORDER BY created_at ASC, upload_id ASC
+`);
+const extendUploadedFileProtectionUntil = db.prepare(`
+  UPDATE uploaded_files
+  SET protected_until = CASE
+    WHEN IFNULL(protected_until, 0) > ? THEN protected_until
+    ELSE ?
+  END
+  WHERE id=?
+`);
+const markUploadedFileDeleteAfterQueue = db.prepare(`
+  UPDATE uploaded_files
+  SET delete_after_queue=1
+  WHERE id=?
+`);
+const deleteReportMediaBackupRow = db.prepare(
+  `DELETE FROM report_media_backups WHERE id=?`,
+);
+function getRequestOrigin(req) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+const {
+  broadcastNotificationToAllUsers,
+  clearAllNotificationsForUser,
+  clearNotificationForUser,
+  countNotificationsForUser,
+  countUnreadNotificationsForUser,
+  createNotificationsForUsers,
+  createStrikeNotification,
+  dispatchReport,
+  ensureUserBannedForStrikes,
+  formatCountLabel,
+  formatNotificationTimeLabel,
+  getNotificationSummaryForUser,
+  getReportReasonOption,
+  getStrikeSourceLabelForReport,
+  getUserStrikeCount,
+  getUserStrikeState,
+  getUserStrikeStatesByUserIds,
+  insertUserStrikeEntry,
+  listNotificationsForUser,
+  listUserStrikeHistory,
+  markAdminReportQueueNotificationsReadForUser,
+  markAllNotificationsReadForUser,
+  normalizeNotificationActionLabel,
+  normalizeNotificationActionUrl,
+  normalizeNotificationMessage,
+  normalizeNotificationTitle,
+  normalizeReportDetails,
+  normalizeReportSubjectType,
+  normalizeStrikeCount,
+  serializeNotificationMeta,
+  setUserStrikeCountByAdmin,
+  upsertCommandLikeNotification,
+} = createNotificationService({
+  db,
+  crypto,
+  tryJson,
+  normalizeControlLinkDisplayName,
+  logEvent,
+  constants: {
+    ADMIN_REPORT_QUEUE_KIND,
+    ADMIN_REPORT_QUEUE_SOURCE_ID,
+    ADMIN_REPORT_QUEUE_SOURCE_TYPE,
+    ALL_REPORT_REASON_BY_KEY,
+    MAX_USER_STRIKES,
+    NOTIFICATION_ACTION_LABEL_MAX_LEN,
+    NOTIFICATION_KIND_MAX_LEN,
+    NOTIFICATION_MENU_LIMIT,
+    NOTIFICATION_MESSAGE_MAX_LEN,
+    NOTIFICATION_PAGE_LIMIT,
+    NOTIFICATION_TITLE_MAX_LEN,
+    PROFILE_STRIKE_HISTORY_LIMIT,
+    REPORT_DETAILS_MAX_LEN,
+    REPORT_SUBJECT_TYPE_MAX_LEN,
+  },
+});
+
+function createControlLinkReport({
+  ownerUserId,
+  ownerUser = null,
+  pairCode = null,
+  reporterUser = null,
+  reasonKey,
+  reasonMap = CONTROL_LINK_REPORT_REASON_BY_KEY,
+  details = "",
+  req = null,
+}) {
+  const subjectUserId = String(ownerUserId || "").trim();
+  const reporterUserId = String(
+    reporterUser?.discord_id || reporterUser?.user_id || "",
+  ).trim();
+  const safePairCode = /^\d{6}$/.test(String(pairCode || "").trim())
+    ? String(pairCode || "").trim()
+    : null;
+  const reason = getReportReasonOption(reasonKey, reasonMap);
+  const safeDetails = normalizeReportDetails(details);
+
+  if (!subjectUserId) {
+    throw new Error("Missing report subject.");
+  }
+  if (!reporterUserId) {
+    throw new Error("Missing reporter.");
+  }
+  if (!reason) {
+    throw new Error("Please choose a valid reason.");
+  }
+  if (subjectUserId === reporterUserId) {
+    throw new Error("You can't report your own control link.");
+  }
+
+  const report = {
+    id: crypto.randomUUID(),
+    subjectType: "control_link",
+    subjectId: subjectUserId,
+    subjectPairCode: safePairCode,
+    subjectDisplayName: getPreferredDisplayName(
+      ownerUser || { discord_id: subjectUserId },
+    ),
+    reporterUserId,
+    reporterDisplayName: getPreferredDisplayName(
+      reporterUser || { discord_id: reporterUserId },
+    ),
+    reasonKey: reason.key,
+    reasonLabel: reason.label,
+    details: safeDetails,
+    meta: {
+      reasonDescription: reason.description,
+    },
+    createdAt: Date.now(),
+  };
+
+  db.prepare(
+    `
+      INSERT INTO reports (
+        id,
+        subject_type,
+        subject_id,
+        subject_pair_code,
+        subject_display_name,
+        reporter_user_id,
+        reporter_display_name,
+        reason_key,
+        reason_label,
+        details,
+        meta_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    report.id,
+    report.subjectType,
+    report.subjectId,
+    report.subjectPairCode,
+    report.subjectDisplayName,
+    report.reporterUserId,
+    report.reporterDisplayName,
+    report.reasonKey,
+    report.reasonLabel,
+    report.details || null,
+    serializeNotificationMeta(report.meta),
+    report.createdAt,
+  );
+
+  const deliveries = dispatchReport(report);
+
+  logEvent({
+    type: "control_link_report_created",
+    actorUserId: report.reporterUserId,
+    targetUserId: report.subjectId,
+    pairCode: report.subjectPairCode,
+    req,
+    payload: {
+      reportId: report.id,
+      subjectType: report.subjectType,
+      reasonKey: report.reasonKey,
+      reasonLabel: report.reasonLabel,
+      detailsLength: report.details.length,
+      deliveries: deliveries.map((delivery) => ({
+        channel: delivery.channel,
+        count: Number(delivery.count || 0),
+      })),
+    },
+  });
+
+  return {
+    report,
+    deliveries,
+  };
+}
+
+function createCommunityGroupReport({
+  groupKey,
+  groupName,
+  ownerUserId,
+  reporterUser = null,
+  reasonKey,
+  reasonMap = CONTROL_LINK_REPORT_REASON_BY_KEY,
+  details = "",
+  meta = {},
+  req = null,
+}) {
+  const safeGroupKey = String(groupKey || "").trim();
+  const safeGroupName = String(groupName || safeGroupKey || "Community group").trim();
+  const safeOwnerUserId = String(ownerUserId || "").trim();
+  const reporterUserId = String(
+    reporterUser?.discord_id || reporterUser?.user_id || "",
+  ).trim();
+  const reason = getReportReasonOption(reasonKey, reasonMap);
+  const safeDetails = normalizeReportDetails(details);
+
+  if (!safeGroupKey) {
+    throw new Error("Missing report subject.");
+  }
+  if (!reporterUserId) {
+    throw new Error("Missing reporter.");
+  }
+  if (!reason) {
+    throw new Error("Please choose a valid reason.");
+  }
+  if (safeOwnerUserId && reporterUserId === safeOwnerUserId) {
+    throw new Error("You can't report your own community group.");
+  }
+
+  const report = {
+    id: crypto.randomUUID(),
+    subjectType: "community_group",
+    subjectId: safeGroupKey,
+    subjectPairCode: null,
+    subjectDisplayName: safeGroupName,
+    reporterUserId,
+    reporterDisplayName: getPreferredDisplayName(
+      reporterUser || { discord_id: reporterUserId },
+    ),
+    reasonKey: reason.key,
+    reasonLabel: reason.label,
+    details: safeDetails,
+    meta: {
+      reasonDescription: reason.description,
+      groupKey: safeGroupKey,
+      groupName: safeGroupName,
+      ownerUserId: safeOwnerUserId || null,
+      ...meta,
+    },
+    createdAt: Date.now(),
+  };
+
+  db.prepare(
+    `
+      INSERT INTO reports (
+        id,
+        subject_type,
+        subject_id,
+        subject_pair_code,
+        subject_display_name,
+        reporter_user_id,
+        reporter_display_name,
+        reason_key,
+        reason_label,
+        details,
+        meta_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    report.id,
+    report.subjectType,
+    report.subjectId,
+    report.subjectPairCode,
+    report.subjectDisplayName,
+    report.reporterUserId,
+    report.reporterDisplayName,
+    report.reasonKey,
+    report.reasonLabel,
+    report.details || null,
+    serializeNotificationMeta(report.meta),
+    report.createdAt,
+  );
+
+  const deliveries = dispatchReport(report);
+
+  logEvent({
+    type: "community_group_report_created",
+    actorUserId: report.reporterUserId,
+    targetUserId: safeOwnerUserId || null,
+    req,
+    payload: {
+      reportId: report.id,
+      subjectType: report.subjectType,
+      groupKey: safeGroupKey,
+      reasonKey: report.reasonKey,
+      reasonLabel: report.reasonLabel,
+      detailsLength: report.details.length,
+      deliveries: deliveries.map((delivery) => ({
+        channel: delivery.channel,
+        count: Number(delivery.count || 0),
+      })),
+    },
+  });
+
+  return { report, deliveries };
+}
+
+function createUserReport({
+  subjectUserId,
+  subjectUser = null,
+  reporterUser = null,
+  reasonKey,
+  reasonMap = ALL_REPORT_REASON_BY_KEY,
+  details = "",
+  meta = {},
+  req = null,
+}) {
+  const targetUserId = String(subjectUserId || "").trim();
+  const reporterUserId = String(
+    reporterUser?.discord_id || reporterUser?.user_id || "",
+  ).trim();
+  const reason = getReportReasonOption(reasonKey, reasonMap);
+  const safeDetails = normalizeReportDetails(details);
+  const pairRow = targetUserId
+    ? db.prepare(`SELECT code_plain FROM pair_codes WHERE user_id=?`).get(targetUserId)
+    : null;
+  const safePairCode = /^\d{6}$/.test(String(pairRow?.code_plain || "").trim())
+    ? String(pairRow.code_plain || "").trim()
+    : null;
+
+  if (!targetUserId) {
+    throw new Error("Missing report subject.");
+  }
+  if (!reporterUserId) {
+    throw new Error("Missing reporter.");
+  }
+  if (!reason) {
+    throw new Error("Please choose a valid reason.");
+  }
+  if (targetUserId === reporterUserId) {
+    throw new Error("You can't report yourself.");
+  }
+
+  const report = {
+    id: crypto.randomUUID(),
+    subjectType: "user",
+    subjectId: targetUserId,
+    subjectPairCode: safePairCode,
+    subjectDisplayName: getPreferredDisplayName(
+      subjectUser || { discord_id: targetUserId },
+    ),
+    reporterUserId,
+    reporterDisplayName: getPreferredDisplayName(
+      reporterUser || { discord_id: reporterUserId },
+    ),
+    reasonKey: reason.key,
+    reasonLabel: reason.label,
+    details: safeDetails,
+    meta: {
+      reasonDescription: reason.description,
+      ...meta,
+    },
+    createdAt: Date.now(),
+  };
+
+  db.prepare(
+    `
+      INSERT INTO reports (
+        id,
+        subject_type,
+        subject_id,
+        subject_pair_code,
+        subject_display_name,
+        reporter_user_id,
+        reporter_display_name,
+        reason_key,
+        reason_label,
+        details,
+        meta_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    report.id,
+    report.subjectType,
+    report.subjectId,
+    report.subjectPairCode,
+    report.subjectDisplayName,
+    report.reporterUserId,
+    report.reporterDisplayName,
+    report.reasonKey,
+    report.reasonLabel,
+    report.details || null,
+    serializeNotificationMeta(report.meta),
+    report.createdAt,
+  );
+
+  const deliveries = dispatchReport(report);
+
+  logEvent({
+    type: "user_report_created",
+    actorUserId: report.reporterUserId,
+    targetUserId: report.subjectId,
+    req,
+    payload: {
+      reportId: report.id,
+      subjectType: report.subjectType,
+      reasonKey: report.reasonKey,
+      reasonLabel: report.reasonLabel,
+      detailsLength: report.details.length,
+      deliveries: deliveries.map((delivery) => ({
+        channel: delivery.channel,
+        count: Number(delivery.count || 0),
+      })),
+      meta,
+    },
+  });
+
+  return {
+    report,
+    deliveries,
+  };
+}
+
+function serializeReportRow(row) {
+  const createdAt = Number(row?.created_at || 0);
+  const subjectId = String(row?.subject_id || "").trim();
+  const reporterUserId = String(row?.reporter_user_id || "").trim();
+  const subjectDisplayName =
+    normalizeControlLinkDisplayName(row?.subject_control_link_display_name) ||
+    String(row?.subject_global_name || "").trim() ||
+    String(row?.subject_username || "").trim() ||
+    String(row?.subject_display_name || "").trim() ||
+    subjectId ||
+    "Unknown user";
+  const reporterDisplayName =
+    normalizeControlLinkDisplayName(row?.reporter_control_link_display_name) ||
+    String(row?.reporter_global_name || "").trim() ||
+    String(row?.reporter_username || "").trim() ||
+    String(row?.reporter_display_name || "").trim() ||
+    reporterUserId ||
+    "Unknown user";
+  const currentPairCode = String(row?.current_pair_code || "").trim();
+  const snapshotPairCode = String(row?.subject_pair_code || "").trim();
+  const preferredPairCode = currentPairCode || snapshotPairCode || "";
+  const subjectType = normalizeReportSubjectType(row?.subject_type);
+  const mediaBackupId = String(row?.media_backup_id || "").trim();
+  const mediaBackupOriginalName = String(
+    row?.media_backup_original_name || "",
+  ).trim();
+  const mediaBackupMime = normalizeStoredMime(row?.media_backup_mime, "");
+  const mediaBackupBytes = Number(row?.media_backup_bytes || 0);
+  const resolvedStrikeCount = Math.max(0, Number(row?.strike_count || 0));
+  const resolvedAt = Number(row?.resolved_at || 0);
+  const resolvedByUserId = String(row?.resolved_by || "").trim();
+  const resolvedByDisplayName =
+    normalizeControlLinkDisplayName(row?.resolved_by_control_link_display_name) ||
+    String(row?.resolved_by_global_name || "").trim() ||
+    String(row?.resolved_by_username || "").trim() ||
+    resolvedByUserId ||
+    "";
+
+  return {
+    id: String(row?.id || "").trim(),
+    subjectType,
+    subjectTypeLabel:
+      subjectType === "control_link"
+        ? "Control link"
+        : subjectType === "user"
+          ? "User"
+          : subjectType === "community_group"
+            ? "Community group"
+            : "Subject",
+    subjectId,
+    subjectPairCode: snapshotPairCode || null,
+    currentPairCode: currentPairCode || null,
+    subjectDisplayName,
+    reporterUserId,
+    reporterDisplayName,
+    reasonKey: String(row?.reason_key || "").trim(),
+    reasonLabel:
+      String(row?.reason_label || "").trim() ||
+      getReportReasonOption(row?.reason_key, ALL_REPORT_REASON_BY_KEY)?.label ||
+      "Other",
+    details: String(row?.details || "").trim(),
+    meta: tryJson(row?.meta_json) || {},
+    createdAt,
+    createdIso: createdAt ? new Date(createdAt).toISOString() : "",
+    createdLabel: formatNotificationTimeLabel(createdAt),
+    resolvedStrikeCount,
+    isResolved: !!resolvedAt,
+    resolvedAt: resolvedAt || null,
+    resolvedIso: resolvedAt ? new Date(resolvedAt).toISOString() : "",
+    resolvedLabel: resolvedAt ? formatNotificationTimeLabel(resolvedAt) : "",
+    resolvedByUserId: resolvedByUserId || null,
+    resolvedByDisplayName: resolvedByDisplayName || null,
+    mediaBackupId: mediaBackupId || null,
+    mediaBackupOriginalName: mediaBackupOriginalName || null,
+    mediaBackupMime: mediaBackupMime || null,
+    mediaBackupBytes,
+    mediaBackupSizeLabel: mediaBackupBytes
+      ? formatBytesCompact(mediaBackupBytes)
+      : "",
+    mediaBackupUrl:
+      mediaBackupId && String(row?.id || "").trim()
+        ? `/admin/reports/${encodeURIComponent(String(row.id))}/media-backup/${encodeURIComponent(mediaBackupId)}`
+        : null,
+    subjectLinkUrl: preferredPairCode
+      ? `/device/${encodeURIComponent(preferredPairCode)}`
+      : subjectType === "community_group" && subjectId
+        ? `/group/${encodeURIComponent(subjectId)}`
+        : null,
+    subjectAdminUrl: subjectId
+      ? `/admin/users?q=${encodeURIComponent(subjectId)}`
+      : null,
+    reporterAdminUrl: reporterUserId
+      ? `/admin/users?q=${encodeURIComponent(reporterUserId)}`
+      : null,
+  };
+}
+
+function getReportsResolvedWhereSql(resolved) {
+  if (resolved === true) return `r.resolved_at IS NOT NULL`;
+  if (resolved === false) return `r.resolved_at IS NULL`;
+  return `1=1`;
+}
+
+function countReports({ resolved = null } = {}) {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS n
+      FROM reports r
+      WHERE ${getReportsResolvedWhereSql(resolved)}
+    `,
+    )
+    .get();
+  return Number(row?.n || 0);
+}
+
+function listRecentReports(
+  limit = REPORTS_PAGE_LIMIT,
+  { resolved = null, offset = 0 } = {},
+) {
+  const orderSql =
+    resolved === true
+      ? `r.resolved_at DESC, r.created_at DESC, r.id DESC`
+      : `r.created_at DESC, r.id DESC`;
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        r.id,
+        r.subject_type,
+        r.subject_id,
+        r.subject_pair_code,
+        r.subject_display_name,
+        r.reporter_user_id,
+        r.reporter_display_name,
+        r.reason_key,
+        r.reason_label,
+        r.details,
+        r.meta_json,
+        r.created_at,
+        r.strike_count,
+        r.resolved_at,
+        r.resolved_by,
+        rmb.id AS media_backup_id,
+        rmb.original_name AS media_backup_original_name,
+        rmb.mime AS media_backup_mime,
+        rmb.bytes AS media_backup_bytes,
+        reporter.username AS reporter_username,
+        reporter.global_name AS reporter_global_name,
+        reporter.control_link_display_name AS reporter_control_link_display_name,
+        resolver.username AS resolved_by_username,
+        resolver.global_name AS resolved_by_global_name,
+        resolver.control_link_display_name AS resolved_by_control_link_display_name,
+        subject.username AS subject_username,
+        subject.global_name AS subject_global_name,
+        subject.control_link_display_name AS subject_control_link_display_name,
+        pc.code_plain AS current_pair_code
+      FROM reports r
+      LEFT JOIN report_media_backups rmb
+        ON rmb.report_id = r.id
+      LEFT JOIN users reporter
+        ON reporter.discord_id = r.reporter_user_id
+      LEFT JOIN users resolver
+        ON resolver.discord_id = r.resolved_by
+      LEFT JOIN users subject
+        ON subject.discord_id = CASE
+          WHEN r.subject_type IN ('control_link', 'user') THEN r.subject_id
+          ELSE NULL
+        END
+      LEFT JOIN pair_codes pc
+        ON pc.user_id = CASE
+          WHEN r.subject_type IN ('control_link', 'user') THEN r.subject_id
+          ELSE NULL
+        END
+      WHERE ${getReportsResolvedWhereSql(resolved)}
+      ORDER BY ${orderSql}
+      LIMIT ?
+      OFFSET ?
+    `,
+    )
+    .all(
+      Math.max(
+        1,
+        Math.min(Number(limit || 0) || REPORTS_PAGE_LIMIT, REPORTS_PAGE_LIMIT),
+      ),
+      Math.max(0, Number(offset || 0) || 0),
+    );
+
+  return rows.map(serializeReportRow);
+}
+
+function findReportById(reportId) {
+  const id = String(reportId || "").trim();
+  if (!id) return null;
+
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          id,
+          subject_type,
+          subject_id,
+          subject_pair_code,
+          subject_display_name,
+          reason_key,
+          reason_label,
+          details,
+          meta_json,
+          strike_count,
+          resolved_at,
+          resolved_by
+        FROM reports
+        WHERE id=?
+        LIMIT 1
+      `,
+      )
+      .get(id) || null
+  );
+}
+
+function clearReportMediaBackupsForReport(reportId) {
+  const id = String(reportId || "").trim();
+  if (!id) return 0;
+
+  const rows = db
+    .prepare(
+      `
+      SELECT id, file_path
+      FROM report_media_backups
+      WHERE report_id=?
+      ORDER BY created_at DESC, id DESC
+    `,
+    )
+    .all(id);
+
+  return deleteReportMediaBackups(rows, `report:${id}`);
+}
+
+function resolveReportForAdmin(
+  reportId,
+  resolvedByUserId,
+  { req = null, requestedStrikeCount = 0 } = {},
+) {
+  const id = String(reportId || "").trim();
+  const resolverId = String(resolvedByUserId || "").trim();
+  const safeRequestedStrikeCount = normalizeStrikeCount(requestedStrikeCount);
+  if (!id) {
+    return { ok: false, code: "not_found", message: "Report not found." };
+  }
+  if (!resolverId) {
+    return { ok: false, code: "not_allowed", message: "Admin required." };
+  }
+  if (safeRequestedStrikeCount === null) {
+    return {
+      ok: false,
+      code: "bad_strike_count",
+      message: `Strike count must be between 0 and ${MAX_USER_STRIKES}.`,
+    };
+  }
+
+  const existing = findReportById(id);
+  if (!existing) {
+    return { ok: false, code: "not_found", message: "Report not found." };
+  }
+  if (Number(existing.resolved_at || 0) > 0) {
+    return {
+      ok: false,
+      code: "already_resolved",
+      message: "That report is already in history.",
+    };
+  }
+
+  const subjectUserId = String(existing.subject_id || "").trim();
+  const subjectExists = subjectUserId
+    ? !!db
+        .prepare(`SELECT discord_id FROM users WHERE discord_id=? LIMIT 1`)
+        .get(subjectUserId)
+    : false;
+  const previousStrikeCount = subjectExists ? getUserStrikeCount(subjectUserId) : 0;
+  const remainingStrikeCapacity = subjectExists
+    ? Math.max(0, MAX_USER_STRIKES - previousStrikeCount)
+    : 0;
+  const appliedStrikeCount = Math.min(
+    safeRequestedStrikeCount,
+    remainingStrikeCapacity,
+  );
+  const resolvedAt = Date.now();
+  let info = null;
+  let banResult = { banned: false, alreadyBanned: false };
+
+  const tx = db.transaction(() => {
+    info = db
+      .prepare(
+        `
+        UPDATE reports
+        SET resolved_at=?, resolved_by=?, strike_count=?
+        WHERE id=? AND resolved_at IS NULL
+      `,
+      )
+      .run(resolvedAt, resolverId, appliedStrikeCount, id);
+
+    if (Number(info?.changes || 0) !== 1) {
+      throw new Error("already_resolved");
+    }
+
+    if (subjectExists && appliedStrikeCount > 0) {
+      insertUserStrikeEntry({
+        userId: subjectUserId,
+        strikeDelta: appliedStrikeCount,
+        reasonLabel:
+          String(existing.reason_label || "").trim() || "Report resolved",
+        sourceLabel: getStrikeSourceLabelForReport(existing),
+        details:
+          "Issued when admins resolved a report against your account or control link.",
+        sourceType: "report_resolution",
+        sourceId: id,
+        reportId: id,
+        createdByUserId: resolverId,
+        meta: {
+          reasonKey: String(existing.reason_key || "").trim() || null,
+          subjectType: normalizeReportSubjectType(existing.subject_type),
+          requestedStrikeCount: safeRequestedStrikeCount,
+          appliedStrikeCount,
+        },
+      });
+
+      createStrikeNotification({
+        userId: subjectUserId,
+        strikeDelta: appliedStrikeCount,
+        finalStrikeCount: previousStrikeCount + appliedStrikeCount,
+        reasonLabel:
+          String(existing.reason_label || "").trim() || "Report resolved",
+        createdByUserId: resolverId,
+        sourceType: "report_resolution",
+        sourceId: id,
+        reportId: id,
+      });
+    }
+
+    if (subjectExists && previousStrikeCount + appliedStrikeCount >= MAX_USER_STRIKES) {
+      banResult = ensureUserBannedForStrikes(subjectUserId, resolverId, {
+        req,
+        strikeCount: previousStrikeCount + appliedStrikeCount,
+      });
+    }
+  });
+
+  try {
+    tx();
+  } catch (e) {
+    if (String(e?.message || "").includes("already_resolved")) {
+      return {
+        ok: false,
+        code: "already_resolved",
+        message: "That report is already in history.",
+      };
+    }
+    console.warn("[reports] resolve failed:", e?.message || e);
+    return {
+      ok: false,
+      code: "resolve_failed",
+      message: "Could not resolve that report.",
+    };
+  }
+
+  if (Number(info?.changes || 0) !== 1) {
+    return {
+      ok: false,
+      code: "already_resolved",
+      message: "That report is already in history.",
+    };
+  }
+
+  const finalStrikeCount = subjectExists
+    ? Math.min(MAX_USER_STRIKES, previousStrikeCount + appliedStrikeCount)
+    : 0;
+  const backupDeletedCount = clearReportMediaBackupsForReport(id);
+
+  logEvent({
+    type: "report_resolved",
+    actorUserId: resolverId,
+    targetUserId: subjectUserId || null,
+    req,
+    payload: {
+      reportId: id,
+      requestedStrikeCount: safeRequestedStrikeCount,
+      appliedStrikeCount,
+      previousStrikeCount,
+      finalStrikeCount,
+      strikeCapped: appliedStrikeCount < safeRequestedStrikeCount,
+      autoBanned: !!banResult?.banned,
+      backupDeletedCount,
+      resolvedAt,
+    },
+  });
+
+  return {
+    ok: true,
+    reportId: id,
+    backupDeletedCount,
+    resolvedAt,
+    requestedStrikeCount: safeRequestedStrikeCount,
+    appliedStrikeCount,
+    previousStrikeCount,
+    finalStrikeCount,
+    strikeCapped: appliedStrikeCount < safeRequestedStrikeCount,
+    didBan: !!banResult?.banned,
+    alreadyBanned: !!banResult?.alreadyBanned,
+  };
+}
+
+function countCommandSenderBlocks() {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM command_sender_blocks`).get();
+  return Number(row?.n || 0);
+}
+
+function listRecentCommandSenderBlocks(limit = COMMAND_BLOCKS_PAGE_LIMIT) {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        b.owner_user_id,
+        b.blocked_user_id,
+        b.source_event_id,
+        b.created_at,
+        owner.username AS owner_username,
+        owner.global_name AS owner_global_name,
+        owner.control_link_display_name AS owner_control_link_display_name,
+        blocked.username AS blocked_username,
+        blocked.global_name AS blocked_global_name,
+        blocked.control_link_display_name AS blocked_control_link_display_name
+      FROM command_sender_blocks b
+      LEFT JOIN users owner ON owner.discord_id = b.owner_user_id
+      LEFT JOIN users blocked ON blocked.discord_id = b.blocked_user_id
+      ORDER BY b.created_at DESC, b.owner_user_id ASC, b.blocked_user_id ASC
+      LIMIT ?
+    `,
+    )
+    .all(
+      Math.max(
+        1,
+        Math.min(
+          Number(limit || 0) || COMMAND_BLOCKS_PAGE_LIMIT,
+          COMMAND_BLOCKS_PAGE_LIMIT,
+        ),
+      ),
+    );
+
+  return rows.map((row) => {
+    const createdAt = Number(row?.created_at || 0);
+    const ownerUserId = String(row?.owner_user_id || "").trim();
+    const blockedUserId = String(row?.blocked_user_id || "").trim();
+    return {
+      ownerUserId,
+      ownerDisplayName:
+        normalizeControlLinkDisplayName(row?.owner_control_link_display_name) ||
+        String(row?.owner_global_name || "").trim() ||
+        String(row?.owner_username || "").trim() ||
+        ownerUserId ||
+        "Unknown user",
+      blockedUserId,
+      blockedDisplayName:
+        normalizeControlLinkDisplayName(row?.blocked_control_link_display_name) ||
+        String(row?.blocked_global_name || "").trim() ||
+        String(row?.blocked_username || "").trim() ||
+        blockedUserId ||
+        "Unknown user",
+      sourceEventId: String(row?.source_event_id || "").trim() || null,
+      createdAt,
+      createdIso: createdAt ? new Date(createdAt).toISOString() : "",
+      createdLabel: formatNotificationTimeLabel(createdAt),
+      ownerAdminUrl: ownerUserId
+        ? `/admin/users?q=${encodeURIComponent(ownerUserId)}`
+        : null,
+      blockedAdminUrl: blockedUserId
+        ? `/admin/users?q=${encodeURIComponent(blockedUserId)}`
+        : null,
+    };
+  });
+}
+
+function listRecentAdminNotificationEvents(limit = 12) {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        e.created_at,
+        e.actor_user_id,
+        e.payload,
+        u.username,
+        u.global_name
+      FROM events e
+      LEFT JOIN users u ON u.discord_id = e.actor_user_id
+      WHERE e.type='admin_notifications_broadcast'
+      ORDER BY e.created_at DESC
+      LIMIT ?
+    `,
+    )
+    .all(Math.max(1, Math.min(Number(limit || 0) || 12, 50)));
+
+  return rows.map((row) => {
+    const payload = tryJson(row.payload) || {};
+    const createdAt = Number(row.created_at || 0);
+    return {
+      createdAt,
+      createdIso: createdAt ? new Date(createdAt).toISOString() : "",
+      createdLabel: formatNotificationTimeLabel(createdAt),
+      actorUserId: String(row.actor_user_id || "").trim(),
+      actorName:
+        String(row.global_name || "").trim() ||
+        String(row.username || "").trim() ||
+        String(row.actor_user_id || "").trim() ||
+        "Unknown admin",
+      targetCount: Number(payload.targetCount || 0),
+      title: String(payload.title || "").trim(),
+      message: String(payload.message || "").trim(),
+      actionUrl: normalizeNotificationActionUrl(payload.actionUrl),
+      actionLabel: normalizeNotificationActionLabel(payload.actionLabel),
+    };
+  });
+}
+
+function getUploadContextUiConfig() {
+  return UPLOAD_CONTEXT_UI;
+}
+
+function getRecentUploadsByContextForUser(req, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return {
+      image_popup: [],
+      fullscreen_popup: [],
+      set_wallpaper: [],
+      set_wallpaper_media: [],
+      play_sound: [],
+    };
+  }
+
+  return {
+    image_popup: listRecentUploadedFilesForUser(
+      req,
+      uid,
+      "image_popup",
+      UPLOAD_RECENT_LIST_LIMIT,
+    ),
+    fullscreen_popup: listRecentUploadedFilesForUser(
+      req,
+      uid,
+      "fullscreen_popup",
+      UPLOAD_RECENT_LIST_LIMIT,
+    ),
+    set_wallpaper: listRecentUploadedFilesForUser(
+      req,
+      uid,
+      "set_wallpaper",
+      UPLOAD_RECENT_LIST_LIMIT,
+    ),
+    set_wallpaper_media: listRecentUploadedFilesForUser(
+      req,
+      uid,
+      "set_wallpaper_media",
+      UPLOAD_RECENT_LIST_LIMIT,
+    ),
+    play_sound: listRecentUploadedFilesForUser(
+      req,
+      uid,
+      "play_sound",
+      UPLOAD_RECENT_LIST_LIMIT,
+    ),
+  };
+}
+
+function getUploadRuleForFile({ context, filename, mime }) {
+  const ctx = String(context || "").trim();
+  const originalName = String(filename || "").trim();
+  const normalizedMime = String(mime || "")
+    .trim()
+    .toLowerCase();
+  const ext = path.extname(originalName).slice(1).toLowerCase();
+
+  if (!UPLOAD_CONTEXT_UI[ctx]) {
+    return { ok: false, message: "Invalid upload context." };
+  }
+
+  if (!ext) {
+    return { ok: false, message: "File must include a valid extension." };
+  }
+
+  if (
+    ctx === "set_wallpaper_media" &&
+    ext === "ogg" &&
+    normalizedMime.startsWith("audio/")
+  ) {
+    return { ok: false, message: "Only video .ogg files are allowed here." };
+  }
+
+  const rule =
+    ctx === "set_wallpaper_media" && ext === "ogg"
+      ? WALLPAPER_MEDIA_OGG_VIDEO_UPLOAD_RULE
+      : UPLOAD_FILE_RULES[ext];
+  if (!rule || !rule.contexts.has(ctx)) {
+    return { ok: false, message: "That file type is not allowed here." };
+  }
+
+  const isGenericMime =
+    !normalizedMime ||
+    normalizedMime === "application/octet-stream" ||
+    normalizedMime === "binary/octet-stream";
+  let resolvedMime = normalizedMime || rule.mimeTypes[0];
+
+  if (!isGenericMime) {
+    const directMimeMatch = rule.mimeTypes.some(
+      (allowed) =>
+        normalizedMime === allowed || normalizedMime.startsWith(allowed + ";"),
+    );
+
+    const broadMimeMatch =
+      (rule.mediaGroup === "audio" && normalizedMime.startsWith("audio/")) ||
+      (rule.previewKind === "image" && normalizedMime.startsWith("image/")) ||
+      (rule.previewKind === "video" && normalizedMime.startsWith("video/"));
+
+    if (!directMimeMatch && !broadMimeMatch) {
+      console.warn("[uploads] accepting file by extension despite mime mismatch", {
+        context: ctx,
+        filename: originalName,
+        ext,
+        mime: normalizedMime,
+      });
+      resolvedMime = rule.mimeTypes[0];
+    }
+  }
+
+  return {
+    ok: true,
+    context: ctx,
+    ext,
+    rule,
+    mime: resolvedMime,
+  };
+}
+
+function getUploadListSqlForContext(context) {
+  switch (String(context || "").trim()) {
+    case "image_popup":
+    case "fullscreen_popup":
+      return "media_group='visual'";
+    case "set_wallpaper":
+      return "wallpaper_compatible=1";
+    case "set_wallpaper_media":
+      return `(
+        (ext IN ('png', 'jpg', 'jpeg', 'webp', 'gif') AND preview_kind='image')
+        OR
+        (ext IN ('webm', 'ogg', 'ogv') AND preview_kind='video')
+      )`;
+    case "play_sound":
+      return "media_group='audio'";
+    default:
+      return null;
+  }
+}
+
+function isManagedPathInDir(filePath, baseDir) {
+  const abs = path.resolve(String(filePath || ""));
+  const base = path.resolve(baseDir) + path.sep;
+  return abs.startsWith(base);
+}
+
+function isUploadedFileProtectedRow(row, now = Date.now()) {
+  return (
+    (!!Number(row?.is_queue_pinned || 0) &&
+      !Number(row?.delete_after_queue || 0)) ||
+    Number(row?.protected_until || 0) > Number(now || 0)
+  );
+}
+
+function listManagedUploadUrlsFromCommandPayload(commandPayload) {
+  const payload =
+    commandPayload && typeof commandPayload === "object" ? commandPayload : null;
+  if (!payload) return [];
+
+  const type = String(payload.type || "").trim();
+  if (
+    type === "open_url" ||
+    type === "image_popup" ||
+    type === "fullscreen_popup" ||
+    type === "set_wallpaper"
+  ) {
+    return [String(payload.url || "").trim()].filter(Boolean);
+  }
+
+  if (
+    (type === "play_sound" || type === "play_sound_loop") &&
+    String(payload.kind || "builtin").trim() === "url"
+  ) {
+    return [String(payload.url || "").trim()].filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeManagedUploadRows(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const row of items) {
+    const uploadId = String(row?.id || "").trim();
+    if (!uploadId || seen.has(uploadId)) continue;
+    seen.add(uploadId);
+    out.push(row);
+  }
+
+  return out;
+}
+
+function resolveManagedUploadRowsForQueuedCommand(req, commandPayload) {
+  if (!req) return [];
+
+  const uploadRows = [];
+  for (const rawUrl of listManagedUploadUrlsFromCommandPayload(commandPayload)) {
+    if (!isManagedUploadUrl(req, rawUrl)) continue;
+
+    const row = findManagedUploadRowByUrl(req, rawUrl);
+    if (!row) {
+      throw new Error("The uploaded file for this command is no longer available.");
+    }
+
+    uploadRows.push(row);
+  }
+
+  return normalizeManagedUploadRows(uploadRows);
+}
+
+function extendUploadProtectionUntilByIds(uploadIds, holdUntil) {
+  const safeHoldUntil = Number(holdUntil || 0);
+  if (!Number.isFinite(safeHoldUntil) || safeHoldUntil <= 0) return 0;
+
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(uploadIds) ? uploadIds : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!ids.length) return 0;
+
+  for (const uploadId of ids) {
+    extendUploadedFileProtectionUntil.run(safeHoldUntil, safeHoldUntil, uploadId);
+  }
+
+  return ids.length;
+}
+
+function markUploadDeleteAfterQueueByIds(uploadIds) {
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(uploadIds) ? uploadIds : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  for (const uploadId of ids) {
+    markUploadedFileDeleteAfterQueue.run(uploadId);
+  }
+
+  return ids.length;
+}
+
+function finalizeDeliveredQueuedCommand(queueId, deliveredAt = Date.now()) {
+  const id = String(queueId || "").trim();
+  if (!id) return { deleted: 0, protectedCount: 0 };
+
+  const tx = db.transaction(() => {
+    const uploadRows = db
+      .prepare(
+        `
+        SELECT
+          uf.id,
+          uf.file_path,
+          IFNULL(uf.delete_after_queue, 0) AS delete_after_queue
+        FROM queued_command_upload_refs qr
+        JOIN uploaded_files uf ON uf.id = qr.upload_id
+        WHERE qr.queue_id=?
+      `,
+      )
+      .all(id);
+
+    const uploadIds = uploadRows
+      .map((row) => String(row?.id || "").trim())
+      .filter(Boolean);
+    const deleteAfterQueueIds = uploadRows
+      .filter((row) => !!Number(row?.delete_after_queue || 0))
+      .map((row) => String(row?.id || "").trim())
+      .filter(Boolean);
+
+    const holdUntil = Number(deliveredAt || Date.now()) + QUEUED_UPLOAD_REPORT_GRACE_MS;
+    const protectedCount = extendUploadProtectionUntilByIds(
+      uploadIds.filter((uploadId) => !deleteAfterQueueIds.includes(uploadId)),
+      holdUntil,
+    );
+    const info = deleteQueuedCommandRow.run(id);
+    const uploadDeletes = deleteAfterQueueIds.length
+      ? db
+          .prepare(
+            `
+            SELECT id, file_path
+            FROM uploaded_files uf
+            WHERE uf.id IN (${deleteAfterQueueIds.map(() => "?").join(",")})
+              AND NOT EXISTS (
+                SELECT 1
+                FROM queued_command_upload_refs qr
+                WHERE qr.upload_id = uf.id
+              )
+          `,
+          )
+          .all(...deleteAfterQueueIds)
+      : [];
+
+    if (uploadDeletes.length) {
+      deleteUploadedFiles(uploadDeletes, "queued delivery completed");
+    }
+
+    return {
+      deleted: Math.max(0, Number(info?.changes || 0)),
+      protectedCount,
+      holdUntil,
+      uploadDeletedCount: uploadDeletes.length,
+    };
+  });
+
+  return tx();
+}
+
+function deleteUploadedFiles(rows, reason = "cleanup") {
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) return 0;
+
+  const tx = db.transaction((list) => {
+    for (const row of list) {
+      const abs = path.resolve(String(row.file_path || ""));
+      if (!isManagedPathInDir(abs, UPLOADS_DIR)) {
+        console.warn(
+          "[uploads] refusing to unlink outside uploads dir:",
+          abs,
+        );
+      } else {
+        safeUnlink(abs, "uploads");
+      }
+
+      deleteUploadedFileRow.run(String(row.id));
+    }
+  });
+
+  try {
+    tx(items);
+    console.log("[uploads] deleted", items.length, "files for", reason);
+    return items.length;
+  } catch (e) {
+    console.warn("[uploads] delete tx failed:", e?.message || e);
+    return 0;
+  }
+}
+
+function purgeExpiredUploadedFiles(limit = UPLOAD_JANITOR_LIMIT) {
+  let rows = [];
+  const now = Date.now();
+  try {
+    rows = db
+      .prepare(
+        `
+      SELECT
+        uf.id,
+        uf.file_path,
+        uf.created_at,
+        uf.bytes,
+        uf.protected_until,
+        IFNULL(uf.delete_after_queue, 0) AS delete_after_queue,
+        EXISTS (
+          SELECT 1
+          FROM queued_command_upload_refs qr
+          WHERE qr.upload_id = uf.id
+        ) AS is_queue_pinned
+      FROM uploaded_files uf
+      WHERE uf.expires_at <= ?
+        AND IFNULL(uf.protected_until, 0) <= ?
+        AND (
+          IFNULL(uf.delete_after_queue, 0)=1
+          OR NOT EXISTS (
+            SELECT 1
+            FROM queued_command_upload_refs qr
+            WHERE qr.upload_id = uf.id
+          )
+        )
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?
+    `,
+      )
+      .all(now, now, limit);
+  } catch (e) {
+    console.warn("[uploads] janitor query failed:", e?.message || e);
+    return 0;
+  }
+
+  if (!rows.length) return 0;
+  return deleteUploadedFiles(rows, "expired");
+}
+
+function drainExpiredUploadedFiles(maxPasses = 25) {
+  let total = 0;
+
+  for (let i = 0; i < maxPasses; i++) {
+    const deleted = purgeExpiredUploadedFiles(UPLOAD_JANITOR_LIMIT);
+    total += deleted;
+    if (deleted < UPLOAD_JANITOR_LIMIT) break;
+  }
+
+  return total;
+}
+
+function ensureUploadCapacityForNewFile({ userId, incomingBytes }) {
+  const uid = String(userId || "").trim();
+  const size = Number(incomingBytes || 0);
+
+  if (!uid) return { ok: false, status: 400, message: "Missing upload user." };
+  if (!Number.isFinite(size) || size <= 0) {
+    return { ok: false, status: 400, message: "Invalid upload size." };
+  }
+
+  if (size > UPLOADS_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `File is larger than the total upload storage limit (${formatBytesCompact(UPLOADS_MAX_BYTES)}).`,
+    };
+  }
+
+  if (size > UPLOADS_PER_USER_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `File is larger than your personal upload storage limit (${formatBytesCompact(UPLOADS_PER_USER_MAX_BYTES)}).`,
+    };
+  }
+
+  drainExpiredUploadedFiles();
+
+  const now = Date.now();
+  const userRows = db
+    .prepare(
+      `
+      SELECT
+        uf.id,
+        uf.file_path,
+        uf.created_at,
+        uf.bytes,
+        uf.expires_at,
+        uf.protected_until,
+        IFNULL(uf.delete_after_queue, 0) AS delete_after_queue,
+        EXISTS (
+          SELECT 1
+          FROM queued_command_upload_refs qr
+          WHERE qr.upload_id = uf.id
+        ) AS is_queue_pinned
+      FROM uploaded_files uf
+      WHERE uf.user_id=?
+      ORDER BY created_at ASC, id ASC
+    `,
+    )
+    .all(uid);
+
+  const missingUserRows = userRows.filter((row) => {
+    const abs = path.resolve(String(row.file_path || ""));
+    return !isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs);
+  });
+  if (missingUserRows.length) {
+    deleteUploadedFiles(missingUserRows, "missing");
+  }
+
+  const activeUserRows = missingUserRows.length
+    ? userRows.filter((row) => !missingUserRows.includes(row))
+    : userRows;
+  const deletableUserRows = activeUserRows.filter(
+    (row) => !isUploadedFileProtectedRow(row, now),
+  );
+  const queuePinnedUserRows = activeUserRows.filter(
+    (row) => !!Number(row.is_queue_pinned || 0),
+  );
+
+  let userBytes = 0;
+  for (const row of activeUserRows) {
+    if (Number(row.is_queue_pinned || 0)) continue;
+    userBytes += Number(row.bytes || 0);
+  }
+
+  let userCount = activeUserRows.filter(
+    (row) => !Number(row.is_queue_pinned || 0),
+  ).length;
+  const userDeletes = [];
+
+  for (const row of deletableUserRows) {
+    const overFileLimit = userCount >= UPLOADS_PER_USER_MAX_FILES;
+    const overByteLimit = userBytes + size > UPLOADS_PER_USER_MAX_BYTES;
+    if (!overFileLimit && !overByteLimit) break;
+
+    userDeletes.push(row);
+    userCount -= 1;
+    userBytes -= Number(row.bytes || 0);
+  }
+
+  if (userDeletes.length) deleteUploadedFiles(userDeletes, "per-user limits");
+
+  const rawUserBytes = activeUserRows.reduce(
+    (sum, row) => sum + Number(row.bytes || 0),
+    0,
+  );
+  const rawUserCount = activeUserRows.length;
+  if (
+    queuePinnedUserRows.length > 0 &&
+    (rawUserBytes + size > UPLOADS_PER_USER_MAX_BYTES ||
+      rawUserCount + 1 > UPLOADS_PER_USER_MAX_FILES)
+  ) {
+    markUploadDeleteAfterQueueByIds(queuePinnedUserRows.map((row) => row.id));
+  }
+
+  if (
+    userCount >= UPLOADS_PER_USER_MAX_FILES ||
+    userBytes + size > UPLOADS_PER_USER_MAX_BYTES
+  ) {
+    return {
+      ok: false,
+      status: 507,
+      message: "Not enough personal upload storage is available right now.",
+    };
+  }
+
+  const globalRows = db
+    .prepare(
+      `
+      SELECT
+        uf.id,
+        uf.file_path,
+        uf.created_at,
+        uf.bytes,
+        uf.expires_at,
+        uf.protected_until,
+        IFNULL(uf.delete_after_queue, 0) AS delete_after_queue,
+        EXISTS (
+          SELECT 1
+          FROM queued_command_upload_refs qr
+          WHERE qr.upload_id = uf.id
+        ) AS is_queue_pinned
+      FROM uploaded_files uf
+      ORDER BY created_at ASC, id ASC
+    `,
+    )
+    .all();
+
+  const missingGlobalRows = globalRows.filter((row) => {
+    const abs = path.resolve(String(row.file_path || ""));
+    return !isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs);
+  });
+  if (missingGlobalRows.length) {
+    deleteUploadedFiles(missingGlobalRows, "missing");
+  }
+
+  const activeGlobalRows = missingGlobalRows.length
+    ? globalRows.filter((row) => !missingGlobalRows.includes(row))
+    : globalRows;
+  const deletableGlobalRows = activeGlobalRows.filter(
+    (row) => !isUploadedFileProtectedRow(row, now),
+  );
+
+  let totalBytes = 0;
+  for (const row of activeGlobalRows) totalBytes += Number(row.bytes || 0);
+
+  const globalDeletes = [];
+
+  for (const row of deletableGlobalRows) {
+    if (totalBytes + size <= UPLOADS_MAX_BYTES) break;
+    globalDeletes.push(row);
+    totalBytes -= Number(row.bytes || 0);
+  }
+
+  if (totalBytes + size > UPLOADS_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 507,
+      message: "Not enough server upload storage is available right now.",
+    };
+  }
+
+  if (globalDeletes.length) deleteUploadedFiles(globalDeletes, "global limit");
+
+  return { ok: true };
+}
+
+function serializeUploadedFileRow(req, row) {
+  const storedName = String(row.stored_name || "").trim();
+  return {
+    id: String(row.id),
+    originalName: String(row.original_name || storedName || "").trim(),
+    storedName,
+    mime: String(row.mime || "").trim(),
+    ext: String(row.ext || "").trim().toLowerCase(),
+    bytes: Number(row.bytes || 0),
+    previewKind: String(row.preview_kind || "").trim() || "image",
+    mediaGroup: String(row.media_group || "").trim() || "visual",
+    wallpaperCompatible: !!row.wallpaper_compatible,
+    createdAt: Number(row.created_at || 0),
+    expiresAt: Number(row.expires_at || 0),
+    url: `${getRequestOrigin(req)}/uploads/${encodeURIComponent(storedName)}`,
+  };
+}
+
+function listRecentUploadedFilesForUser(
+  req,
+  userId,
+  context,
+  limit = UPLOAD_RECENT_LIST_LIMIT,
+) {
+  const whereSql = getUploadListSqlForContext(context);
+  if (!whereSql) return [];
+
+  drainExpiredUploadedFiles();
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        id, original_name, stored_name, file_path, mime, ext, bytes,
+        preview_kind, media_group, wallpaper_compatible, created_at, expires_at
+      FROM uploaded_files
+      WHERE user_id=? AND expires_at > ? AND IFNULL(delete_after_queue, 0)=0 AND ${whereSql}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `,
+    )
+    .all(
+      String(userId),
+      Date.now(),
+      Math.max(Number(limit || 0), 1) * 3,
+    );
+
+  const staleRows = [];
+  const items = [];
+
+  for (const row of rows) {
+    const abs = path.resolve(String(row.file_path || ""));
+    if (!isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs)) {
+      staleRows.push(row);
+      continue;
+    }
+
+    items.push(serializeUploadedFileRow(req, row));
+    if (items.length >= limit) break;
+  }
+
+  if (staleRows.length) deleteUploadedFiles(staleRows, "missing");
+
+  return items;
+}
+
+function listAllUploadedFilesForAdmin(req) {
+  drainExpiredUploadedFiles();
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        uf.id,
+        uf.user_id,
+        uf.original_name,
+        uf.stored_name,
+        uf.file_path,
+        uf.mime,
+        uf.ext,
+        uf.bytes,
+        uf.preview_kind,
+        uf.media_group,
+        uf.wallpaper_compatible,
+        uf.created_at,
+        uf.expires_at,
+        u.username,
+        u.global_name,
+        u.avatar
+      FROM uploaded_files uf
+      LEFT JOIN users u ON u.discord_id = uf.user_id
+      WHERE uf.expires_at > ?
+      ORDER BY uf.created_at DESC, uf.id DESC
+    `,
+    )
+    .all(Date.now());
+
+  const staleRows = [];
+  const items = [];
+
+  for (const row of rows) {
+    const abs = path.resolve(String(row.file_path || ""));
+    if (!isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs)) {
+      staleRows.push(row);
+      continue;
+    }
+
+    const item = serializeUploadedFileRow(req, row);
+    const uploaderId = String(row.user_id || "").trim();
+    const uploader = {
+      discordId: uploaderId,
+      username: String(row.username || "").trim(),
+      globalName: String(row.global_name || "").trim(),
+      avatarUrl: siteAvatarUrl({ discord_id: uploaderId }, 64),
+    };
+
+    items.push({
+      ...item,
+      sizeLabel: formatBytesCompact(item.bytes),
+      uploader,
+      uploaderDisplayName:
+        uploader.globalName || uploader.username || uploader.discordId || "(unknown user)",
+    });
+  }
+
+  if (staleRows.length) deleteUploadedFiles(staleRows, "missing");
+
+  return items;
+}
+
+function getReportMediaBackupCommandKey(commandType) {
+  const normalized = String(commandType || "").trim().toLowerCase();
+
+  if (
+    normalized === "command_image" ||
+    normalized === "group_command_image_popup" ||
+    normalized === "image_popup"
+  ) {
+    return "image_popup";
+  }
+
+  if (
+    normalized === "command_fullscreen_popup" ||
+    normalized === "group_command_fullscreen_popup" ||
+    normalized === "fullscreen_popup"
+  ) {
+    return "fullscreen_popup";
+  }
+
+  if (
+    normalized === "command_set_wallpaper" ||
+    normalized === "group_command_set_wallpaper" ||
+    normalized === "set_wallpaper"
+  ) {
+    return "set_wallpaper";
+  }
+
+  if (
+    normalized === "command_play_sound" ||
+    normalized === "command_play_sound_loop" ||
+    normalized === "group_command_play_sound" ||
+    normalized === "play_sound" ||
+    normalized === "play_sound_loop"
+  ) {
+    return "play_sound";
+  }
+
+  return null;
+}
+
+function getReportMediaBackupContexts(commandType) {
+  const commandKey = getReportMediaBackupCommandKey(commandType);
+  if (commandKey === "image_popup") return ["image_popup"];
+  if (commandKey === "fullscreen_popup") return ["image_popup"];
+  if (commandKey === "set_wallpaper") {
+    return ["set_wallpaper", "set_wallpaper_media"];
+  }
+  if (commandKey === "play_sound") return ["play_sound"];
+  return [];
+}
+
+function normalizeStoredMime(value, fallback = "application/octet-stream") {
+  const mime = String(value || "")
+    .trim()
+    .toLowerCase()
+    .split(";")[0]
+    .trim();
+  return mime || fallback;
+}
+
+function sanitizeReportMediaBackupName(name, fallbackBase = "reported-media") {
+  const base = path
+    .basename(
+      String(name || "")
+        .split("#")[0]
+        .split("?")[0],
+    )
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+  return base || fallbackBase;
+}
+
+function buildReportMediaBackupOriginalName({
+  preferredName = "",
+  rawUrl = "",
+  ext = "",
+  fallbackBase = "reported-media",
+}) {
+  const normalizedExt = String(ext || "").trim().toLowerCase();
+  const candidates = [
+    sanitizeReportMediaBackupName(preferredName, ""),
+    (() => {
+      try {
+        const parsed = new URL(String(rawUrl || ""));
+        return sanitizeReportMediaBackupName(parsed.pathname, "");
+      } catch {
+        return "";
+      }
+    })(),
+  ].filter(Boolean);
+
+  const fallback = sanitizeReportMediaBackupName(fallbackBase, "reported-media");
+  const candidate = candidates[0] || fallback;
+  const candidateExt = path.extname(candidate).slice(1).toLowerCase();
+  const baseName = candidateExt
+    ? candidate.slice(0, -(candidateExt.length + 1))
+    : candidate;
+
+  if (normalizedExt && candidateExt === normalizedExt) {
+    return candidate;
+  }
+
+  return normalizedExt
+    ? `${baseName || fallback}.${normalizedExt}`
+    : candidate;
+}
+
+function resolveReportMediaBackupCaptureSpec({
+  commandType,
+  sourceUrl,
+  sourceName = "",
+  sourceMime = "",
+}) {
+  const commandKey = getReportMediaBackupCommandKey(commandType);
+  if (!commandKey || !isHttpUrl(sourceUrl)) return null;
+
+  const contexts = getReportMediaBackupContexts(commandType);
+  if (!contexts.length) return null;
+
+  const normalizedMime = normalizeStoredMime(sourceMime, "");
+  const candidateExts = [];
+  const seenExts = new Set();
+  const pushExt = (value) => {
+    const ext = String(value || "").trim().toLowerCase();
+    if (!ext || seenExts.has(ext)) return;
+    seenExts.add(ext);
+    candidateExts.push(ext);
+  };
+
+  pushExt(path.extname(String(sourceName || "")).slice(1));
+  pushExt(getUrlFileExtension(sourceUrl));
+
+  if (normalizedMime) {
+    for (const [ext, rule] of Object.entries(UPLOAD_FILE_RULES)) {
+      const allowedInContext = contexts.some((context) => rule.contexts.has(context));
+      if (!allowedInContext) continue;
+
+      const directMimeMatch = rule.mimeTypes.some(
+        (allowed) =>
+          normalizedMime === allowed ||
+          normalizedMime.startsWith(allowed + ";"),
+      );
+      const broadMimeMatch =
+        (rule.mediaGroup === "audio" && normalizedMime.startsWith("audio/")) ||
+        (rule.previewKind === "image" && normalizedMime.startsWith("image/")) ||
+        (rule.previewKind === "video" && normalizedMime.startsWith("video/"));
+
+      if (directMimeMatch || broadMimeMatch) {
+        pushExt(ext);
+      }
+    }
+
+    if (
+      commandKey === "set_wallpaper" &&
+      (normalizedMime === "video/ogg" ||
+        normalizedMime === "video/ogv" ||
+        normalizedMime.startsWith("video/webm"))
+    ) {
+      pushExt("ogv");
+      pushExt("webm");
+    }
+  }
+
+  for (const ext of candidateExts) {
+    for (const context of contexts) {
+      const originalName = buildReportMediaBackupOriginalName({
+        preferredName: sourceName,
+        rawUrl: sourceUrl,
+        ext,
+        fallbackBase: commandKey,
+      });
+      const matched = getUploadRuleForFile({
+        context,
+        filename: originalName,
+        mime: normalizedMime,
+      });
+      if (matched.ok) {
+        return {
+          commandKey,
+          context,
+          ext: matched.ext,
+          mime: normalizeStoredMime(matched.mime, matched.rule.mimeTypes[0]),
+          rule: matched.rule,
+          originalName,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function findManagedUploadRowByUrl(req, rawUrl) {
+  if (!isManagedUploadUrl(req, rawUrl)) return null;
+
+  let storedName = "";
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    storedName = decodeURIComponent(path.basename(String(parsed.pathname || "")));
+  } catch {
+    return null;
+  }
+
+  if (!storedName) return null;
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        id,
+        original_name,
+        stored_name,
+        file_path,
+        mime,
+        ext,
+        bytes,
+        created_at
+      FROM uploaded_files
+      WHERE stored_name=?
+      LIMIT 1
+    `,
+    )
+    .get(storedName);
+
+  if (!row) return null;
+
+  const abs = path.resolve(String(row.file_path || ""));
+  if (!isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs)) {
+    return null;
+  }
+
+  return row;
+}
+
+async function readResponseBodyWithLimit(response, maxBytes) {
+  const limit = Math.max(1, Number(maxBytes || 0) || UPLOAD_ANIMATED_MAX_BYTES);
+  const contentLength = Number(response.headers.get("content-length") || "0");
+  if (contentLength && contentLength > limit) {
+    throw new Error("That file is too large to preserve with the report.");
+  }
+
+  if (!response.body) return Buffer.alloc(0);
+
+  const stream =
+    typeof Readable.fromWeb === "function" &&
+    response.body &&
+    typeof response.body.getReader === "function"
+      ? Readable.fromWeb(response.body)
+      : response.body;
+
+  const chunks = [];
+  let total = 0;
+
+  for await (const chunk of stream) {
+    const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bufferChunk.length;
+    if (total > limit) {
+      throw new Error("That file is too large to preserve with the report.");
+    }
+    chunks.push(bufferChunk);
+  }
+
+  return Buffer.concat(chunks, total);
+}
+
+function createReportMediaBackupRecord({
+  reportId,
+  backupKind,
+  sourceUrl,
+  originalName,
+  mime,
+  ext,
+  buffer,
+}) {
+  const existing = db
+    .prepare(
+      `
+      SELECT id, report_id, backup_kind, source_url, original_name, stored_name,
+             file_path, mime, ext, bytes, created_at
+      FROM report_media_backups
+      WHERE report_id=?
+      LIMIT 1
+    `,
+    )
+    .get(String(reportId || "").trim());
+  if (existing) return existing;
+
+  const safeReportId = String(reportId || "").trim();
+  const safeKind = String(backupKind || "").trim() || "media";
+  const safeExt = String(ext || "").trim().toLowerCase();
+  const safeOriginalName = buildReportMediaBackupOriginalName({
+    preferredName: originalName,
+    rawUrl: sourceUrl,
+    ext: safeExt,
+    fallbackBase: safeKind,
+  });
+  const safeMime = normalizeStoredMime(mime);
+  const bytes = Buffer.isBuffer(buffer) ? buffer.length : 0;
+
+  if (!safeReportId || !bytes || !safeExt) {
+    throw new Error("Invalid report media backup.");
+  }
+
+  const id = crypto.randomUUID();
+  const createdAt = Date.now();
+  const storedName = `report_${createdAt}_${id}.${safeExt}`;
+  const filePath = path.join(REPORT_MEDIA_BACKUPS_DIR, storedName);
+
+  fs.writeFileSync(filePath, buffer);
+
+  try {
+    db.prepare(
+      `
+      INSERT INTO report_media_backups (
+        id,
+        report_id,
+        backup_kind,
+        source_url,
+        original_name,
+        stored_name,
+        file_path,
+        mime,
+        ext,
+        bytes,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      id,
+      safeReportId,
+      safeKind,
+      String(sourceUrl || "").trim() || null,
+      safeOriginalName,
+      storedName,
+      filePath,
+      safeMime,
+      safeExt,
+      bytes,
+      createdAt,
+    );
+  } catch (err) {
+    safeUnlink(filePath, "report-media-backups");
+    throw err;
+  }
+
+  return {
+    id,
+    report_id: safeReportId,
+    backup_kind: safeKind,
+    source_url: String(sourceUrl || "").trim() || null,
+    original_name: safeOriginalName,
+    stored_name: storedName,
+    file_path: filePath,
+    mime: safeMime,
+    ext: safeExt,
+    bytes,
+    created_at: createdAt,
+  };
+}
+
+async function captureReportMediaBackupFromCommand({
+  report,
+  commandType,
+  sourceUrl,
+  sourceName = "",
+  sourceMime = "",
+  req = null,
+}) {
+  const reportId = String(report?.id || "").trim();
+  const safeUrl = String(sourceUrl || "").trim();
+  const commandKey = getReportMediaBackupCommandKey(commandType);
+  if (!reportId || !commandKey || !isHttpUrl(safeUrl)) return null;
+
+  const managedUploadRow = req ? findManagedUploadRowByUrl(req, safeUrl) : null;
+  let captureSpec = resolveReportMediaBackupCaptureSpec({
+    commandType,
+    sourceUrl: safeUrl,
+    sourceName:
+      sourceName ||
+      managedUploadRow?.original_name ||
+      managedUploadRow?.stored_name ||
+      "",
+    sourceMime: sourceMime || managedUploadRow?.mime || "",
+  });
+  if (!captureSpec) return null;
+
+  let buffer = null;
+  let finalMime =
+    sourceMime ||
+    managedUploadRow?.mime ||
+    captureSpec.mime ||
+    captureSpec.rule.mimeTypes[0];
+
+  if (managedUploadRow) {
+    const abs = path.resolve(String(managedUploadRow.file_path || ""));
+    if (!isManagedPathInDir(abs, UPLOADS_DIR) || !fs.existsSync(abs)) {
+      throw new Error("The uploaded file for this command is no longer available.");
+    }
+
+    const size = Number(managedUploadRow.bytes || 0);
+    if (size && size > Number(captureSpec.rule.maxBytes || 0)) {
+      throw new Error("That file is too large to preserve with the report.");
+    }
+
+    buffer = fs.readFileSync(abs);
+    if (buffer.length > Number(captureSpec.rule.maxBytes || 0)) {
+      throw new Error("That file is too large to preserve with the report.");
+    }
+  } else {
+    const response = await fetch(safeUrl, {
+      method: "GET",
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      throw new Error(`Could not fetch report media backup (HTTP ${response.status}).`);
+    }
+
+    const responseMime = normalizeStoredMime(
+      response.headers.get("content-type") || sourceMime || captureSpec.mime,
+      captureSpec.mime,
+    );
+    const responseSpec = resolveReportMediaBackupCaptureSpec({
+      commandType,
+      sourceUrl: safeUrl,
+      sourceName,
+      sourceMime: responseMime,
+    });
+    if (responseSpec) {
+      captureSpec = responseSpec;
+    }
+
+    buffer = await readResponseBodyWithLimit(
+      response,
+      captureSpec.rule.maxBytes,
+    );
+    finalMime = responseMime || finalMime;
+  }
+
+  if (!buffer || !buffer.length) {
+    throw new Error("Could not read the media file for this report.");
+  }
+
+  const backup = createReportMediaBackupRecord({
+    reportId,
+    backupKind: commandKey,
+    sourceUrl: safeUrl,
+    originalName: captureSpec.originalName,
+    mime: finalMime,
+    ext: captureSpec.ext,
+    buffer,
+  });
+
+  logEvent({
+    type: "report_media_backup_created",
+    actorUserId: String(report?.reporterUserId || "").trim() || null,
+    targetUserId: String(report?.subjectId || "").trim() || null,
+    req,
+    payload: {
+      reportId,
+      backupId: backup.id,
+      backupKind: commandKey,
+      bytes: Number(backup.bytes || 0),
+    },
+  });
+
+  return backup;
+}
+
+function deleteReportMediaBackups(rows, reason = "cleanup") {
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) return 0;
+
+  const tx = db.transaction((list) => {
+    for (const row of list) {
+      const abs = path.resolve(String(row.file_path || ""));
+      if (!isManagedPathInDir(abs, REPORT_MEDIA_BACKUPS_DIR)) {
+        console.warn(
+          "[report-backups] refusing to unlink outside backups dir:",
+          abs,
+        );
+      } else {
+        safeUnlink(abs, "report-media-backups");
+      }
+
+      deleteReportMediaBackupRow.run(String(row.id || ""));
+    }
+  });
+
+  try {
+    tx(items);
+    console.log("[report-backups] deleted", items.length, "files for", reason);
+    return items.length;
+  } catch (e) {
+    console.warn("[report-backups] delete tx failed:", e?.message || e);
+    return 0;
+  }
+}
+
+function appendCacheBust(url, version) {
+  const base = String(url || "").trim();
+  if (!base) return "";
+  const v = Number(version || 0);
+  if (!v) return base;
+  return `${base}${base.includes("?") ? "&" : "?"}v=${encodeURIComponent(String(v))}`;
+}
+
+function buildControlLinkAssetAdminUrl(discordId, kind, updatedAt) {
+  const user = { discord_id: discordId };
+  switch (kind) {
+    case "avatar":
+      return appendCacheBust(siteAvatarUrl(user, 256), updatedAt);
+    case "banner":
+      return appendCacheBust(siteBannerUrl(user, 1600), updatedAt);
+    case "background":
+      return appendCacheBust(siteBackgroundUrl(user, 1920), updatedAt);
+    default:
+      return "";
+  }
+}
+
+function listControlLinkAssetsForAdmin() {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        discord_id,
+        username,
+        global_name,
+        avatar,
+        control_link_display_name,
+        custom_avatar_path,
+        custom_avatar_mime,
+        custom_avatar_updated_at,
+        custom_banner_path,
+        custom_banner_mime,
+        custom_banner_updated_at,
+        custom_background_path,
+        custom_background_mime,
+        custom_background_updated_at
+      FROM users
+      WHERE
+        TRIM(IFNULL(custom_avatar_path, '')) <> ''
+        OR TRIM(IFNULL(custom_banner_path, '')) <> ''
+        OR TRIM(IFNULL(custom_background_path, '')) <> ''
+    `,
+    )
+    .all();
+
+  const cards = [];
+  let totalBytes = 0;
+  let totalAssets = 0;
+
+  const assetConfigs = [
+    {
+      kind: "avatar",
+      label: "Profile Picture",
+      pathField: "custom_avatar_path",
+      mimeField: "custom_avatar_mime",
+      updatedField: "custom_avatar_updated_at",
+    },
+    {
+      kind: "banner",
+      label: "Banner",
+      pathField: "custom_banner_path",
+      mimeField: "custom_banner_mime",
+      updatedField: "custom_banner_updated_at",
+    },
+    {
+      kind: "background",
+      label: "Background",
+      pathField: "custom_background_path",
+      mimeField: "custom_background_mime",
+      updatedField: "custom_background_updated_at",
+    },
+  ];
+
+  for (const row of rows) {
+    const discordId = String(row.discord_id || "").trim();
+    if (!discordId) continue;
+
+    const assets = [];
+    let latestUpdatedAt = 0;
+
+    for (const config of assetConfigs) {
+      const storedPath = String(row[config.pathField] || "").trim();
+      if (!storedPath) continue;
+
+      const abs = resolveStoredSiteAvatarPath(storedPath);
+      if (!abs || !isManagedPathInDir(abs, SITE_AVATARS_DIR) || !fs.existsSync(abs)) {
+        continue;
+      }
+
+      let bytes = 0;
+      try {
+        bytes = Number(fs.statSync(abs).size || 0);
+      } catch {}
+
+      const updatedAt = Number(row[config.updatedField] || 0);
+      latestUpdatedAt = Math.max(latestUpdatedAt, updatedAt);
+      totalBytes += bytes;
+      totalAssets += 1;
+
+      assets.push({
+        kind: config.kind,
+        label: config.label,
+        url: buildControlLinkAssetAdminUrl(discordId, config.kind, updatedAt),
+        bytes,
+        sizeLabel: formatBytesCompact(bytes),
+        updatedAt,
+        updatedAtLabel: updatedAt
+          ? new Date(updatedAt).toLocaleString()
+          : "Unknown",
+        mime:
+          String(row[config.mimeField] || "").trim() ||
+          siteAvatarMimeFromPath(abs),
+      });
+    }
+
+    if (!assets.length) continue;
+
+    cards.push({
+      user: {
+        discordId,
+        username: String(row.username || "").trim(),
+        globalName: String(row.global_name || "").trim(),
+        displayName: getPreferredDisplayName(row) || discordId,
+        avatarUrl: siteAvatarUrl({ discord_id: discordId }, 64),
+      },
+      latestUpdatedAt,
+      assets,
+    });
+  }
+
+  cards.sort((a, b) => {
+    if (b.latestUpdatedAt !== a.latestUpdatedAt) {
+      return b.latestUpdatedAt - a.latestUpdatedAt;
+    }
+    return String(a.user.displayName || "").localeCompare(
+      String(b.user.displayName || ""),
+    );
+  });
+
+  return {
+    cards,
+    stats: {
+      userCount: cards.length,
+      assetCount: totalAssets,
+      totalBytes,
+      totalBytesLabel: formatBytesCompact(totalBytes),
+    },
+  };
+}
+
+function runUploadsJanitorOnce() {
+  const deleted = purgeExpiredUploadedFiles(UPLOAD_JANITOR_LIMIT);
+  if (deleted > 0) {
+    console.log("[uploads] janitor deleted", deleted, "expired uploads");
+  }
+}
+
+function isManagedUploadUrl(req, rawUrl) {
+  const input = String(rawUrl || "").trim();
+  if (!input) return false;
+
+  try {
+    const url = new URL(input);
+    const proto = String(url.protocol || "").toLowerCase();
+    if (proto !== "http:" && proto !== "https:") return false;
+
+    const requestHost = normalizeHost(req.get("host"));
+    if (!requestHost) return false;
+
+    return (
+      normalizeHost(url.host) === requestHost &&
+      String(url.pathname || "").startsWith("/uploads/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function enforceManagedUrlPolicy({ db, logEvent }, req, res, rawUrl) {
+  if (isManagedUploadUrl(req, rawUrl)) {
+    return { ok: true, status: "managed_upload" };
+  }
+
+  return enforceUrlPolicy({ db, logEvent }, req, res, rawUrl);
+}
+
+function getActorId(req) {
+  const u = req.actorUser || req.user || req.session?.user || null;
+
+  const discordId =
+    u?.discord_id || u?.discordId || u?.id || null;
+
+  if (discordId) return String(discordId);
+
+  if (req.apiUser?.discord_id) return String(req.apiUser.discord_id);
+
+  return `ip:${req.ip}`;
+}
+
+function getRequestActorUserId(req) {
+  return String(
+    req.actorUser?.discord_id ||
+      req.apiUser?.discord_id ||
+      req.user?.discord_id ||
+      req.viewUser?.discord_id ||
+      "",
+  ).trim();
+}
+
+function requestHasDelegatedControlForOwner(req, ownerUserId) {
+  const actorId = getRequestActorUserId(req);
+  const effectiveId = String(req.user?.discord_id || req.viewUser?.discord_id || "").trim();
+  const ownerId = String(ownerUserId || "").trim();
+  if (!actorId || !effectiveId || !ownerId) return false;
+  if (actorId === ownerId) return false;
+  if (effectiveId !== ownerId) return false;
+
+  const row = db
+    .prepare(
+      `
+      SELECT 1
+      FROM leash_delegations
+      WHERE sub_user_id=? AND dom_user_id=?
+      LIMIT 1
+    `,
+    )
+    .get(ownerId, actorId);
+  return !!row;
+}
+
+const getHeavyRow = db.prepare(
+  `SELECT last_ms FROM heavy_cooldowns WHERE actor_id=?`
+);
+const upsertHeavyRow = db.prepare(`
+  INSERT INTO heavy_cooldowns (actor_id, last_ms)
+  VALUES (?, ?)
+  ON CONFLICT(actor_id) DO UPDATE SET last_ms=excluded.last_ms
+`);
+
+const enforceHeavyCooldown = db.transaction((actorId, now) => {
+  const row = getHeavyRow.get(actorId);
+  const last = row?.last_ms ?? 0;
+  const elapsed = now - last;
+
+  if (elapsed < HEAVY_COOLDOWN_MS) {
+    return { ok: false, retryAfterMs: HEAVY_COOLDOWN_MS - elapsed };
+  }
+
+  upsertHeavyRow.run(actorId, now);
+  return { ok: true, retryAfterMs: 0 };
+});
+
+function heavyCooldown(req, res, next) {
+  const actorId = getActorId(req);
+  const now = Date.now();
+
+  let result;
+  try {
+    result = enforceHeavyCooldown(actorId, now);
+  } catch (e) {
+    return res.status(500).json({ ok: false, code: "cooldown_error" });
+  }
+
+  if (!result.ok) {
+    res.set("Retry-After", String(Math.ceil(result.retryAfterMs / 1000)));
+    return res.status(429).json({
+      ok: false,
+      code: "heavy_cooldown",
+      message: "Please wait before sending another heavy command.",
+      retryAfterMs: result.retryAfterMs,
+    });
+  }
+
+  next();
 }
 
 function getBoardMessages(ownerUserId, limit = 10) {
@@ -714,17 +5709,658 @@ function getBoardMessages(ownerUserId, limit = 10) {
     SELECT id, body, created_at
     FROM device_message_board
     WHERE owner_user_id=?
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, id DESC
     LIMIT ?
   `,
     )
     .all(ownerUserId, limit);
 }
 
+function getClientBoardMessages(ownerUserId, limit = 100) {
+  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 100));
+  const owner =
+    db
+      .prepare(
+        `
+        SELECT discord_id, username, global_name, control_link_display_name
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(ownerUserId) || { discord_id: ownerUserId };
+  const authorName = getPreferredDisplayName(owner) || "Unknown user";
+
+  return getBoardMessages(ownerUserId, safeLimit)
+    .slice()
+    .reverse()
+    .map((row) => ({
+      id: String(row.id),
+      message: String(row.body || ""),
+      authorName,
+      createdAt: Number(row.created_at || 0),
+    }));
+}
+
+const CONTROL_LINK_COMMAND_HISTORY_TYPES = Object.freeze({
+  command_message: "Send Message",
+  command_subliminal_message: "Send Subliminal Message",
+  command_url: "Open URL",
+  command_image: "Send Image Popup",
+  command_fullscreen_popup: "Send Fullscreen Popup",
+  command_spiral_overlay: "Spiral Overlay",
+  command_set_wallpaper: "Set Wallpaper",
+  command_screenshot: "Take Screenshot",
+  command_webcam_capture: "Webcam Capture",
+  command_play_sound: "Play Sound Effect",
+  command_play_sound_loop: "Play Sound Loop",
+  command_write_for_me: "Write For Me",
+});
+const CONTROL_LINK_HISTORY_EVENT_TYPE_BY_COMMAND_TYPE = Object.freeze({
+  popup: "command_message",
+  subliminal_message: "command_subliminal_message",
+  open_url: "command_url",
+  image_popup: "command_image",
+  fullscreen_popup: "command_fullscreen_popup",
+  spiral_overlay: "command_spiral_overlay",
+  set_wallpaper: "command_set_wallpaper",
+  screenshot: "command_screenshot",
+  webcam_capture: "command_webcam_capture",
+  play_sound: "command_play_sound",
+  play_sound_loop: "command_play_sound_loop",
+  write_for_me: "command_write_for_me",
+});
+const CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS = Object.keys(
+  CONTROL_LINK_COMMAND_HISTORY_TYPES,
+);
+
+function normalizeSubliminalMessagesPayload(rawValue) {
+  const rawList = Array.isArray(rawValue)
+    ? rawValue
+    : rawValue == null
+      ? []
+      : [rawValue];
+  return rawList
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+}
+
+function buildDeliveredCommandHistory({
+  commandPayload,
+  commandId = null,
+  sourceKind = null,
+  sourceId = null,
+} = {}) {
+  const payload = commandPayload && typeof commandPayload === "object"
+    ? commandPayload
+    : null;
+  const commandType = String(payload?.type || "").trim();
+  const eventType = CONTROL_LINK_HISTORY_EVENT_TYPE_BY_COMMAND_TYPE[commandType];
+  if (!eventType) return null;
+
+  const historyPayload = {};
+  const safeCommandId = String(commandId || "").trim();
+  if (safeCommandId) historyPayload.commandId = safeCommandId;
+
+  if (commandType === "popup" || commandType === "write_for_me") {
+    const message = String(payload?.message || "").trim();
+    if (message) historyPayload.message = message;
+  }
+
+  if (
+    commandType === "subliminal_message"
+  ) {
+    const messages = normalizeSubliminalMessagesPayload(payload?.messages);
+    if (messages.length) {
+      historyPayload.messages = messages;
+    }
+  }
+
+  if (
+    commandType === "open_url" ||
+    commandType === "image_popup" ||
+    commandType === "fullscreen_popup" ||
+    commandType === "spiral_overlay" ||
+    commandType === "set_wallpaper"
+  ) {
+    const url = String(payload?.url || "").trim();
+    const originalUrl = String(payload?.originalUrl || "").trim();
+    const resolvedUrl = String(payload?.resolvedUrl || "").trim();
+    const mediaUrlResolvedBy = String(payload?.mediaUrlResolvedBy || "").trim();
+    const resolvedUrlHost = String(payload?.resolvedUrlHost || "").trim();
+
+    if (originalUrl) {
+      historyPayload.url = originalUrl;
+    } else if (url) {
+      historyPayload.url = url;
+    }
+    if (resolvedUrl && resolvedUrl !== historyPayload.url) {
+      historyPayload.resolvedUrl = resolvedUrl;
+    }
+    if (mediaUrlResolvedBy) {
+      historyPayload.mediaUrlResolvedBy = mediaUrlResolvedBy;
+    }
+    if (resolvedUrlHost) {
+      historyPayload.resolvedUrlHost = resolvedUrlHost;
+    }
+  }
+
+  if (commandType === "play_sound") {
+    const kind = String(payload?.kind || "").trim();
+    const name = String(payload?.name || "").trim();
+    const url = String(payload?.url || "").trim();
+    if (kind) historyPayload.kind = kind;
+    if (name) historyPayload.name = name;
+    if (url) historyPayload.url = url;
+  }
+
+  if (commandType === "play_sound_loop") {
+    const kind = String(payload?.kind || "").trim();
+    const name = String(payload?.name || "").trim();
+    const url = String(payload?.url || "").trim();
+    const baseHz = Number(payload?.baseHz);
+    const beatHz = Number(payload?.beatHz);
+    if (kind) historyPayload.kind = kind;
+    if (name) historyPayload.name = name;
+    if (url) historyPayload.url = url;
+    if (kind === "tone" && Number.isFinite(baseHz)) historyPayload.baseHz = baseHz;
+    if (kind === "tone" && Number.isFinite(beatHz)) historyPayload.beatHz = beatHz;
+  }
+
+  if (commandType === "write_for_me") {
+    const times = Number(payload?.times || 0);
+    if (Number.isFinite(times) && times > 0) {
+      historyPayload.times = times;
+    }
+  }
+
+  const safeSourceKind = String(sourceKind || "").trim();
+  const safeSourceId = String(sourceId || "").trim();
+  if (safeSourceKind === "group") {
+    historyPayload.sourceKind = "group";
+    if (safeSourceId) {
+      historyPayload.groupKey = safeSourceId;
+      const groupLabel = String(
+        loadGroupsCatalog().get(safeSourceId)?.label || "",
+      ).trim();
+      if (groupLabel) {
+        historyPayload.groupLabel = groupLabel;
+      }
+    }
+  }
+
+  return {
+    type: eventType,
+    payload: historyPayload,
+  };
+}
+
+function buildDeliveredDirectCommandHistory({
+  commandPayload,
+  commandId = null,
+} = {}) {
+  return buildDeliveredCommandHistory({
+    commandPayload,
+    commandId,
+  });
+}
+
+function logDeliveredDirectCommandHistory({
+  actorUserId = null,
+  targetUserId = null,
+  pairCode = null,
+  commandPayload,
+  commandId = null,
+  req = null,
+} = {}) {
+  const event = buildDeliveredDirectCommandHistory({
+    commandPayload,
+    commandId,
+  });
+  if (!event) return false;
+
+  logEvent({
+    type: event.type,
+    actorUserId,
+    targetUserId,
+    pairCode,
+    req,
+    payload: event.payload,
+  });
+  return true;
+}
+
+function logDeliveredGroupCommandHistory({
+  actorUserId = null,
+  targetUserId = null,
+  groupKey = null,
+  commandPayload,
+  commandId = null,
+  req = null,
+} = {}) {
+  const event = buildDeliveredCommandHistory({
+    commandPayload,
+    commandId,
+    sourceKind: "group",
+    sourceId: groupKey,
+  });
+  if (!event) return false;
+
+  logEvent({
+    type: event.type,
+    actorUserId,
+    targetUserId,
+    req,
+    payload: event.payload,
+  });
+  return true;
+}
+
+function getRecentReceivedCommandHistory(ownerUserId, limit = 15) {
+  const uid = String(ownerUserId || "").trim();
+  const max = Math.max(1, Math.min(Number(limit || 0) || 15, 15));
+  if (!uid) return [];
+
+  const rows = db
+    .prepare(
+      `
+      SELECT id, created_at, type, actor_user_id, payload
+      FROM events
+      WHERE target_user_id=?
+        AND type IN (${CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS.map(() => "?").join(",")})
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `,
+    )
+    .all(uid, ...CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS, max);
+  const eventIds = rows
+    .map((row) => String(row?.id || "").trim())
+    .filter(Boolean);
+  const likedEventIds = new Set();
+  if (eventIds.length) {
+    const placeholders = eventIds.map(() => "?").join(",");
+    const likeRows = db
+      .prepare(
+        `
+        SELECT event_id
+        FROM command_history_likes
+        WHERE liker_user_id=?
+          AND event_id IN (${placeholders})
+      `,
+      )
+      .all(uid, ...eventIds);
+    for (const likeRow of likeRows) {
+      likedEventIds.add(String(likeRow?.event_id || "").trim());
+    }
+  }
+
+  return rows.map((row) => {
+    const payload = tryJson(row.payload) || {};
+    const messages = normalizeSubliminalMessagesPayload(payload?.messages);
+    const message =
+      messages.length === 1
+        ? messages[0]
+        : String(payload?.message || "").trim();
+    const url = String(payload?.url || "").trim();
+    const commandId = String(payload?.commandId || "").trim();
+    const sourceKind = String(payload?.sourceKind || "").trim();
+    const groupKey = String(payload?.groupKey || "").trim();
+    const storedGroupLabel = String(payload?.groupLabel || "").trim();
+    const groupLabel = groupKey
+      ? storedGroupLabel ||
+        String(getResolvedGroupCatalogEntry(groupKey)?.label || "").trim()
+      : "";
+    const createdAt = Number(row?.created_at || 0);
+    const actorUserId = String(row?.actor_user_id || "").trim();
+    const eventId = String(row?.id || "").trim();
+
+    return {
+      id: eventId,
+      type: String(row?.type || "").trim(),
+      typeLabel:
+        CONTROL_LINK_COMMAND_HISTORY_TYPES[String(row?.type || "").trim()] ||
+        "Command",
+      commandId: commandId || null,
+      sourceKind: sourceKind || (groupKey ? "group" : null),
+      groupKey: groupKey || null,
+      groupLabel: groupLabel || null,
+      message: message || null,
+      messages,
+      url: url || null,
+      liked: likedEventIds.has(eventId),
+      canLike: !!actorUserId && actorUserId !== uid,
+      createdAt,
+      createdIso: createdAt ? new Date(createdAt).toISOString() : "",
+    };
+  });
+}
+
+function findReceivedCommandHistoryEvent(ownerUserId, eventId) {
+  const ownerId = String(ownerUserId || "").trim();
+  const id = String(eventId || "").trim();
+  if (!ownerId || !id) return null;
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        e.id,
+        e.type,
+        e.created_at,
+        e.actor_user_id,
+        e.target_user_id,
+        e.pair_code,
+        e.payload,
+        actor.username AS actor_username,
+        actor.global_name AS actor_global_name,
+        actor.control_link_display_name AS actor_control_link_display_name,
+        pc.code_plain AS actor_pair_code
+      FROM events e
+      LEFT JOIN users actor ON actor.discord_id = e.actor_user_id
+      LEFT JOIN pair_codes pc ON pc.user_id = e.actor_user_id
+      WHERE e.id=?
+        AND e.target_user_id=?
+        AND e.type IN (${CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS.map(() => "?").join(",")})
+      LIMIT 1
+    `,
+    )
+    .get(id, ownerId, ...CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS);
+
+  if (!row) return null;
+
+  return {
+    ...row,
+    payloadObj: tryJson(row.payload) || {},
+  };
+}
+
+function isCommandSenderBlockedByOwner(ownerUserId, actorUserId) {
+  const ownerId = String(ownerUserId || "").trim();
+  const actorId = String(actorUserId || "").trim();
+  if (!ownerId || !actorId || ownerId === actorId) return false;
+
+  const row = db
+    .prepare(
+      `
+      SELECT 1
+      FROM command_sender_blocks
+      WHERE owner_user_id=? AND blocked_user_id=?
+    `,
+    )
+    .get(ownerId, actorId);
+
+  return !!row;
+}
+
+function createCommandSenderBlock({
+  ownerUserId,
+  blockedUserId,
+  sourceEventId = null,
+  req = null,
+}) {
+  const ownerId = String(ownerUserId || "").trim();
+  const blockedId = String(blockedUserId || "").trim();
+  const safeSourceEventId = String(sourceEventId || "").trim() || null;
+  if (!ownerId || !blockedId || ownerId === blockedId) {
+    throw new Error("That sender cannot be blocked.");
+  }
+
+  const now = Date.now();
+  db.prepare(
+    `
+      INSERT OR IGNORE INTO command_sender_blocks (
+        owner_user_id,
+        blocked_user_id,
+        source_event_id,
+        created_at
+      ) VALUES (?, ?, ?, ?)
+    `,
+  ).run(ownerId, blockedId, safeSourceEventId, now);
+
+  logEvent({
+    type: "command_sender_blocked",
+    actorUserId: ownerId,
+    targetUserId: blockedId,
+    req,
+    payload: {
+      sourceEventId: safeSourceEventId,
+    },
+  });
+
+  return {
+    ownerUserId: ownerId,
+    blockedUserId: blockedId,
+    sourceEventId: safeSourceEventId,
+    createdAt: now,
+  };
+}
+
+const insertCommandHistoryLikeStmt = db.prepare(`
+  INSERT OR IGNORE INTO command_history_likes (
+    event_id,
+    liked_user_id,
+    liker_user_id,
+    source_kind,
+    source_id,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?, ?)
+`);
+const incrementCommandLikesTotalStmt = db.prepare(`
+  UPDATE users
+  SET command_likes_total = IFNULL(command_likes_total, 0) + 1
+  WHERE discord_id=?
+`);
+const selectCommandLikesTotalStmt = db.prepare(`
+  SELECT IFNULL(command_likes_total, 0) AS n
+  FROM users
+  WHERE discord_id=?
+`);
+
+const recordCommandHistoryLikeTx = db.transaction((row) => {
+  const info = insertCommandHistoryLikeStmt.run(
+    row.eventId,
+    row.likedUserId,
+    row.likerUserId,
+    row.sourceKind,
+    row.sourceId,
+    row.createdAt,
+  );
+  const inserted = Number(info?.changes || 0) > 0;
+  if (inserted) {
+    incrementCommandLikesTotalStmt.run(row.likedUserId);
+  }
+  const totalRow = selectCommandLikesTotalStmt.get(row.likedUserId);
+  return {
+    inserted,
+    likesTotal: Number(totalRow?.n || 0),
+  };
+});
+
+function getUserSummaryForCommandLike(userId) {
+  const safeUserId = String(userId || "").trim();
+  if (!safeUserId) return null;
+
+  return db
+    .prepare(
+      `
+      SELECT discord_id, username, global_name, control_link_display_name
+      FROM users
+      WHERE discord_id=?
+      LIMIT 1
+    `,
+    )
+    .get(safeUserId) || { discord_id: safeUserId };
+}
+
+function createCommandHistoryLike({
+  historyEvent,
+  likerUserId,
+  req = null,
+} = {}) {
+  const eventId = String(historyEvent?.id || "").trim();
+  const likedUserId = String(historyEvent?.actor_user_id || "").trim();
+  const safeLikerUserId = String(likerUserId || "").trim();
+
+  if (!eventId) {
+    throw new Error("Command history entry not found.");
+  }
+  if (!likedUserId || !safeLikerUserId || likedUserId === safeLikerUserId) {
+    throw new Error("That command cannot be liked.");
+  }
+
+  const payload = historyEvent?.payloadObj || tryJson(historyEvent?.payload) || {};
+  const groupKey = String(payload?.groupKey || "").trim();
+  const sourceKind =
+    String(payload?.sourceKind || "").trim() === "group" || groupKey
+      ? "group"
+      : "direct";
+  const sourceId = sourceKind === "group" ? groupKey || null : safeLikerUserId;
+  const createdAt = Date.now();
+
+  const result = recordCommandHistoryLikeTx({
+    eventId,
+    likedUserId,
+    likerUserId: safeLikerUserId,
+    sourceKind,
+    sourceId,
+    createdAt,
+  });
+
+  if (!result.inserted) {
+    return {
+      ok: true,
+      alreadyLiked: true,
+      liked: true,
+      likesTotal: result.likesTotal,
+      likedUserId,
+      likerUserId: safeLikerUserId,
+    };
+  }
+
+  const likerUser = getUserSummaryForCommandLike(safeLikerUserId);
+  const likerDisplayName = getPreferredDisplayName(likerUser);
+  const groupLabel = sourceKind === "group"
+    ? String(
+        payload?.groupLabel ||
+          getResolvedGroupCatalogEntry(groupKey)?.label ||
+          groupKey ||
+          "",
+      ).trim()
+    : "";
+  const actionUrl = sourceKind === "group"
+    ? groupKey
+      ? `/group/${encodeURIComponent(groupKey)}`
+      : ""
+    : buildControlLinkPathForUser(safeLikerUserId);
+
+  try {
+    upsertCommandLikeNotification({
+      likedUserId,
+      likerUserId: safeLikerUserId,
+      likerDisplayName,
+      sourceKind,
+      sourceId,
+      groupLabel,
+      actionUrl,
+      eventId,
+    });
+  } catch (notificationErr) {
+    console.warn("[command-likes] notification failed:", notificationErr?.message || notificationErr);
+  }
+
+  logEvent({
+    type: "command_history_liked",
+    actorUserId: safeLikerUserId,
+    targetUserId: likedUserId,
+    req,
+    payload: {
+      eventId,
+      sourceKind,
+      sourceId,
+      likesTotal: result.likesTotal,
+    },
+  });
+
+  return {
+    ok: true,
+    alreadyLiked: false,
+    liked: true,
+    likesTotal: result.likesTotal,
+    likedUserId,
+    likerUserId: safeLikerUserId,
+  };
+}
+
+function filterTargetsBlockedByActor(targets, actorUserId) {
+  const actorId = String(actorUserId || "").trim();
+  const list = Array.isArray(targets) ? targets : [];
+  if (!actorId || !list.length) {
+    return { allowedTargets: list, blockedOwnerUserIds: [] };
+  }
+
+  const ownerIds = Array.from(
+    new Set(
+      list
+        .map((target) => String(target?.ownerUserId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!ownerIds.length) {
+    return { allowedTargets: list, blockedOwnerUserIds: [] };
+  }
+
+  const placeholders = ownerIds.map(() => "?").join(",");
+  const blockedRows = db
+    .prepare(
+      `
+      SELECT owner_user_id
+      FROM command_sender_blocks
+      WHERE blocked_user_id=?
+        AND owner_user_id IN (${placeholders})
+    `,
+    )
+    .all(actorId, ...ownerIds);
+
+  const blockedOwnerIds = new Set(
+    blockedRows
+      .map((row) => String(row.owner_user_id || "").trim())
+      .filter(Boolean),
+  );
+
+  return {
+    allowedTargets: list.filter(
+      (target) => !blockedOwnerIds.has(String(target?.ownerUserId || "").trim()),
+    ),
+    blockedOwnerUserIds: Array.from(blockedOwnerIds),
+  };
+}
+
+function filterTargetsByWhitelist(targets, actorUserId) {
+  const actorId = String(actorUserId || "").trim();
+  const list = Array.isArray(targets) ? targets : [];
+  if (!actorId || !list.length) {
+    return { allowedTargets: list, whitelistDeniedOwnerUserIds: [] };
+  }
+
+  const allowedTargets = [];
+  const whitelistDeniedOwnerUserIds = [];
+
+  for (const target of list) {
+    const ownerId = String(target?.ownerUserId || "").trim();
+    if (!ownerId || isAllowedByWhitelist(ownerId, actorId)) {
+      allowedTargets.push(target);
+      continue;
+    }
+    whitelistDeniedOwnerUserIds.push(ownerId);
+  }
+
+  return { allowedTargets, whitelistDeniedOwnerUserIds };
+}
+
 const postBoardMessageTx = db.transaction((ownerUserId, body) => {
   const now = Date.now();
 
-  db.prepare(
+  const insertResult = db.prepare(
     `
     INSERT INTO device_message_board (owner_user_id, body, created_at)
     VALUES (?, ?, ?)
@@ -740,23 +6376,143 @@ const postBoardMessageTx = db.transaction((ownerUserId, body) => {
         FROM device_message_board
         WHERE owner_user_id=?
         ORDER BY created_at DESC, id DESC
-        LIMIT 10
+        LIMIT 100
       )
   `,
   ).run(ownerUserId, ownerUserId);
 
-  return now;
+  return {
+    id: String(insertResult.lastInsertRowid),
+    createdAt: now,
+  };
+});
+
+function saveResponseToDisk({ ownerUserId, actorUserId, deviceId, commandId, responseType, mime, b64, width, height, monitors }) {
+  if (!ownerUserId) return null;
+  if (!b64 || typeof b64 !== "string") return null;
+  if (mime !== "image/webp") return null;
+
+  let buf;
+  try {
+    buf = b64ToBuffer(b64);
+  } catch {
+    return null;
+  }
+
+  const MAX = 12 * 1024 * 1024;
+  if (buf.length <= 0 || buf.length > MAX) return null;
+
+  const id = crypto.randomUUID();
+  const filename = `resp_${Date.now()}_${id}.webp`;
+  const filePath = path.join(RESPONSES_DIR, filename);
+
+  fs.writeFileSync(filePath, buf);
+
+  db.prepare(`
+    INSERT INTO device_responses (
+      id, created_at, owner_user_id, actor_user_id, device_id, command_id,
+      response_type, mime, file_path, bytes, width, height, monitors
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    Date.now(),
+    String(ownerUserId),
+    actorUserId ? String(actorUserId) : null,
+    deviceId ? String(deviceId) : null,
+    commandId ? String(commandId) : null,
+    String(responseType || "unknown"),
+    String(mime),
+    String(filePath),
+    buf.length,
+    Number(width || 0) || null,
+    Number(height || 0) || null,
+    Number(monitors || 0) || null,
+  );
+
+  return { id, filename, bytes: buf.length };
+}
+
+function saveResponseFromAck({ ownerUserId, deviceId, ack }) {
+  if (!ack || ack.type !== "ack") return null;
+
+  const d = ack.details || null;
+  if (!d || typeof d !== "object") return null;
+
+  const kind = String(d.kind || "").trim();
+  const mime = String(d.mime || "image/webp");
+  const b64 = d.webp_b64;
+  const commandId = ack.commandId ? String(ack.commandId) : null;
+
+  if (!b64) return null;
+
+  if (kind !== "screenshot" && kind !== "webcam_capture") return null;
+
+  return saveResponseToDisk({
+    ownerUserId,
+    actorUserId: resolveActorUserIdByCommandId(commandId),
+    deviceId,
+    commandId,
+    responseType: kind,
+    mime,
+    b64,
+    width: d.width,
+    height: d.height,
+    monitors: d.monitors,
+  });
+}
+
+const {
+  getLastReportedCapabilitiesForOwner,
+  getLastReportedCapabilitiesForWhitelistedSenders,
+  getReportedCapabilitiesForOwner,
+  getReportedCapabilitiesForWhitelistedSenders,
+  getUnionCapsForOwnerOnline,
+  getUnionCapsForWhitelistedSendersOnline,
+  groupHasReportedCapability,
+  isDeviceOnline,
+  lastCapsByUserId,
+  registerRealtimeServer,
+  resolveOwnerUserIdByDeviceId,
+  wsByDeviceId,
+} = createRealtimeService({
+  db,
+  hmac,
+  handleIncomingAck,
+  saveResponseFromAck,
+  handleDeviceConnected({ ownerUserId, at }) {
+    const ts = Number(at || Date.now()) || Date.now();
+    purgeExpiredQueuedCommandsForUser(ownerUserId, { now: ts, log: true });
+    markOwnerOnlineActivity(ownerUserId, ts);
+    void drainQueuedCommandsForUser(ownerUserId);
+  },
+  handleOwnerActivity({ ownerUserId, at, cause }) {
+    if (String(cause || "").trim() === "connect") return;
+    markOwnerOnlineActivity(ownerUserId, at);
+  },
 });
 
 function bootstrapAdminsFromEnv() {
   const raw = String(process.env.BOOTSTRAP_ADMINS || "").trim();
   if (!raw) return;
 
-  const ids = raw
+  const ids = Array.from(new Set(raw
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((id) => isDiscordId(id))));
   const now = Date.now();
+  if (!ids.length) return;
+
+  const ensureUser = db.prepare(`
+    INSERT INTO users (
+      discord_id,
+      username,
+      global_name,
+      avatar,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, NULL, NULL, ?, ?)
+    ON CONFLICT(discord_id) DO NOTHING
+  `);
 
   const upsert = db.prepare(`
     INSERT INTO admins (discord_id, created_at, is_bootstrap)
@@ -766,7 +6522,10 @@ function bootstrapAdminsFromEnv() {
   `);
 
   const tx = db.transaction(() => {
-    for (const id of ids) upsert.run(id, now);
+    for (const id of ids) {
+      ensureUser.run(id, id, now, now);
+      upsert.run(id, now);
+    }
   });
   tx();
 
@@ -774,130 +6533,20 @@ function bootstrapAdminsFromEnv() {
 }
 bootstrapAdminsFromEnv();
 
-function wantsJson(req) {
-  const accept = String(req.headers["accept"] || "");
-  const xr = String(req.headers["x-requested-with"] || "");
-  return (
-    accept.includes("application/json") || xr.toLowerCase() === "xmlhttprequest"
-  );
-}
-
-function isInvitedUser(u) {
-  return !!(u && u.invited_at);
-}
-
-function loginRequiredPage(req, res, opts = {}) {
-  const title = opts.title || "Login required";
-  const nextUrl = opts.nextUrl || req.originalUrl || "/";
-  const ogUrl = `https://playctrl.me${nextUrl}`;
-
-  /*return res
-    .status(200)
-    .type("html")
-    .send(
-      layout({
-        title,
-        user: req.viewUser,
-        isAdmin: req.viewIsAdmin,
-        meta: {
-          ogTitle: opts.ogTitle || "PlayCtrl.me",
-          ogDesc: opts.ogDesc || "Login required to view this page.",
-          ogUrl,
-          ogImage: opts.ogImage || "https://playctrl.me/og.png",
-        },
-        body: `
-      <div class="card">
-        <div class="cardHd">${escapeHtml(title)}</div>
-        <div class="cardBd">
-          <p class="muted">${escapeHtml(opts.message || "You must login to access this page.")}</p>
-
-          <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
-            <a class="btnLink" href="/auth/discord?next=${encodeURIComponent(nextUrl)}">Login with Discord</a>
-            <a class="btnLink" href="/">Home</a>
-          </div>
-        </div>
-      </div>
-    `,
-      }),
-    );*/
-
-  return res.status(403).type("html").send(`
-    <h1>Access denied</h1>
-    <p>You must login to access this page.</p>
-  `);
-}
-
-function inviteGate(req, res, next) {
-  const path = req.path || req.url || "";
-
-  if (
-    path === "/" ||
-    path === "/api/pair" ||
-    path.startsWith("/auth/discord") ||
-    path === "/invite/redeem" ||
-    path === "/invite" ||
-    path.startsWith("/upd/") ||
-    path.startsWith("/invite/") ||
-    path.startsWith("/public/") ||
-    path === "/logout" ||
-    path.startsWith("/assets/") ||
-    path.startsWith("/api/")
-  ) {
-    return next();
-  }
-
-  if (!req.viewUser) {
-    const shareable =
-      path.startsWith("/device/") ||
-      path === "/discover" ||
-      path === "/profile";
-
-    if (req.method === "GET" && shareable) {
-      return loginRequiredPage(req, res, {
-        title: "Login required",
-        message: "Login to view this page.",
-        ogTitle: "PlayCtrl.me",
-        ogDesc: "Login required to view this PlayCtrl.me page.",
-      });
-    }
-
-    return res.redirect("/auth/discord");
-  }
-
-  if (req.viewIsAdmin) return next();
-
-  if (typeof isEnrollmentOpen === "function" && isEnrollmentOpen()) {
-    if (!req.viewUser.enrolled_at) {
-      try {
-        markUserEnrolled(req.viewUser.discord_id);
-        req.viewUser.enrolled_at = Date.now();
-      } catch (e) {}
-    }
-    return next();
-  }
-
-  if (!isInvitedUser(req.viewUser) && !isEnrolledUser(req.viewUser)) {
-    if (req.method === "GET") return res.redirect("/invite");
-    return res.status(403).send("Invite required.");
-  }
-
-  next();
-}
-
-function isAdmin(discordId) {
-  if (!discordId) return false;
-  const row = db
-    .prepare("SELECT discord_id FROM admins WHERE discord_id=?")
-    .get(discordId);
-  return !!row;
-}
-
-function requireAdmin(req, res, next) {
-  if (!req.user) return res.redirect("/auth/discord");
-  if (!isAdmin(req.user.discord_id))
-    return res.status(403).type("html").send("Admins only.");
-  next();
-}
+const {
+  inviteGate,
+  isAdmin,
+  requireAdmin,
+  requireBootstrapAdmin,
+  requireDiscord,
+  wantsJson,
+} = createAuthMiddleware({
+  db,
+  renderWithLayout,
+  isEnrolledUser,
+  markUserEnrolled,
+  isEnrollmentOpen,
+});
 
 function isDiscordId(s) {
   return typeof s === "string" && /^\d{10,20}$/.test(s.trim());
@@ -908,6 +6557,13 @@ function isWhitelistEnabled(ownerId) {
     .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
     .get(ownerId);
   return !!row?.whitelist_enabled;
+}
+
+function normalizeWhitelistSearchQuery(rawQuery) {
+  return String(rawQuery || "")
+    .trim()
+    .replace(/^@+/, "")
+    .trim();
 }
 
 function getWhitelist(ownerId) {
@@ -922,6 +6578,84 @@ function getWhitelist(ownerId) {
   `,
     )
     .all(ownerId);
+}
+
+function normalizeWhitelistUserItem(userLike) {
+  const discordId = String(
+    userLike?.discord_id || userLike?.allowed_id || "",
+  ).trim();
+  if (!discordId) return null;
+
+  const username = String(userLike?.username || "").trim();
+  const globalName = String(userLike?.global_name || "").trim();
+
+  return {
+    discordId,
+    username,
+    globalName,
+    displayName: globalName || username || discordId,
+    avatarUrl: siteAvatarUrl({ discord_id: discordId }, 64),
+    createdAt: Number(userLike?.created_at || 0) || 0,
+    alreadyWhitelisted: !!Number(userLike?.already_whitelisted || 0),
+  };
+}
+
+function searchWhitelistUsers(ownerId, rawQuery, limit = WHITELIST_SEARCH_RESULT_LIMIT) {
+  const query = normalizeWhitelistSearchQuery(rawQuery);
+  if (query.length < WHITELIST_SEARCH_MIN_LEN) return [];
+
+  const safeLimit = Math.max(
+    1,
+    Math.min(Number(limit) || WHITELIST_SEARCH_RESULT_LIMIT, 24),
+  );
+  const escapedQuery = query.replace(/[\\%_]/g, "\\$&");
+  const like = `%${escapedQuery}%`;
+  const starts = `${escapedQuery}%`;
+
+  return db
+    .prepare(
+      `
+        SELECT
+          u.discord_id,
+          u.username,
+          u.global_name,
+          CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM user_whitelist w
+              WHERE w.owner_id = @ownerId AND w.allowed_id = u.discord_id
+            ) THEN 1
+            ELSE 0
+          END AS already_whitelisted
+        FROM users u
+        WHERE u.discord_id != @ownerId
+          AND (
+            u.discord_id LIKE @like ESCAPE '\\'
+            OR IFNULL(u.username, '') LIKE @like ESCAPE '\\'
+            OR IFNULL(u.global_name, '') LIKE @like ESCAPE '\\'
+          )
+        ORDER BY
+          CASE
+            WHEN u.discord_id = @exact THEN 0
+            WHEN LOWER(IFNULL(u.username, '')) = LOWER(@exact) THEN 1
+            WHEN LOWER(IFNULL(u.global_name, '')) = LOWER(@exact) THEN 2
+            WHEN LOWER(IFNULL(u.username, '')) LIKE LOWER(@starts) ESCAPE '\\' THEN 3
+            WHEN LOWER(IFNULL(u.global_name, '')) LIKE LOWER(@starts) ESCAPE '\\' THEN 4
+            ELSE 5
+          END ASC,
+          already_whitelisted ASC,
+          COALESCE(u.global_name, u.username, u.discord_id) COLLATE NOCASE ASC
+        LIMIT ${safeLimit}
+      `,
+    )
+    .all({
+      ownerId,
+      like,
+      starts,
+      exact: query,
+    })
+    .map(normalizeWhitelistUserItem)
+    .filter(Boolean);
 }
 
 function isAllowedByWhitelist(ownerId, actorId) {
@@ -943,6 +6677,27 @@ function isAllowedByWhitelist(ownerId, actorId) {
     .get(ownerId, actorId);
 
   return !!row;
+}
+
+function getCommandBlockMessage() {
+  return "This user has blocked you.";
+}
+
+function denyIfBlockedCommandSender(res, ownerId, actorId, { json = false } = {}) {
+  if (!isCommandSenderBlockedByOwner(ownerId, actorId)) return false;
+
+  const message = getCommandBlockMessage();
+  if (json) {
+    res.status(403).json({
+      ok: false,
+      code: "BLOCKED_BY_RECIPIENT",
+      message,
+    });
+    return true;
+  }
+
+  res.status(403).send(message);
+  return true;
 }
 
 function logEvent({
@@ -977,12 +6732,1697 @@ function logEvent({
   );
 }
 
+function requestLooksLikeLinkPreview(req) {
+  const ua = String(req?.headers?.["user-agent"] || "").toLowerCase();
+  if (!ua) return false;
+
+  return [
+    "discordbot",
+    "twitterbot",
+    "slackbot",
+    "slack-imgproxy",
+    "facebookexternalhit",
+    "linkedinbot",
+    "skypeuripreview",
+    "telegrambot",
+    "whatsapp",
+  ].some((token) => ua.includes(token));
+}
+
 function discordAvatarUrl(u, size = 64) {
   if (u && u.avatar) {
     return `https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=${size}`;
   }
 
   return "https://cdn.discordapp.com/embed/avatars/0.png";
+}
+
+const SITE_AVATAR_EXT_BY_MIME = Object.freeze({
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/svg+xml": "svg",
+});
+
+const SITE_AVATAR_MIME_BY_EXT = Object.freeze({
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+});
+
+const CUSTOM_SITE_AVATAR_ALLOWED_EXTS = new Set(["png", "jpg", "webp", "gif"]);
+const CUSTOM_SITE_AVATAR_ALLOWED_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+const CONTROL_LINK_THEME_OPTIONS = Object.freeze([
+  { key: "purple", label: "Purple", color: "#a78bfa" },
+  { key: "blue", label: "Blue", color: "#60a5fa" },
+  { key: "green", label: "Green", color: "#34d399" },
+  { key: "pink", label: "Pink", color: "#f472b6" },
+]);
+
+const TOP_FAVORITES_LIMIT = 3;
+const COMMAND_MILESTONE_BADGE_LEVELS = Object.freeze([
+  { threshold: 50, label: "50" },
+  { threshold: 100, label: "100" },
+  { threshold: 200, label: "200" },
+  { threshold: 500, label: "500" },
+  { threshold: 750, label: "750" },
+  { threshold: 1000, label: "1000" },
+  { threshold: 2000, label: "2000" },
+  { threshold: 5000, label: "5000+" },
+]);
+
+const CONTROL_LINK_THEME_KEYS = new Set(
+  CONTROL_LINK_THEME_OPTIONS.map((theme) => theme.key),
+);
+
+function normalizeControlLinkTheme(value) {
+  const key = String(value || "")
+    .trim()
+    .toLowerCase();
+  return CONTROL_LINK_THEME_KEYS.has(key) ? key : "purple";
+}
+
+function normalizeControlLinkDisplayName(value) {
+  const normalized = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return null;
+  return normalized.slice(0, 40);
+}
+
+function normalizeCustomControlSlug(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, CUSTOM_CONTROL_URL_MAX_LEN);
+}
+
+function isValidCustomControlSlug(value) {
+  const slug = normalizeCustomControlSlug(value);
+  if (slug.length < CUSTOM_CONTROL_URL_MIN_LEN) return false;
+  return /^[a-z0-9]+$/.test(slug);
+}
+
+function buildCustomControlUrl(slug) {
+  const normalizedSlug = normalizeCustomControlSlug(slug);
+  if (!isValidCustomControlSlug(normalizedSlug)) return "";
+  return `https://playctrl.me/c/${normalizedSlug}`;
+}
+
+function buildControlLinkPathForUser(userId) {
+  const safeUserId = String(userId || "").trim();
+  if (!safeUserId) return "";
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        u.custom_control_slug,
+        pc.code_plain
+      FROM users u
+      LEFT JOIN pair_codes pc ON pc.user_id = u.discord_id
+      WHERE u.discord_id=?
+      LIMIT 1
+    `,
+    )
+    .get(safeUserId);
+
+  const customSlug = normalizeCustomControlSlug(row?.custom_control_slug);
+  if (isValidCustomControlSlug(customSlug)) {
+    return `/c/${encodeURIComponent(customSlug)}`;
+  }
+
+  const pairCode = String(row?.code_plain || "").trim();
+  return /^\d{6}$/.test(pairCode)
+    ? `/device/${encodeURIComponent(pairCode)}`
+    : "";
+}
+
+function formatDateTimeLabel(value) {
+  const ts = Number(value || 0);
+  if (!Number.isFinite(ts) || ts <= 0) return "";
+
+  return new Date(ts).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getCustomControlUrlNextChangeAt(updatedAt, now = Date.now()) {
+  const changedAt = Number(updatedAt || 0);
+  if (!Number.isFinite(changedAt) || changedAt <= 0) return 0;
+  return changedAt + CUSTOM_CONTROL_URL_CHANGE_COOLDOWN_MS;
+}
+
+function canChangeCustomControlUrl(updatedAt, now = Date.now()) {
+  const nextChangeAt = getCustomControlUrlNextChangeAt(updatedAt, now);
+  if (!nextChangeAt) {
+    return {
+      canChangeNow: true,
+      nextChangeAt: 0,
+    };
+  }
+
+  return {
+    canChangeNow: Number(now) >= nextChangeAt,
+    nextChangeAt,
+  };
+}
+
+function getPairCodeResetNextAllowedAt(lastResetAt, now = Date.now()) {
+  const resetAt = Number(lastResetAt || 0);
+  if (!Number.isFinite(resetAt) || resetAt <= 0) return 0;
+  return resetAt + PAIR_CODE_RESET_COOLDOWN_MS;
+}
+
+function getPairCodeResetState(lastResetAt, now = Date.now()) {
+  const nextAllowedAt = getPairCodeResetNextAllowedAt(lastResetAt, now);
+  if (!nextAllowedAt) {
+    return {
+      canResetNow: true,
+      nextAllowedAt: 0,
+    };
+  }
+
+  return {
+    canResetNow: Number(now) >= nextAllowedAt,
+    nextAllowedAt,
+  };
+}
+
+function getProfileFlash(query) {
+  const flashKey = String(query?.flash || "").trim();
+  if (flashKey === "pair_code_reset") {
+    return {
+      text: "Your pairing code was reset.",
+      isError: false,
+    };
+  }
+
+  if (flashKey === "pair_code_reset_cooldown") {
+    const nextResetAt = Number(query?.next_reset_at || 0);
+    const nextResetLabel = formatDateTimeLabel(nextResetAt);
+    return {
+      text: nextResetLabel
+        ? `You can reset your pairing code again after ${nextResetLabel}.`
+        : "You can only reset your pairing code once every 10 minutes.",
+      isError: true,
+    };
+  }
+
+  return null;
+}
+
+function getPreferredDisplayName(userLike) {
+  return (
+    normalizeControlLinkDisplayName(userLike?.control_link_display_name) ||
+    userLike?.global_name ||
+    userLike?.username ||
+    userLike?.discord_id ||
+    ""
+  );
+}
+
+const {
+  ADMIN_ACTIVITY_RANGE_24H,
+  ADMIN_ACTIVITY_RANGE_7D,
+  HOME_LEADERBOARD_LIMIT,
+  clampLeaderboardLimit,
+  getAdminCommandActivityDatasets,
+  getUtcDayWindow,
+} = createAdminActivityService({
+  db,
+  HOUR_MS,
+  DAY_MS,
+  formatCountLabel,
+});
+
+const {
+  deleteMediaUrlResolverSite,
+  listMediaUrlResolverSites,
+  listSupportedMediaUrlResolvers,
+  resolvePopupMediaUrl,
+  saveMediaUrlResolverSite,
+} = createMediaUrlResolverService({
+  db,
+  logEvent,
+});
+
+function shapeLeaderboardEntry(row, rawCount) {
+  return {
+    discordId: String(row?.discord_id || "").trim(),
+    username: row?.username || null,
+    displayName: getPreferredDisplayName(row),
+    avatarUrl: siteAvatarUrl(row, 64),
+    commandsSent: Number(rawCount || 0),
+  };
+}
+
+function getOnlineUserCount() {
+  return listOnlineOwnerUserIds().length;
+}
+
+function listTopCommandSendersAllTime(limit = HOME_LEADERBOARD_LIMIT) {
+  const max = clampLeaderboardLimit(limit);
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        discord_id,
+        username,
+        global_name,
+        control_link_display_name,
+        IFNULL(commands_sent_total, 0) AS commands_sent_total
+      FROM users
+      WHERE IFNULL(exclude_from_leaderboards, 0) = 0
+        AND IFNULL(commands_sent_total, 0) > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM bans b
+          WHERE b.discord_id = users.discord_id
+        )
+      ORDER BY
+        commands_sent_total DESC,
+        LOWER(COALESCE(control_link_display_name, global_name, username, discord_id)) ASC
+      LIMIT ?
+    `,
+    )
+    .all(max);
+
+  return rows.map((row) =>
+    shapeLeaderboardEntry(row, row.commands_sent_total),
+  );
+}
+
+function listTopCommandSendersForUtcDay(
+  limit = HOME_LEADERBOARD_LIMIT,
+  nowMs = Date.now(),
+) {
+  const max = clampLeaderboardLimit(limit);
+  const day = getUtcDayWindow(nowMs);
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        u.discord_id,
+        u.username,
+        u.global_name,
+        u.control_link_display_name,
+        COUNT(*) AS commands_sent,
+        MAX(c.created_at) AS last_command_at
+      FROM command_send_counts c
+      JOIN users u ON u.discord_id = c.actor_user_id
+      WHERE c.created_at >= ?
+        AND c.created_at < ?
+        AND IFNULL(u.exclude_from_leaderboards, 0) = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM bans b
+          WHERE b.discord_id = u.discord_id
+        )
+      GROUP BY
+        u.discord_id,
+        u.username,
+        u.global_name,
+        u.control_link_display_name
+      ORDER BY
+        commands_sent DESC,
+        last_command_at DESC,
+        LOWER(COALESCE(u.control_link_display_name, u.global_name, u.username, u.discord_id)) ASC
+      LIMIT ?
+    `,
+    )
+    .all(day.startMs, day.endMs, max);
+
+  return {
+    ...day,
+    items: rows.map((row) => shapeLeaderboardEntry(row, row.commands_sent)),
+  };
+}
+
+function getCommandsSentMilestoneBadge(total) {
+  const commandsSentTotal = Math.max(0, Number(total || 0));
+  let matchedLevel = null;
+
+  for (const level of COMMAND_MILESTONE_BADGE_LEVELS) {
+    if (commandsSentTotal >= level.threshold) {
+      matchedLevel = level;
+    }
+  }
+
+  if (!matchedLevel) return null;
+
+  const tier =
+    COMMAND_MILESTONE_BADGE_LEVELS.indexOf(matchedLevel) + 1;
+  const milestoneHoverLabel = matchedLevel.label.endsWith("+")
+    ? matchedLevel.label
+    : `${matchedLevel.label}+`;
+
+  return {
+    key: `commands-sent-${matchedLevel.threshold}`,
+    kind: "commands-sent",
+    icon: "trophy",
+    tier,
+    label: matchedLevel.label,
+    title: `${milestoneHoverLabel} commands sent`,
+    ariaLabel: `${milestoneHoverLabel} commands sent badge`,
+  };
+}
+
+function getSupporterBadge(enabled) {
+  if (!enabled) return null;
+
+  return {
+    key: "supporter",
+    kind: "supporter",
+    icon: "star",
+    label: "",
+    title: "Donator",
+    ariaLabel: "Donator badge",
+  };
+}
+
+function normalizeAvatarSize(size, fallback = 64) {
+  const n = Number(size);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(16, Math.min(512, Math.round(n)));
+}
+
+function normalizeAvatarFileSegment(value, fallback = "avatar") {
+  const clean = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+  return clean || fallback;
+}
+
+function resolveStoredSiteAvatarPath(storedPath) {
+  const rel = String(storedPath || "").trim();
+  if (!rel) return null;
+
+  const base = path.resolve(SITE_AVATARS_DIR);
+  const abs = path.resolve(base, rel);
+  if (abs === base || abs.startsWith(base + path.sep)) return abs;
+  return null;
+}
+
+function siteAvatarMimeFromPath(filePath) {
+  const ext = path.extname(String(filePath || "")).slice(1).toLowerCase();
+  return SITE_AVATAR_MIME_BY_EXT[ext] || "application/octet-stream";
+}
+
+function deleteStoredSiteAvatar(storedPath) {
+  const abs = resolveStoredSiteAvatarPath(storedPath);
+  if (!abs) return;
+  try {
+    fs.unlinkSync(abs);
+  } catch (e) {
+    if (e?.code !== "ENOENT") {
+      console.warn("[avatar-cache] failed to delete cached avatar:", e?.message || e);
+    }
+  }
+}
+
+function resolvePersistedSiteAvatar(row) {
+  const candidates = [
+    {
+      storedPath: row?.custom_avatar_path,
+      mime: row?.custom_avatar_mime,
+    },
+    {
+      storedPath: row?.avatar_cache_path,
+      mime: row?.avatar_cache_mime,
+    },
+  ];
+
+  for (const candidate of candidates) {
+    const abs = resolveStoredSiteAvatarPath(candidate.storedPath);
+    if (!abs || !fs.existsSync(abs)) continue;
+    return {
+      absolutePath: abs,
+      mime: String(candidate.mime || "").trim() || siteAvatarMimeFromPath(abs),
+    };
+  }
+
+  return null;
+}
+
+function resolvePersistedSiteBanner(row) {
+  const abs = resolveStoredSiteAvatarPath(row?.custom_banner_path);
+  if (!abs || !fs.existsSync(abs)) return null;
+
+  return {
+    absolutePath: abs,
+    mime:
+      String(row?.custom_banner_mime || "").trim() ||
+      siteAvatarMimeFromPath(abs),
+  };
+}
+
+function resolvePersistedSiteBackground(row) {
+  const abs = resolveStoredSiteAvatarPath(row?.custom_background_path);
+  if (!abs || !fs.existsSync(abs)) return null;
+
+  return {
+    absolutePath: abs,
+    mime:
+      String(row?.custom_background_mime || "").trim() ||
+      siteAvatarMimeFromPath(abs),
+  };
+}
+
+function sendDefaultSiteAvatar(res) {
+  if (fs.existsSync(DEFAULT_SITE_AVATAR_PATH)) {
+    return res.type("image/svg+xml").sendFile(DEFAULT_SITE_AVATAR_PATH);
+  }
+
+  return res.type("image/svg+xml").send(INLINE_DEFAULT_SITE_AVATAR_SVG);
+}
+
+function siteAvatarUrl(u, size = 64) {
+  const discordId = String(
+    u?.discord_id || u?.discordId || u?.id || "",
+  ).trim();
+  if (!discordId) return "/default-avatar.svg";
+
+  const qs = new URLSearchParams({
+    size: String(normalizeAvatarSize(size)),
+  });
+  return `/avatars/${encodeURIComponent(discordId)}?${qs.toString()}`;
+}
+
+function siteBannerUrl(u, size = 1600) {
+  const discordId = String(
+    u?.discord_id || u?.discordId || u?.id || "",
+  ).trim();
+  if (!discordId) return "";
+
+  const qs = new URLSearchParams({
+    size: String(normalizeAvatarSize(size, 1600)),
+  });
+  return `/banners/${encodeURIComponent(discordId)}?${qs.toString()}`;
+}
+
+function chunkUniqueStrings(values, chunkSize = 400) {
+  const items = Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const chunks = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function fnv1a32(str) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < str.length; index++) {
+    hash ^= str.charCodeAt(index);
+    hash =
+      (hash +
+        ((hash << 1) +
+          (hash << 4) +
+          (hash << 7) +
+          (hash << 8) +
+          (hash << 24))) >>>
+      0;
+  }
+  return hash >>> 0;
+}
+
+function windowIdNow10m(now = Date.now()) {
+  return Math.floor(Number(now || Date.now()) / (10 * 60 * 1000));
+}
+
+function listOnlineOwnerUserIds() {
+  const onlineDeviceIds = [];
+  for (const [deviceId] of wsByDeviceId.entries()) {
+    const safeDeviceId = String(deviceId || "").trim();
+    if (!safeDeviceId) continue;
+    if (!isDeviceOnline(safeDeviceId)) continue;
+    onlineDeviceIds.push(safeDeviceId);
+  }
+
+  if (!onlineDeviceIds.length) return [];
+
+  const userIds = new Set();
+  for (const chunk of chunkUniqueStrings(onlineDeviceIds)) {
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `
+        SELECT DISTINCT user_id
+        FROM device_pairs
+        WHERE device_id IN (${placeholders})
+      `,
+      )
+      .all(...chunk);
+
+    for (const row of rows) {
+      const userId = String(row.user_id || "").trim();
+      if (userId) userIds.add(userId);
+    }
+  }
+
+  return Array.from(userIds);
+}
+
+function sortLiveDiscoverUsers(rows, now = Date.now()) {
+  const windowId = windowIdNow10m(now);
+  const statusOrder = { online: 0, away: 0, offline: 1 };
+
+  rows.sort((left, right) => {
+    const leftStatus = String(left?.status || left?.presence?.status || "offline");
+    const rightStatus = String(right?.status || right?.presence?.status || "offline");
+    const statusDiff =
+      (statusOrder[leftStatus] ?? 9) - (statusOrder[rightStatus] ?? 9);
+    if (statusDiff !== 0) return statusDiff;
+
+    const leftKey = fnv1a32(`${windowId}:${String(left?.pairCode || left?.code_plain || "")}`);
+    const rightKey = fnv1a32(`${windowId}:${String(right?.pairCode || right?.code_plain || "")}`);
+    if (leftKey !== rightKey) return leftKey - rightKey;
+
+    return String(left?.displayName || left?.preferred_display_name || left?.username || left?.discordId || left?.discord_id || "")
+      .localeCompare(
+        String(right?.displayName || right?.preferred_display_name || right?.username || right?.discordId || right?.discord_id || ""),
+        undefined,
+        { sensitivity: "base" },
+      );
+  });
+
+  return rows;
+}
+
+function listLiveDiscoverUsers({ now = Date.now() } = {}) {
+  const userIds = new Set(listOnlineOwnerUserIds());
+  const awayCutoff = Math.max(0, Number(now || Date.now()) - AWAY_WINDOW_MS);
+
+  const awayRows = db
+    .prepare(
+      `
+      SELECT u.discord_id
+      FROM users u
+      JOIN pair_codes pc ON pc.user_id = u.discord_id
+      LEFT JOIN bans b ON b.discord_id = u.discord_id
+      WHERE u.discoverable = 1
+        AND IFNULL(u.whitelist_enabled, 0) = 0
+        AND IFNULL(u.away_enabled, 0) = 1
+        AND IFNULL(u.last_online_at, 0) > ?
+        AND b.discord_id IS NULL
+    `,
+    )
+    .all(awayCutoff);
+
+  for (const row of awayRows) {
+    const userId = String(row.discord_id || "").trim();
+    if (userId) userIds.add(userId);
+  }
+
+  const candidateUserIds = Array.from(userIds);
+  if (!candidateUserIds.length) return [];
+
+  const rows = [];
+  for (const chunk of chunkUniqueStrings(candidateUserIds)) {
+    const placeholders = chunk.map(() => "?").join(",");
+    rows.push(
+      ...db
+        .prepare(
+          `
+          SELECT
+            u.discord_id,
+            u.username,
+            u.global_name,
+            u.avatar,
+            u.custom_banner_path,
+            u.custom_banner_updated_at,
+            u.control_link_display_name,
+            pc.code_plain
+          FROM users u
+          JOIN pair_codes pc ON pc.user_id = u.discord_id
+          LEFT JOIN bans b ON b.discord_id = u.discord_id
+          WHERE u.discord_id IN (${placeholders})
+            AND u.discoverable = 1
+            AND IFNULL(u.whitelist_enabled, 0) = 0
+            AND b.discord_id IS NULL
+        `,
+        )
+        .all(...chunk),
+    );
+  }
+
+  if (!rows.length) return [];
+
+  const presenceByUser = listPresenceStateByUserIds(
+    rows.map((row) => row.discord_id),
+    { now },
+  );
+  const liveRows = rows
+    .map((row) => {
+      const presence = presenceByUser.get(row.discord_id) || computePresenceState({ now });
+      const bannerUrl = row.custom_banner_path
+        ? `${siteBannerUrl(row, 1200)}${
+            row.custom_banner_updated_at
+              ? `&v=${encodeURIComponent(row.custom_banner_updated_at)}`
+              : ""
+          }`
+        : "";
+
+      return {
+        ...row,
+        discordId: String(row.discord_id || "").trim(),
+        pairCode: String(row.code_plain || "").trim(),
+        preferred_display_name: getPreferredDisplayName(row),
+        displayName: getPreferredDisplayName(row),
+        avatarUrl: siteAvatarUrl(row, 128),
+        bannerUrl,
+        presence,
+        status: presence.status,
+        online: !!presence.online,
+        away: !!presence.away,
+        awayUntil: Number(presence.awayUntil || 0),
+      };
+    })
+    .filter((row) => row.status === "online" || row.status === "away");
+
+  return sortLiveDiscoverUsers(liveRows, now);
+}
+
+function normalizeDiscoverSearchQuery(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function listFilteredDiscoverUsers({
+  now = Date.now(),
+  query = "",
+  statuses = ["online", "away"],
+} = {}) {
+  const normalizedQuery = normalizeDiscoverSearchQuery(query);
+  const allowedStatuses = new Set(
+    (Array.isArray(statuses) ? statuses : [statuses])
+      .map((status) => String(status || "").trim().toLowerCase())
+      .filter((status) => status === "online" || status === "away"),
+  );
+  if (!allowedStatuses.size) return [];
+
+  return listLiveDiscoverUsers({ now }).filter((user) => {
+    const status = String(user?.status || "offline").trim().toLowerCase();
+    if (!allowedStatuses.has(status)) return false;
+    if (!normalizedQuery) return true;
+
+    const haystack = normalizeDiscoverSearchQuery(
+      `${String(user?.displayName || "")} ${String(user?.username || "")}`,
+    );
+    return haystack.includes(normalizedQuery);
+  });
+}
+
+function listPagedDiscoverUsers({
+  now = Date.now(),
+  page = 1,
+  perPage = 12,
+  query = "",
+  statuses = ["online", "away"],
+} = {}) {
+  const safePerPage = Math.max(
+    1,
+    Math.min(48, Math.floor(Number(perPage || 0)) || 12),
+  );
+  const filteredUsers = listFilteredDiscoverUsers({ now, query, statuses });
+  const total = filteredUsers.length;
+  const totalPages = total > 0 ? Math.ceil(total / safePerPage) : 1;
+  const safePage = Math.max(
+    1,
+    Math.min(totalPages, Math.floor(Number(page || 0)) || 1),
+  );
+  const startIndex = (safePage - 1) * safePerPage;
+
+  return {
+    users: filteredUsers.slice(startIndex, startIndex + safePerPage),
+    total,
+    totalPages,
+    page: safePage,
+    perPage: safePerPage,
+  };
+}
+
+function siteBackgroundUrl(u, size = 1920) {
+  const discordId = String(
+    u?.discord_id || u?.discordId || u?.id || "",
+  ).trim();
+  if (!discordId) return "";
+
+  const qs = new URLSearchParams({
+    size: String(normalizeAvatarSize(size, 1920)),
+  });
+  return `/backgrounds/${encodeURIComponent(discordId)}?${qs.toString()}`;
+}
+
+function discordAvatarFetchUrl(discordId, avatarHash, size = SITE_AVATAR_FETCH_SIZE) {
+  const ext = String(avatarHash || "").startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/avatars/${encodeURIComponent(discordId)}/${encodeURIComponent(avatarHash)}.${ext}?size=${normalizeAvatarSize(size, SITE_AVATAR_FETCH_SIZE)}`;
+}
+
+function siteAvatarExtFromContentType(contentType, fallbackExt = "png") {
+  const mime = String(contentType || "").split(";")[0].trim().toLowerCase();
+  return SITE_AVATAR_EXT_BY_MIME[mime] || fallbackExt;
+}
+
+function normalizeSiteAvatarMime(contentType) {
+  return String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeCustomSiteAvatarExt(ext) {
+  const normalized = String(ext || "").trim().toLowerCase();
+  if (normalized === "jpeg") return "jpg";
+  return normalized;
+}
+
+function matchCustomSiteAvatarUpload({ filename, mime }) {
+  const rawExt = path.extname(String(filename || "")).slice(1);
+  const ext = normalizeCustomSiteAvatarExt(rawExt);
+  const normalizedMime = normalizeSiteAvatarMime(mime);
+
+  if (!CUSTOM_SITE_AVATAR_ALLOWED_EXTS.has(ext)) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Use a PNG, JPG, WEBP, or GIF image.",
+    };
+  }
+
+  if (normalizedMime && !CUSTOM_SITE_AVATAR_ALLOWED_MIMES.has(normalizedMime)) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Use a PNG, JPG, WEBP, or GIF image.",
+    };
+  }
+
+  return {
+    ok: true,
+    ext,
+    mime: normalizedMime || SITE_AVATAR_MIME_BY_EXT[ext] || "image/png",
+  };
+}
+
+function writeStoredSiteAvatarBuffer(storedPath, body) {
+  const abs = resolveStoredSiteAvatarPath(storedPath);
+  if (!abs) return null;
+
+  const tempPath = `${storedPath}.${process.pid}.${Date.now()}.tmp`;
+  const tempAbs = resolveStoredSiteAvatarPath(tempPath);
+  if (!tempAbs) return null;
+
+  try {
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(tempAbs, body);
+    try {
+      fs.unlinkSync(abs);
+    } catch (e) {
+      if (e?.code !== "ENOENT") throw e;
+    }
+    fs.renameSync(tempAbs, abs);
+    return abs;
+  } catch (e) {
+    try {
+      fs.unlinkSync(tempAbs);
+    } catch {}
+    console.warn(
+      `[avatar-cache] failed to store avatar ${storedPath}: ${e?.message || e}`,
+    );
+    return null;
+  }
+}
+
+async function refreshCachedDiscordAvatar(discordUser, existingRow = null, options = {}) {
+  const discordId = String(
+    discordUser?.id || discordUser?.discord_id || "",
+  ).trim();
+  if (!discordId) return null;
+
+  const force = !!options.force;
+  const avatarHash = String(discordUser?.avatar || "").trim();
+  const current =
+    existingRow ||
+    db
+      .prepare(
+        `
+        SELECT avatar, avatar_cache_path, avatar_cache_mime, avatar_cache_updated_at
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(discordId);
+
+  const previousPath = String(current?.avatar_cache_path || "").trim();
+  const previousHash = String(current?.avatar || "").trim();
+
+  if (!avatarHash) {
+    if (previousPath) deleteStoredSiteAvatar(previousPath);
+    db.prepare(
+      `
+      UPDATE users
+      SET avatar_cache_path=NULL,
+          avatar_cache_mime=NULL,
+          avatar_cache_updated_at=NULL
+      WHERE discord_id=?
+    `,
+    ).run(discordId);
+    return null;
+  }
+
+  if (!force && previousHash === avatarHash && previousPath) {
+    const existingAbs = resolveStoredSiteAvatarPath(previousPath);
+    if (existingAbs && fs.existsSync(existingAbs)) {
+      return {
+        storedPath: previousPath,
+        mime:
+          String(current?.avatar_cache_mime || "").trim() ||
+          siteAvatarMimeFromPath(existingAbs),
+      };
+    }
+  }
+
+  let avatarResp;
+  try {
+    avatarResp = await fetch(discordAvatarFetchUrl(discordId, avatarHash));
+  } catch (e) {
+    console.warn(
+      `[avatar-cache] fetch failed for ${discordId}: ${e?.message || e}`,
+    );
+    return null;
+  }
+
+  if (!avatarResp.ok) {
+    console.warn(
+      `[avatar-cache] fetch failed for ${discordId}: HTTP ${avatarResp.status}`,
+    );
+    return null;
+  }
+
+  const body = Buffer.from(await avatarResp.arrayBuffer());
+  if (!body.length) return null;
+
+  const mime = String(avatarResp.headers.get("content-type") || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  const fallbackExt = avatarHash.startsWith("a_") ? "gif" : "png";
+  const ext = siteAvatarExtFromContentType(mime, fallbackExt);
+  const storedPath = `${normalizeAvatarFileSegment(discordId, "user")}-discord.${ext}`;
+  if (!writeStoredSiteAvatarBuffer(storedPath, body)) {
+    return null;
+  }
+
+  const normalizedMime =
+    SITE_AVATAR_MIME_BY_EXT[ext] ||
+    mime ||
+    siteAvatarMimeFromPath(storedPath);
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET avatar_cache_path=?,
+        avatar_cache_mime=?,
+        avatar_cache_updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(storedPath, normalizedMime, updatedAt, discordId);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    storedPath,
+    mime: normalizedMime,
+    updatedAt,
+  };
+}
+
+function setCustomSiteAvatar(discordId, payload = {}) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const matched = matchCustomSiteAvatarUpload(payload);
+  if (!matched.ok) return matched;
+
+  let body;
+  try {
+    body = b64ToBuffer(payload.data);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not read that image.",
+    };
+  }
+
+  if (!body || !body.length) {
+    return {
+      ok: false,
+      status: 400,
+      message: "That image was empty.",
+    };
+  }
+
+  if (body.length > CUSTOM_SITE_AVATAR_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `That image is too large (${formatBytesCompact(body.length)} > ${formatBytesCompact(CUSTOM_SITE_AVATAR_MAX_BYTES)}).`,
+    };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_avatar_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_avatar_path || "").trim();
+  const storedPath = `custom/${normalizeAvatarFileSegment(userId, "user")}-custom.${matched.ext}`;
+  const written = writeStoredSiteAvatarBuffer(storedPath, body);
+  if (!written) {
+    return {
+      ok: false,
+      status: 500,
+      message: "Could not save that image.",
+    };
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_avatar_path=?,
+        custom_avatar_mime=?,
+        custom_avatar_updated_at=?,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(storedPath, matched.mime, updatedAt, updatedAt, userId);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    ok: true,
+    storedPath,
+    mime: matched.mime,
+    updatedAt,
+  };
+}
+
+function clearCustomSiteAvatar(discordId) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_avatar_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_avatar_path || "").trim();
+  if (previousPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_avatar_path=NULL,
+        custom_avatar_mime=NULL,
+        custom_avatar_updated_at=NULL,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(updatedAt, userId);
+
+  return {
+    ok: true,
+    updatedAt,
+  };
+}
+
+function setCustomSiteBanner(discordId, payload = {}) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const matched = matchCustomSiteAvatarUpload(payload);
+  if (!matched.ok) return matched;
+
+  let body;
+  try {
+    body = b64ToBuffer(payload.data);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not read that image.",
+    };
+  }
+
+  if (!body || !body.length) {
+    return {
+      ok: false,
+      status: 400,
+      message: "That image was empty.",
+    };
+  }
+
+  if (body.length > CUSTOM_SITE_BANNER_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `That image is too large (${formatBytesCompact(body.length)} > ${formatBytesCompact(CUSTOM_SITE_BANNER_MAX_BYTES)}).`,
+    };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_banner_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_banner_path || "").trim();
+  const storedPath = `banners/${normalizeAvatarFileSegment(userId, "user")}-banner.${matched.ext}`;
+  const written = writeStoredSiteAvatarBuffer(storedPath, body);
+  if (!written) {
+    return {
+      ok: false,
+      status: 500,
+      message: "Could not save that image.",
+    };
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_banner_path=?,
+        custom_banner_mime=?,
+        custom_banner_updated_at=?,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(storedPath, matched.mime, updatedAt, updatedAt, userId);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    ok: true,
+    storedPath,
+    mime: matched.mime,
+    updatedAt,
+  };
+}
+
+function clearCustomSiteBanner(discordId) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_banner_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_banner_path || "").trim();
+  if (previousPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_banner_path=NULL,
+        custom_banner_mime=NULL,
+        custom_banner_updated_at=NULL,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(updatedAt, userId);
+
+  return {
+    ok: true,
+    updatedAt,
+  };
+}
+
+function groupAvatarUrl(groupKey, size = 128) {
+  const key = String(groupKey || "").trim();
+  if (!key) return "";
+  const qs = new URLSearchParams({
+    size: String(normalizeAvatarSize(size)),
+  });
+  return `/group-avatars/${encodeURIComponent(key)}?${qs.toString()}`;
+}
+
+function groupBannerUrl(groupKey, size = 1600) {
+  const key = String(groupKey || "").trim();
+  if (!key) return "";
+  const qs = new URLSearchParams({
+    size: String(normalizeAvatarSize(size, 1600)),
+  });
+  return `/group-banners/${encodeURIComponent(key)}?${qs.toString()}`;
+}
+
+function setCustomCommunityGroupAvatar(groupKey, payload = {}) {
+  const key = String(groupKey || "").trim();
+  if (!key) {
+    return { ok: false, status: 400, message: "Missing group." };
+  }
+
+  const matched = matchCustomSiteAvatarUpload(payload);
+  if (!matched.ok) return matched;
+
+  let body;
+  try {
+    body = b64ToBuffer(payload.data);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not read that image.",
+    };
+  }
+
+  if (!body || !body.length) {
+    return {
+      ok: false,
+      status: 400,
+      message: "That image was empty.",
+    };
+  }
+
+  if (body.length > CUSTOM_SITE_AVATAR_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `That image is too large (${formatBytesCompact(body.length)} > ${formatBytesCompact(CUSTOM_SITE_AVATAR_MAX_BYTES)}).`,
+    };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_avatar_path
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(key) || null;
+  if (!current) {
+    return { ok: false, status: 404, message: "Group not found." };
+  }
+
+  const previousPath = String(current?.custom_avatar_path || "").trim();
+  const storedPath = `groups/${normalizeAvatarFileSegment(key, "group")}-avatar.${matched.ext}`;
+  const written = writeStoredSiteAvatarBuffer(storedPath, body);
+  if (!written) {
+    return {
+      ok: false,
+      status: 500,
+      message: "Could not save that image.",
+    };
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE community_groups
+    SET custom_avatar_path=?,
+        custom_avatar_mime=?,
+        custom_avatar_updated_at=?,
+        updated_at=?
+    WHERE group_key=?
+  `,
+  ).run(storedPath, matched.mime, updatedAt, updatedAt, key);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    ok: true,
+    storedPath,
+    mime: matched.mime,
+    updatedAt,
+  };
+}
+
+function clearCustomCommunityGroupAvatar(groupKey) {
+  const key = String(groupKey || "").trim();
+  if (!key) {
+    return { ok: false, status: 400, message: "Missing group." };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_avatar_path
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(key) || null;
+  if (!current) {
+    return { ok: false, status: 404, message: "Group not found." };
+  }
+
+  const previousPath = String(current?.custom_avatar_path || "").trim();
+  if (previousPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE community_groups
+    SET custom_avatar_path=NULL,
+        custom_avatar_mime=NULL,
+        custom_avatar_updated_at=NULL,
+        updated_at=?
+    WHERE group_key=?
+  `,
+  ).run(updatedAt, key);
+
+  return {
+    ok: true,
+    updatedAt,
+  };
+}
+
+function setCustomCommunityGroupBanner(groupKey, payload = {}) {
+  const key = String(groupKey || "").trim();
+  if (!key) {
+    return { ok: false, status: 400, message: "Missing group." };
+  }
+
+  const matched = matchCustomSiteAvatarUpload(payload);
+  if (!matched.ok) return matched;
+
+  let body;
+  try {
+    body = b64ToBuffer(payload.data);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not read that image.",
+    };
+  }
+
+  if (!body || !body.length) {
+    return {
+      ok: false,
+      status: 400,
+      message: "That image was empty.",
+    };
+  }
+
+  if (body.length > CUSTOM_SITE_BANNER_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `That image is too large (${formatBytesCompact(body.length)} > ${formatBytesCompact(CUSTOM_SITE_BANNER_MAX_BYTES)}).`,
+    };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_banner_path
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(key) || null;
+  if (!current) {
+    return { ok: false, status: 404, message: "Group not found." };
+  }
+
+  const previousPath = String(current?.custom_banner_path || "").trim();
+  const storedPath = `groups/${normalizeAvatarFileSegment(key, "group")}-banner.${matched.ext}`;
+  const written = writeStoredSiteAvatarBuffer(storedPath, body);
+  if (!written) {
+    return {
+      ok: false,
+      status: 500,
+      message: "Could not save that image.",
+    };
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE community_groups
+    SET custom_banner_path=?,
+        custom_banner_mime=?,
+        custom_banner_updated_at=?,
+        updated_at=?
+    WHERE group_key=?
+  `,
+  ).run(storedPath, matched.mime, updatedAt, updatedAt, key);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    ok: true,
+    storedPath,
+    mime: matched.mime,
+    updatedAt,
+  };
+}
+
+function clearCustomCommunityGroupBanner(groupKey) {
+  const key = String(groupKey || "").trim();
+  if (!key) {
+    return { ok: false, status: 400, message: "Missing group." };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_banner_path
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(key) || null;
+  if (!current) {
+    return { ok: false, status: 404, message: "Group not found." };
+  }
+
+  const previousPath = String(current?.custom_banner_path || "").trim();
+  if (previousPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE community_groups
+    SET custom_banner_path=NULL,
+        custom_banner_mime=NULL,
+        custom_banner_updated_at=NULL,
+        updated_at=?
+    WHERE group_key=?
+  `,
+  ).run(updatedAt, key);
+
+  return {
+    ok: true,
+    updatedAt,
+  };
+}
+
+function setCustomSiteBackground(discordId, payload = {}) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const matched = matchCustomSiteAvatarUpload(payload);
+  if (!matched.ok) return matched;
+
+  let body;
+  try {
+    body = b64ToBuffer(payload.data);
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      message: "Could not read that image.",
+    };
+  }
+
+  if (!body || !body.length) {
+    return {
+      ok: false,
+      status: 400,
+      message: "That image was empty.",
+    };
+  }
+
+  if (body.length > CUSTOM_SITE_BACKGROUND_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      message: `That image is too large (${formatBytesCompact(body.length)} > ${formatBytesCompact(CUSTOM_SITE_BACKGROUND_MAX_BYTES)}).`,
+    };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_background_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_background_path || "").trim();
+  const storedPath = `backgrounds/${normalizeAvatarFileSegment(userId, "user")}-background.${matched.ext}`;
+  const written = writeStoredSiteAvatarBuffer(storedPath, body);
+  if (!written) {
+    return {
+      ok: false,
+      status: 500,
+      message: "Could not save that image.",
+    };
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_background_path=?,
+        custom_background_mime=?,
+        custom_background_updated_at=?,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(storedPath, matched.mime, updatedAt, updatedAt, userId);
+
+  if (previousPath && previousPath !== storedPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  return {
+    ok: true,
+    storedPath,
+    mime: matched.mime,
+    updatedAt,
+  };
+}
+
+function clearCustomSiteBackground(discordId) {
+  const userId = String(discordId || "").trim();
+  if (!userId) {
+    return { ok: false, status: 400, message: "Missing user." };
+  }
+
+  const current =
+    db
+      .prepare(
+        `
+        SELECT custom_background_path
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(userId) || null;
+
+  const previousPath = String(current?.custom_background_path || "").trim();
+  if (previousPath) {
+    deleteStoredSiteAvatar(previousPath);
+  }
+
+  const updatedAt = Date.now();
+  db.prepare(
+    `
+    UPDATE users
+    SET custom_background_path=NULL,
+        custom_background_mime=NULL,
+        custom_background_updated_at=NULL,
+        updated_at=?
+    WHERE discord_id=?
+  `,
+  ).run(updatedAt, userId);
+
+  return {
+    ok: true,
+    updatedAt,
+  };
+}
+
+async function runAvatarCacheBackfillCommand({ force = false } = {}) {
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        discord_id,
+        username,
+        global_name,
+        avatar,
+        avatar_cache_path,
+        avatar_cache_mime,
+        avatar_cache_updated_at,
+        custom_avatar_path
+      FROM users
+      ORDER BY updated_at DESC, created_at DESC, discord_id ASC
+    `,
+    )
+    .all();
+
+  const stats = {
+    total: rows.length,
+    noAvatar: 0,
+    skippedCustom: 0,
+    downloaded: 0,
+    reusedExisting: 0,
+    failed: 0,
+  };
+
+  const startedAt = Date.now();
+
+  console.log(
+    `[avatar-cache] backfill starting for ${stats.total} users${force ? " (force mode)" : ""} using ${db.DB_PATH || process.env.DB_PATH || "ggbot.db"}`,
+  );
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const discordId = String(row.discord_id || "").trim();
+    const avatarHash = String(row.avatar || "").trim();
+    const displayName =
+      String(row.global_name || "").trim() ||
+      String(row.username || "").trim() ||
+      discordId;
+
+    if (!discordId) continue;
+
+    if (!avatarHash) {
+      stats.noAvatar++;
+      continue;
+    }
+
+    if (!force && String(row.custom_avatar_path || "").trim()) {
+      stats.skippedCustom++;
+      continue;
+    }
+
+    const existingCacheAbs = resolveStoredSiteAvatarPath(row.avatar_cache_path);
+    const hadExistingCache = !!(existingCacheAbs && fs.existsSync(existingCacheAbs));
+
+    try {
+      const result = await refreshCachedDiscordAvatar(
+        { discord_id: discordId, avatar: avatarHash },
+        row,
+        { force },
+      );
+
+      if (result) {
+        if (hadExistingCache && !force) {
+          stats.reusedExisting++;
+        } else {
+          stats.downloaded++;
+        }
+      } else {
+        stats.failed++;
+        console.warn(
+          `[avatar-cache] failed to cache avatar for ${displayName} (${discordId})`,
+        );
+      }
+    } catch (e) {
+      stats.failed++;
+      console.warn(
+        `[avatar-cache] failed to cache avatar for ${displayName} (${discordId}): ${e?.message || e}`,
+      );
+    }
+
+    if ((i + 1) % 25 === 0 || i === rows.length - 1) {
+      console.log(
+        `[avatar-cache] processed ${i + 1}/${stats.total} users`,
+      );
+    }
+  }
+
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+  console.log("[avatar-cache] backfill finished", {
+    ...stats,
+    durationSeconds: Number(seconds),
+  });
+
+  return stats;
 }
 
 function getLoggedInUser(req) {
@@ -998,9 +8438,13 @@ function getLoggedInUser(req) {
       u.username,
       u.global_name,
       u.avatar,
+      u.control_link_display_name,
 
       IFNULL(u.discoverable, 0)        AS discoverable,
       IFNULL(u.whitelist_enabled, 0)   AS whitelist_enabled,
+      IFNULL(u.disable_custom_backgrounds, 0) AS disable_custom_backgrounds,
+      IFNULL(u.away_enabled, 0)        AS away_enabled,
+      u.last_online_at,
 
       u.invited_at,
       u.enrolled_at,
@@ -1015,31 +8459,138 @@ function getLoggedInUser(req) {
   );
 }
 
+function getDelegatedUserForActor(actorUser, delegatedSubId) {
+  const actorId = String(actorUser?.discord_id || "").trim();
+  const subId = String(delegatedSubId || "").trim();
+  if (!actorId || !subId || actorId === subId) return null;
+
+  return (
+    db
+      .prepare(
+        `
+    SELECT
+      u.discord_id,
+      u.username,
+      u.global_name,
+      u.avatar,
+      u.control_link_display_name,
+
+      IFNULL(u.discoverable, 0)        AS discoverable,
+      IFNULL(u.whitelist_enabled, 0)   AS whitelist_enabled,
+      IFNULL(u.disable_custom_backgrounds, 0) AS disable_custom_backgrounds,
+      IFNULL(u.away_enabled, 0)        AS away_enabled,
+      u.last_online_at,
+
+      u.invited_at,
+      u.enrolled_at,
+
+      NULL AS session_created_at
+    FROM leash_delegations ld
+    JOIN users u ON u.discord_id = ld.sub_user_id
+    LEFT JOIN bans b ON b.discord_id = u.discord_id
+    WHERE ld.sub_user_id = ?
+      AND ld.dom_user_id = ?
+      AND b.discord_id IS NULL
+  `,
+      )
+      .get(subId, actorId) || null
+  );
+}
+
 function getCommandPrefsForUser(discordId) {
   try {
-    return (
+    const row =
       db
         .prepare(
           `
-      SELECT allow_toast, allow_popup, allow_open_url, allow_image_popup, allow_set_wallpaper
+      SELECT allow_popup, allow_open_url, allow_image_popup, allow_set_wallpaper, allow_screenshot, allow_webcam_capture, allow_play_sound, allow_write_for_me
+             , allow_fullscreen_popup, allow_spiral_overlay, allow_subliminal_message
       FROM users WHERE discord_id=?
     `,
         )
-        .get(discordId) || {
-        allow_toast: 1,
-        allow_popup: 1,
-        allow_open_url: 1,
-        allow_image_popup: 1,
-      }
-    );
-  } catch {
+        .get(discordId) || null;
+    const subliminalEnabled = Number(row?.allow_subliminal_message ?? 1)
+      ? 1
+      : 0;
     return {
-      allow_toast: 1,
       allow_popup: 1,
       allow_open_url: 1,
       allow_image_popup: 1,
+      allow_fullscreen_popup: 1,
+      allow_spiral_overlay: 1,
+      allow_set_wallpaper: 1,
+      allow_screenshot: 0,
+      allow_webcam_capture: 0,
+      allow_play_sound: 0,
+      allow_write_for_me: 0,
+      allow_subliminal_message: subliminalEnabled,
+      ...(row || {}),
+      allow_subliminal_message: subliminalEnabled,
+    };
+  } catch {
+    return {
+      allow_popup: 1,
+      allow_open_url: 1,
+      allow_image_popup: 1,
+      allow_fullscreen_popup: 1,
+      allow_spiral_overlay: 1,
+      allow_set_wallpaper: 1,
+      allow_screenshot: 0,
+      allow_webcam_capture: 0,
+      allow_play_sound: 0,
+      allow_write_for_me: 0,
+      allow_subliminal_message: 1,
     };
   }
+}
+
+function getDefaultCommunityGroupCommandPrefs() {
+  return COMMUNITY_GROUP_COMMAND_OPTIONS.reduce((prefs, option) => {
+    prefs[option.field] = 1;
+    return prefs;
+  }, {});
+}
+
+function getCommunityGroupCommandPrefs(groupKey) {
+  const key = String(groupKey || "").trim();
+  const defaults = getDefaultCommunityGroupCommandPrefs();
+  if (!key) return defaults;
+
+  try {
+    const row =
+      db
+        .prepare(
+          `
+      SELECT
+        allow_popup,
+        allow_open_url,
+        allow_image_popup,
+        allow_fullscreen_popup,
+        allow_spiral_overlay,
+        allow_set_wallpaper,
+        allow_play_sound,
+        allow_write_for_me,
+        allow_subliminal_message
+      FROM community_group_command_prefs
+      WHERE group_key=?
+    `,
+        )
+        .get(key) || null;
+
+    return {
+      ...defaults,
+      ...(row || {}),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function isCommunityGroupCommandEnabled(groupKey, commandKey) {
+  return isCommandEnabled(
+    getCommunityGroupCommandPrefs(groupKey),
+    String(commandKey || "").trim(),
+  );
 }
 
 function isCommandEnabled(prefs, cmd) {
@@ -1047,22 +8598,59 @@ function isCommandEnabled(prefs, cmd) {
   if (cmd === "popup") return !!prefs.allow_popup;
   if (cmd === "open_url") return !!prefs.allow_open_url;
   if (cmd === "image_popup") return !!prefs.allow_image_popup;
+  if (cmd === "fullscreen_popup") return !!prefs.allow_fullscreen_popup;
+  if (cmd === "spiral_overlay") return !!prefs.allow_spiral_overlay;
   if (cmd === "set_wallpaper") return !!prefs.allow_set_wallpaper;
+  if (cmd === "screenshot") return !!prefs.allow_screenshot;
+  if (cmd === "webcam_capture") return !!prefs.allow_webcam_capture;
+  if (cmd === "play_sound") return !!prefs.allow_play_sound;
+  if (cmd === "play_sound_loop" || cmd === "play_sound_loop_url") return false;
+  if (cmd === "write_for_me") return !!prefs.allow_write_for_me;
+  if (cmd === "subliminal_message") {
+    return !!prefs.allow_subliminal_message;
+  }
   return true;
 }
 
+function getBanRecord(discordId) {
+  const safeDiscordId = String(discordId || "").trim();
+  if (!safeDiscordId) return null;
+
+  return (
+    db
+      .prepare("SELECT discord_id, reason FROM bans WHERE discord_id=?")
+      .get(safeDiscordId) || null
+  );
+}
+
+function resolveOwnerUserIdByPairCode(pairCode) {
+  const safePairCode = String(pairCode || "").trim();
+  if (!/^\d{6}$/.test(safePairCode)) return null;
+
+  const row = db
+    .prepare(
+      `
+      SELECT pc.user_id
+      FROM pair_codes pc
+      LEFT JOIN bans b ON b.discord_id = pc.user_id
+      WHERE pc.code_hash=?
+        AND b.discord_id IS NULL
+    `,
+    )
+    .get(hmac(safePairCode));
+
+  return String(row?.user_id || "").trim() || null;
+}
+
 function resolveOwnerAndDevicesByPairCode(pairCode) {
-  const codeHash = hmac(pairCode);
-  const pc = db
-    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
-    .get(codeHash);
-  if (!pc) return null;
+  const ownerUserId = resolveOwnerUserIdByPairCode(pairCode);
+  if (!ownerUserId) return null;
 
   const deviceRows = db
     .prepare("SELECT device_id FROM device_pairs WHERE user_id=?")
-    .all(pc.user_id);
+    .all(ownerUserId);
   return {
-    ownerUserId: pc.user_id,
+    ownerUserId,
     deviceIds: deviceRows.map((r) => r.device_id),
   };
 }
@@ -1230,54 +8818,40 @@ function enforceDailyQuota(req, res, next) {
   next();
 }
 
-const sessions = new Map();
-
-function requireDiscord(req, res, next) {
-  const sid = req.cookies?.sid;
-  if (!sid) return res.redirect("/auth/discord");
-
-  const user = db
-    .prepare(
-      `
-    SELECT users.discord_id, users.username, users.global_name, users.avatar,
-          users.discoverable, users.invited_at
-    FROM sessions
-    JOIN users ON users.discord_id = sessions.discord_id
-    WHERE sessions.session_id = ?
-  `,
-    )
-    .get(sid);
-
-  if (!user) return res.redirect("/auth/discord");
-  req.user = user;
-  next();
-}
-
-const wsByDeviceId = new Map();
-
-const HEARTBEAT_INTERVAL_MS = 15_000;
-
-function isDeviceOnline(deviceId) {
-  const ws = wsByDeviceId.get(deviceId);
-  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-
-  const last = Number(ws.lastPongAt || 0);
-  const ttl = HEARTBEAT_INTERVAL_MS * 2 + 2000;
-  return last && (Date.now() - last) <= ttl;
-}
-
 const app = express();
+const defaultJsonParser = express.json({ strict: true });
+const uploadJsonParser = express.json({
+  strict: true,
+  limit: `${UPLOAD_REQUEST_LIMIT_MB}mb`,
+});
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "./views"));
 app.use(express.static(path.join(__dirname, "../public")));
 app.use(cookieParser());
-app.use(express.json({ strict: true }));
+app.use((req, res, next) => {
+  const wantsLargeJson =
+    req.method === "POST" &&
+    (req.path === "/api/uploads" ||
+      /^\/api\/device\/[^/]+\/avatar$/.test(req.path) ||
+      /^\/api\/device\/[^/]+\/banner$/.test(req.path) ||
+      /^\/api\/device\/[^/]+\/background$/.test(req.path));
+
+  if (wantsLargeJson) {
+    return uploadJsonParser(req, res, next);
+  }
+  return defaultJsonParser(req, res, next);
+});
 app.use(express.urlencoded({ extended: false }));
 app.use(
   cors({
     origin: true,
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Device-Id",
+      "X-Requested-With",
+    ],
     exposedHeaders: [
       "X-RateLimit-Limit",
       "X-RateLimit-Remaining",
@@ -1289,9 +8863,38 @@ app.use(
 
 app.set("trust proxy", 1);
 
-app.use((req, _res, next) => {
-  req.viewUser = getLoggedInUser(req);
+app.use((req, res, next) => {
+  const canonicalUrl = buildSiteUrl(req.path);
+  const robotsValue = requestAllowsIndexing(req)
+    ? INDEXABLE_ROBOTS_VALUE
+    : NOINDEX_ROBOTS_VALUE;
+
+  res.locals.meta = {
+    ...(res.locals.meta || {}),
+    canonicalUrl,
+    robots: robotsValue,
+  };
+
+  if (!requestAllowsIndexing(req)) {
+    res.set("X-Robots-Tag", robotsValue);
+  }
+
+  next();
+});
+
+app.use((req, res, next) => {
+  const actorUser = getLoggedInUser(req);
+  const delegatedSubId = String(req.cookies?.delegated_sub_id || "").trim();
+  const delegatedUser = getDelegatedUserForActor(actorUser, delegatedSubId);
+  if (actorUser && delegatedSubId && !delegatedUser) {
+    res.clearCookie("delegated_sub_id", { path: "/" });
+  }
+
+  req.actorUser = actorUser || null;
+  req.delegatedUser = delegatedUser || null;
+  req.viewUser = delegatedUser || actorUser || null;
   req.viewIsAdmin = req.viewUser ? isAdmin(req.viewUser.discord_id) : false;
+  req.actorIsAdmin = actorUser ? isAdmin(actorUser.discord_id) : false;
   next();
 });
 
@@ -1304,19 +8907,19 @@ app.use((req, res, next) => {
   res.locals.user = user;
   res.locals.isAdmin = isAdmin;
   res.locals.displayName = user
-    ? user.global_name || user.username || user.discord_id
+    ? getPreferredDisplayName(user)
     : null;
-  res.locals.avatarUrl = user
-    ? `https://cdn.discordapp.com/avatars/${encodeURIComponent(user.discord_id)}/${encodeURIComponent(user.avatar || "")}.png?size=64`
-    : "";
+  res.locals.avatarUrl = user ? siteAvatarUrl(user, 64) : "/default-avatar.svg";
   res.locals.meta = {
+    ...(res.locals.meta || {}),
     ogTitle: "PlayCtrl.me",
     ogDesc: "Remote play & control",
-    ogUrl: "https://playctrl.me",
-    ogImage: "https://playctrl.me/favicon-96x96.png",
+    ogUrl: res.locals.meta?.canonicalUrl || buildSiteUrl(req.path),
+    ogImage: `${SITE_ORIGIN}/favicon-96x96.png`,
   };
 
   res.locals.LISTS = LISTS;
+  res.locals.uploadUi = getUploadContextUiConfig();
 
   next();
 });
@@ -1325,21 +8928,187 @@ app.use((req, res, next) => {
   const me = req.viewUser;
 
   if (!me) {
+    res.locals.notificationMenuItems = [];
+    res.locals.notificationUnreadCount = 0;
+    res.locals.notificationTotalCount = 0;
+    return next();
+  }
+
+  const summary = getNotificationSummaryForUser(me.discord_id, {
+    limit: NOTIFICATION_MENU_LIMIT,
+  });
+
+  res.locals.notificationMenuItems = summary.items;
+  res.locals.notificationUnreadCount = summary.unreadCount;
+  res.locals.notificationTotalCount = summary.totalCount;
+  next();
+});
+
+app.use((req, res, next) => {
+  const me = req.viewUser;
+
+  if (!me) {
     res.locals.commandsSentTotal = null;
+    res.locals.commandLikesTotal = null;
     return next();
   }
 
   const row = db
-    .prepare(`SELECT commands_sent_total FROM users WHERE discord_id=?`)
+    .prepare(
+      `
+      SELECT
+        IFNULL(commands_sent_total, 0) AS commands_sent_total,
+        IFNULL(command_likes_total, 0) AS command_likes_total
+      FROM users
+      WHERE discord_id=?
+    `,
+    )
     .get(me.discord_id);
 
   res.locals.commandsSentTotal = row?.commands_sent_total ?? 0;
+  res.locals.commandLikesTotal = row?.command_likes_total ?? 0;
   next();
 });
 
 app.use((req, res, next) => {
   res.locals.discordAvatarUrl = discordAvatarUrl;
+  res.locals.siteAvatarUrl = siteAvatarUrl;
+  res.locals.siteBannerUrl = siteBannerUrl;
+  res.locals.siteBackgroundUrl = siteBackgroundUrl;
+  res.locals.inlineScriptJson = inlineScriptJson;
   next();
+});
+
+app.get("/avatars/:discordId", (req, res) => {
+  const discordId = String(req.params.discordId || "").trim();
+  const row =
+    db
+      .prepare(
+        `
+        SELECT
+          custom_avatar_path,
+          custom_avatar_mime,
+          avatar_cache_path,
+          avatar_cache_mime
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(discordId) || null;
+
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  const asset = resolvePersistedSiteAvatar(row);
+  if (!asset) {
+    return sendDefaultSiteAvatar(res);
+  }
+
+  res.type(asset.mime);
+  return res.sendFile(asset.absolutePath);
+});
+
+app.get("/default-avatar.svg", (_req, res) => {
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  return sendDefaultSiteAvatar(res);
+});
+
+app.get("/banners/:discordId", (req, res) => {
+  const discordId = String(req.params.discordId || "").trim();
+  const row =
+    db
+      .prepare(
+        `
+        SELECT
+          custom_banner_path,
+          custom_banner_mime
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(discordId) || null;
+
+  const asset = resolvePersistedSiteBanner(row);
+  if (!asset) {
+    return res.status(404).type("text/plain").send("Banner not found.");
+  }
+
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  res.type(asset.mime);
+  res.sendFile(asset.absolutePath);
+});
+
+app.get("/group-avatars/:groupKey", (req, res) => {
+  const groupKey = String(req.params.groupKey || "").trim();
+  const row =
+    db
+      .prepare(
+        `
+        SELECT
+          custom_avatar_path,
+          custom_avatar_mime
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(groupKey) || null;
+
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  const asset = resolvePersistedSiteAvatar(row);
+  if (!asset) {
+    return sendDefaultSiteAvatar(res);
+  }
+
+  res.type(asset.mime);
+  return res.sendFile(asset.absolutePath);
+});
+
+app.get("/group-banners/:groupKey", (req, res) => {
+  const groupKey = String(req.params.groupKey || "").trim();
+  const row =
+    db
+      .prepare(
+        `
+        SELECT
+          custom_banner_path,
+          custom_banner_mime
+        FROM community_groups
+        WHERE group_key=?
+      `,
+      )
+      .get(groupKey) || null;
+
+  const asset = resolvePersistedSiteBanner(row);
+  if (!asset) {
+    return res.status(404).type("text/plain").send("Banner not found.");
+  }
+
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  res.type(asset.mime);
+  return res.sendFile(asset.absolutePath);
+});
+
+app.get("/backgrounds/:discordId", (req, res) => {
+  const discordId = String(req.params.discordId || "").trim();
+  const row =
+    db
+      .prepare(
+        `
+        SELECT
+          custom_background_path,
+          custom_background_mime
+        FROM users
+        WHERE discord_id=?
+      `,
+      )
+      .get(discordId) || null;
+
+  const asset = resolvePersistedSiteBackground(row);
+  if (!asset) {
+    return res.status(404).type("text/plain").send("Background not found.");
+  }
+
+  res.set("Cache-Control", "private, no-cache, max-age=0, must-revalidate");
+  res.type(asset.mime);
+  res.sendFile(asset.absolutePath);
 });
 
 const api = express.Router();
@@ -1360,9 +9129,7 @@ function requireNotBanned(req, res, next) {
   const u = req.user || req.viewUser;
   if (!u?.discord_id) return next();
 
-  const banned = db
-    .prepare("SELECT discord_id, reason FROM bans WHERE discord_id=?")
-    .get(u.discord_id);
+  const banned = getBanRecord(u.discord_id);
   if (!banned) return next();
 
   return res.status(403).type("html").send(`
@@ -1373,21 +9140,35 @@ function requireNotBanned(req, res, next) {
 }
 
 function denyIfDisabled(req, res, ownerId, cmd) {
-  const prefs = getCommandPrefsForUser(ownerId);
-  if (isCommandEnabled(prefs, cmd)) return false;
+  const actorUserId =
+    req.actorUser?.discord_id ||
+    req.api?.user_id ||
+    req.user?.discord_id ||
+    req.viewUser?.discord_id ||
+    null;
+  const effectiveUserId =
+    req.user?.discord_id ||
+    req.viewUser?.discord_id ||
+    null;
+  const selfPreviewMode =
+    effectiveUserId && String(effectiveUserId || "").trim() === String(ownerId || "").trim()
+      ? normalizeSelfPreviewMode(req.body?.preview_mode)
+      : null;
+  if (
+    isCommandEnabledForOwner(ownerId, cmd, actorUserId, {
+      selfPreviewMode,
+    })
+  ) {
+    return false;
+  }
 
-  const msg = "That command is disabled for this user.";
+  const msg = "That command is disabled for this user right now.";
   if (wantsJson(req)) {
-    res
-      .status(403)
-      .json({ ok: false, reason: "command_disabled", cmd, message: msg });
+    res.status(403).json({ ok: false, reason: "command_disabled", cmd, message: msg });
   } else {
-    res
-      .status(403)
-      .type("html")
-      .send(
-        `${msg} <a href="/device/${encodeURIComponent(req.params.pairCode)}">Back</a>`,
-      );
+    res.status(403).type("html").send(
+      `${msg} <a href="/device/${encodeURIComponent(req.params.pairCode)}">Back</a>`
+    );
   }
   return true;
 }
@@ -1396,12 +9177,92 @@ app.use((err, req, res, next) => {
   if (err && err.type === "entity.parse.failed") {
     return res.status(400).json({ ok: false, reason: "bad_json" });
   }
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({
+      ok: false,
+      message:
+        req.path === "/api/uploads"
+          ? "Upload payload is too large."
+          : "Request payload is too large.",
+    });
+  }
   next(err);
 });
 
 app.get("/", requireNotBanned, (req, res) => {
-  renderWithLayout(res, "pages/home", {
+  const dailyLeaders = listTopCommandSendersForUtcDay(HOME_LEADERBOARD_LIMIT);
+  const memberId = String(req.viewUser?.discord_id || "").trim();
+  const memberPairCode = memberId
+    ? String(
+        db.prepare("SELECT code_plain FROM pair_codes WHERE user_id=?").get(memberId)
+          ?.code_plain || "",
+      ).trim()
+    : "";
+
+  renderWithLayout(res, memberId ? "pages/home_member" : "pages/home_visitor", {
     title: "PlayCtrl.me",
+    extraStylesheets: ["/css/home_preview.css"],
+    onlineUserCount: getOnlineUserCount(),
+    topSendersToday: dailyLeaders.items,
+    topSendersAllTime: listTopCommandSendersAllTime(HOME_LEADERBOARD_LIMIT),
+    leaderboardUtcDate: dailyLeaders.isoDate,
+    memberControlPath: memberPairCode
+      ? `/device/${encodeURIComponent(memberPairCode)}`
+      : "/profile",
+  });
+});
+
+app.get("/preview/home-visitor", requireNotBanned, (req, res) => {
+  const dailyLeaders = listTopCommandSendersForUtcDay(HOME_LEADERBOARD_LIMIT);
+
+  renderWithLayout(res, "pages/home_visitor", {
+    title: "Visitor Homepage Preview · PlayCtrl.me",
+    extraStylesheets: ["/css/home_preview.css"],
+    onlineUserCount: getOnlineUserCount(),
+    topSendersToday: dailyLeaders.items,
+    topSendersAllTime: listTopCommandSendersAllTime(HOME_LEADERBOARD_LIMIT),
+    leaderboardUtcDate: dailyLeaders.isoDate,
+    meta: {
+      robots: NOINDEX_ROBOTS_VALUE,
+    },
+  });
+});
+
+app.get("/preview/home-member", requireNotBanned, (req, res) => {
+  const dailyLeaders = listTopCommandSendersForUtcDay(HOME_LEADERBOARD_LIMIT);
+  const memberId = String(req.viewUser?.discord_id || "").trim();
+  const memberPairCode = memberId
+    ? String(
+        db.prepare("SELECT code_plain FROM pair_codes WHERE user_id=?").get(memberId)
+          ?.code_plain || "",
+      ).trim()
+    : "";
+
+  renderWithLayout(res, "pages/home_member", {
+    title: "Member Homepage Preview · PlayCtrl.me",
+    extraStylesheets: ["/css/home_preview.css"],
+    onlineUserCount: getOnlineUserCount(),
+    topSendersToday: dailyLeaders.items,
+    topSendersAllTime: listTopCommandSendersAllTime(HOME_LEADERBOARD_LIMIT),
+    leaderboardUtcDate: dailyLeaders.isoDate,
+    memberControlPath: memberPairCode
+      ? `/device/${encodeURIComponent(memberPairCode)}`
+      : "/profile",
+    meta: {
+      robots: NOINDEX_ROBOTS_VALUE,
+    },
+  });
+});
+
+app.get("/terms", requireNotBanned, (req, res) => {
+  renderWithLayout(res, "pages/terms", {
+    title: "Terms of Service",
+  });
+});
+
+app.get("/privacy", requireNotBanned, (req, res) => {
+  renderWithLayout(res, "pages/privacy", {
+    title: "Privacy · PlayCtrl.me",
   });
 });
 
@@ -1411,6 +9272,7 @@ app.post("/logout", (req, res) => {
     db.prepare("DELETE FROM sessions WHERE session_id=?").run(sid);
   }
   res.clearCookie("sid");
+  res.clearCookie("delegated_sub_id", { path: "/" });
   res.redirect("/");
 });
 
@@ -1429,6 +9291,60 @@ app.use(
     cacheControl: false,
   }),
 );
+
+function requireDeviceAuth(req, res, next) {
+  try {
+    const deviceId = String(req.body?.deviceId || req.query?.deviceId || "").trim();
+    const deviceToken = String(req.body?.deviceToken || req.query?.deviceToken || "").trim();
+    if (!deviceId || !deviceToken) {
+      return res.status(401).json({ ok: false, code: "MISSING_DEVICE_AUTH" });
+    }
+
+    const row = db
+      .prepare("SELECT device_token_hash FROM devices_v2 WHERE device_id=?")
+      .get(deviceId);
+    if (!row) return res.status(401).json({ ok: false, code: "UNKNOWN_DEVICE" });
+
+    if (hmac(deviceToken) !== row.device_token_hash) {
+      return res.status(401).json({ ok: false, code: "BAD_DEVICE_TOKEN" });
+    }
+
+    const ownerUserId = resolveOwnerUserIdByDeviceId(deviceId);
+    if (!ownerUserId) {
+      return res.status(401).json({ ok: false, code: "UNPAIRED_DEVICE" });
+    }
+
+    req.deviceAuth = { deviceId, ownerUserId };
+    next();
+  } catch (e) {
+    return res.status(500).json({ ok: false, code: "SERVER_ERROR" });
+  }
+}
+
+app.post("/api/client/bootstrap-prefs", requireDeviceAuth, (req, res) => {
+  const ownerUserId = req.deviceAuth.ownerUserId;
+
+  const row = db
+    .prepare(`SELECT client_prefs_imported_at FROM users WHERE discord_id=?`)
+    .get(ownerUserId);
+
+  const importedAt = Number(row?.client_prefs_imported_at || 0);
+  if (importedAt > 0) {
+    return res.json({ ok: true, imported: true, importedAt });
+  }
+
+  const prefs = getCommandPrefsForUser(ownerUserId);
+  return res.json({ ok: true, imported: false, prefs });
+});
+
+app.post("/api/client/confirm-prefs-import", requireDeviceAuth, (req, res) => {
+  const ownerUserId = req.deviceAuth.ownerUserId;
+
+  db.prepare(`UPDATE users SET client_prefs_imported_at=? WHERE discord_id=?`)
+    .run(Date.now(), ownerUserId);
+
+  return res.json({ ok: true });
+});
 
 app.get("/auth/discord", (req, res) => {
   const state = b64url(crypto.randomBytes(16));
@@ -1483,7 +9399,13 @@ app.get("/auth/discord/callback", async (req, res) => {
   const me = await meResp.json();
 
   const existing = db
-    .prepare("SELECT discord_id FROM users WHERE discord_id=?")
+    .prepare(
+      `
+      SELECT discord_id, avatar, avatar_cache_path, avatar_cache_mime, avatar_cache_updated_at
+      FROM users
+      WHERE discord_id=?
+    `,
+    )
     .get(me.id);
 
   db.prepare(
@@ -1497,6 +9419,14 @@ app.get("/auth/discord/callback", async (req, res) => {
       updated_at=excluded.updated_at
   `,
   ).run(me.id, me.username, me.global_name, me.avatar, Date.now(), Date.now());
+
+  try {
+    await refreshCachedDiscordAvatar(me, existing || null);
+  } catch (e) {
+    console.warn(
+      `[avatar-cache] could not refresh avatar for ${me.id}: ${e?.message || e}`,
+    );
+  }
 
   logEvent({
     type: existing ? "user_updated" : "user_created",
@@ -1548,55 +9478,178 @@ app.get("/auth/discord/callback", async (req, res) => {
   res.redirect(nextUrl);
 });
 
+const pairAttemptBuckets = new Map();
+const PAIR_ATTEMPT_WINDOW_MS = 5 * 60 * 1000;
+const PAIR_ATTEMPT_LIMIT = 20;
+
+function consumePairAttempt(req) {
+  const key = String(req.ip || req.socket?.remoteAddress || "unknown");
+  const now = Date.now();
+  const current = pairAttemptBuckets.get(key);
+  const bucket =
+    !current || now - Number(current.startedAt || 0) >= PAIR_ATTEMPT_WINDOW_MS
+      ? { startedAt: now, count: 0 }
+      : current;
+  bucket.count += 1;
+  pairAttemptBuckets.set(key, bucket);
+  return {
+    allowed: bucket.count <= PAIR_ATTEMPT_LIMIT,
+    retryAfterMs: Math.max(1000, PAIR_ATTEMPT_WINDOW_MS - (now - bucket.startedAt)),
+  };
+}
+
 app.options("/api/pair", cors());
 
 app.post("/api/pair", (req, res) => {
   try {
+    const pairAttempt = consumePairAttempt(req);
+    if (!pairAttempt.allowed) {
+      res.set("Retry-After", String(Math.ceil(pairAttempt.retryAfterMs / 1000)));
+      return res.status(429).json({
+        ok: false,
+        reason: "too_many_attempts",
+        retryAfterMs: pairAttempt.retryAfterMs,
+      });
+    }
     const pairCode = String(req.body?.pairCode || "").trim();
     const deviceId = String(req.body?.deviceId || "").trim();
-
-    console.log("[/api/pair] body=", req.body);
+    const clientSecret = String(req.body?.clientSecret || "").trim();
+    const deviceName = String(req.body?.deviceName || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
 
     if (!/^\d{6}$/.test(pairCode) || !deviceId) {
-      console.log("[/api/pair] bad_request", { pairCode, deviceId });
       return res.status(400).json({ ok: false, reason: "bad_request" });
     }
 
-    const codeHash = hmac(pairCode);
-    console.log("[/api/pair] codeHash=", codeHash);
+    const ownerUserId = resolveOwnerUserIdByPairCode(pairCode);
 
-    const pc = db
-      .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
-      .get(codeHash);
-    console.log("[/api/pair] pair_codes row=", pc);
+    if (!ownerUserId) {
+      return res.status(404).json({ ok: false, reason: "invalid_code" });
+    }
 
-    if (!pc) return res.status(404).json({ ok: false, reason: "invalid_code" });
+    const credentialMeta = clientPairingCredentials.getCredentialMeta(ownerUserId);
+    const secretCheck = clientSecret
+      ? clientPairingCredentials.verifySecret(ownerUserId, clientSecret)
+      : { ok: false, row: clientPairingCredentials.getCredential(ownerUserId) };
+
+    if (clientSecret && !secretCheck.ok) {
+      return res.status(403).json({
+        ok: false,
+        reason: "invalid_client_secret",
+        message: "The client secret is invalid.",
+      });
+    }
+    if (credentialMeta.required && !secretCheck.ok) {
+      return res.status(403).json({
+        ok: false,
+        reason: "client_secret_required",
+        message: "This account requires a client secret.",
+      });
+    }
 
     const token = crypto.randomBytes(24).toString("base64url");
+    const now = Date.now();
+    const isVerified = !!secretCheck.ok;
+    const isActivatingProtection = isVerified && !credentialMeta.required;
+    let revokedDeviceIds = [];
 
-    db.prepare(
-      `
-      INSERT INTO devices_v2 (device_id, device_token_hash, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(device_id) DO UPDATE SET
-        device_token_hash=excluded.device_token_hash,
-        last_seen_at=excluded.last_seen_at
-    `,
-    ).run(deviceId, hmac(token), Date.now(), Date.now());
+    const pairTx = db.transaction(() => {
+      if (isActivatingProtection) {
+        revokedDeviceIds = db
+          .prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`)
+          .all(ownerUserId)
+          .map((row) => String(row.device_id || "").trim())
+          .filter(Boolean);
+        db.prepare(`DELETE FROM device_pairs WHERE user_id=?`).run(ownerUserId);
+        db.prepare(
+          `UPDATE client_pairing_credentials
+           SET secret_required=1, activated_at=?, updated_at=?
+           WHERE user_id=?`,
+        ).run(now, now, ownerUserId);
+      }
 
-    db.prepare(
-      `
-      INSERT INTO device_pairs (device_id, user_id, paired_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(device_id) DO UPDATE SET
-        user_id=excluded.user_id,
-        paired_at=excluded.paired_at
-    `,
-    ).run(deviceId, pc.user_id, Date.now());
+      db.prepare(
+        `
+        INSERT INTO devices_v2 (device_id, device_token_hash, created_at, last_seen_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+          device_token_hash=excluded.device_token_hash,
+          last_seen_at=excluded.last_seen_at
+      `,
+      ).run(deviceId, hmac(token), now, now);
 
-    console.log("[/api/pair] ok userId=", pc.user_id);
+      db.prepare(
+        `
+        INSERT INTO device_pairs (
+          device_id, user_id, paired_at, auth_level, secret_version,
+          verified_at, device_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+          user_id=excluded.user_id,
+          paired_at=excluded.paired_at,
+          auth_level=excluded.auth_level,
+          secret_version=excluded.secret_version,
+          verified_at=excluded.verified_at,
+          device_name=excluded.device_name
+      `,
+      ).run(
+        deviceId,
+        ownerUserId,
+        now,
+        isVerified ? "verified" : "legacy",
+        isVerified ? Number(secretCheck.row?.secret_version || 1) : null,
+        isVerified ? now : null,
+        deviceName || null,
+      );
+    });
+    pairTx();
 
-    return res.json({ ok: true, deviceToken: token, userId: pc.user_id });
+    if (isActivatingProtection) {
+      for (const revokedDeviceId of revokedDeviceIds) {
+        const ws = wsByDeviceId.get(revokedDeviceId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({
+              type: "unauthorized",
+              reason: "client_secret_activated",
+            }));
+          } catch {}
+          try {
+            ws.close(1008, "client_secret_activated");
+          } catch {}
+        }
+        wsByDeviceId.delete(revokedDeviceId);
+      }
+    }
+
+    logEvent({
+      type: "device_paired",
+      actorUserId: ownerUserId,
+      targetUserId: ownerUserId,
+      deviceId,
+      req,
+      payload: {
+        authLevel: isVerified ? "verified" : "legacy",
+        protectionActivated: isActivatingProtection,
+        revokedDeviceCount: revokedDeviceIds.length,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      deviceToken: token,
+      userId: ownerUserId,
+      authLevel: isVerified ? "verified" : "legacy",
+      scopes: isVerified ? ["commands", "command_history"] : ["commands"],
+      commandHistoryAccess: isVerified,
+      commandHistoryEndpoint: isVerified
+        ? "/api/client/v1/command-history"
+        : null,
+      clientSecretRequired: credentialMeta.required || isActivatingProtection,
+      revokedLegacyDeviceCount: revokedDeviceIds.length,
+    });
   } catch (e) {
     console.error("[/api/pair] ERROR", e);
     return res.status(500).json({ ok: false, reason: "server_error" });
@@ -1739,724 +9792,115 @@ app.get("/api-docs", (req, res) => {
   });
 });
 
-app.get("/profile", requireDiscord, requireNotBanned, (req, res) => {
-  const code = ensurePairCode(req.user.discord_id);
-  res.locals.code = code;
-  res.locals.fullControlUrl = `https://playctrl.me/device/${code}`;
+app.get("/notifications", requireDiscord, requireNotBanned, (req, res) => {
+  const userId = String(req.user.discord_id || "").trim();
 
-  res.locals.catalog = getCatalogItems();
-  res.locals.selections = getUserSelections(req.user.discord_id);
+  markAllNotificationsReadForUser(userId);
 
-  res.locals.isDiscoverOn = !!req.user.discoverable;
-  res.locals.prefs = getCommandPrefsForUser(req.user.discord_id);
+  const totalCount = countNotificationsForUser(userId);
+  const items = listNotificationsForUser(userId, {
+    limit: NOTIFICATION_PAGE_LIMIT,
+  });
 
-  const wlRow = db
-    .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
-    .get(req.user.discord_id);
-  res.locals.isWhitelistOn = !!wlRow?.whitelist_enabled;
-  res.locals.wlList = getWhitelist(req.user.discord_id);
+  res.locals.notificationPageItems = items;
+  res.locals.notificationPageCount = totalCount;
+  res.locals.notificationPageTruncated = totalCount > items.length;
+  res.locals.notificationMenuItems = items.slice(0, NOTIFICATION_MENU_LIMIT);
+  res.locals.notificationUnreadCount = 0;
+  res.locals.notificationTotalCount = totalCount;
 
-  res.locals.aboutMe = getAboutMe(req.user.discord_id);
-
-  const commandsSentTotal = Number(
-    db
-      .prepare(
-        `SELECT IFNULL(commands_sent_total, 0) AS n FROM users WHERE discord_id=?`,
-      )
-      .get(req.user.discord_id)?.n || 0,
-  );
-
-  const apiEligible = commandsSentTotal >= 500;
-  res.locals.apiEligible = apiEligible;
-
-  let apiMeta = null;
-  if (apiEligible) {
-    ensureUserApiKeyExists(req.user.discord_id);
-    apiMeta = getApiKeyMeta(req.user.discord_id);
-  }
-
-  res.locals.apiMeta = apiMeta;
-
-  renderWithLayout(res, "pages/profile/pf_main", {
-    title: "Profile",
+  renderWithLayout(res, "pages/notifications/noti_main", {
+    title: "Notifications",
+    layoutBodyClass: "page-notifications",
   });
 });
 
-app.post("/profile/reset-code", requireDiscord, (req, res) => {
-  const userId = req.user.discord_id;
-
-  const deviceIds = unpairAllDevicesForUser(userId);
-
-  const code = gen6();
-  db.prepare(
-    `
-    INSERT INTO pair_codes (user_id, code_hash, code_plain, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      code_hash=excluded.code_hash,
-      code_plain=excluded.code_plain,
-      updated_at=excluded.updated_at
-  `,
-  ).run(userId, hmac(code), code, Date.now());
-
-  for (const deviceId of deviceIds) {
-    const ws = wsByDeviceId.get(deviceId);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify({ type: "unauthorized" }));
-      } catch {}
-      try {
-        ws.close(1008, "pairing_reset");
-      } catch {}
-    }
-    wsByDeviceId.delete(deviceId);
-  }
-
-  logEvent({
-    type: "pair_code_reset",
-    actorUserId: userId,
-    targetUserId: userId,
-    req,
-    payload: { unpairedDeviceCount: deviceIds.length },
-  });
-
-  res.redirect("/profile");
-});
-
-app.post("/profile/discover", requireDiscord, (req, res) => {
-  const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
-
-  const wl = db
-    .prepare(`SELECT whitelist_enabled FROM users WHERE discord_id=?`)
-    .get(req.user.discord_id);
-  if (wl?.whitelist_enabled && String(req.body?.enabled || "0") === "1") {
-    if (wantsJson(req))
-      return res
-        .status(400)
-        .json({ ok: false, message: "Disable whitelist to enable Discover." });
-    return res
-      .status(400)
-      .type("html")
-      .send("Disable whitelist to enable Discover.");
-  }
-
-  db.prepare(`UPDATE users SET discoverable=? WHERE discord_id=?`).run(
-    enabled,
-    req.user.discord_id,
-  );
-
-  logEvent({
-    type: enabled ? "discover_enabled" : "discover_disabled",
-    actorUserId: req.user.discord_id,
-    targetUserId: req.user.discord_id,
-    req,
-    payload: {},
-  });
-
-  if (wantsJson(req)) {
-    return res.json({
-      ok: true,
-      enabled,
-      message: enabled ? "Enabled" : "Disabled",
-    });
-  }
-
-  res.redirect("/profile");
-});
-
-app.post("/profile/commands", requireDiscord, (req, res) => {
-  const cmd = String(req.body?.cmd || "").trim();
-  const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
-
-  const col =
-    cmd === "popup"
-      ? "allow_popup"
-      : cmd === "open_url"
-        ? "allow_open_url"
-        : cmd === "image_popup"
-          ? "allow_image_popup"
-          : cmd === "set_wallpaper"
-            ? "allow_set_wallpaper"
-            : null;
-
-  if (!col) {
-    if (wantsJson(req))
-      return res.status(400).json({ ok: false, message: "Unknown command." });
-    return res.status(400).send("Unknown command.");
-  }
-
-  db.prepare(`UPDATE users SET ${col}=? WHERE discord_id=?`).run(
-    enabled,
-    req.user.discord_id,
-  );
-
-  logEvent({
-    type: "command_pref_updated",
-    actorUserId: req.user.discord_id,
-    targetUserId: req.user.discord_id,
-    req,
-    payload: { cmd, enabled },
-  });
-
-  if (wantsJson(req)) {
-    return res.json({ ok: true, cmd, enabled, message: "Saved" });
-  }
-  return res.redirect("/profile");
-});
-
-app.post("/profile/aboutme", requireDiscord, requireNotBanned, (req, res) => {
-  const text = String(req.body?.text || "");
-  const saved = setAboutMe(req.user.discord_id, text);
-
-  logEvent({
-    type: "about_me_updated",
-    actorUserId: req.user.discord_id,
-    targetUserId: req.user.discord_id,
-    req,
-    payload: { len: saved.length },
-  });
-
-  if (wantsJson(req)) return res.json({ ok: true, len: saved.length });
-  return res.redirect("/profile");
-});
-
-app.post(
-  "/profile/lists/toggle",
+app.get(
+  "/notifications/summary",
   requireDiscord,
   requireNotBanned,
   (req, res) => {
-    const listKey = String(req.body?.listKey || "").trim();
-    const itemKey = String(req.body?.itemKey || "").trim();
-    const enabled = String(req.body?.enabled || "0") === "1";
-
-    try {
-      setUserItem(req.user.discord_id, listKey, itemKey, enabled);
-
-      if (wantsJson(req)) return res.json({ ok: true });
-      return res.redirect("/profile");
-    } catch (e) {
-      const msg = e?.message || "Failed";
-      if (wantsJson(req))
-        return res.status(400).json({ ok: false, message: msg });
-      return res.status(400).type("html").send(msg);
-    }
-  },
-);
-
-app.post(
-  "/profile/whitelist/toggle",
-  requireDiscord,
-  requireNotBanned,
-  (req, res) => {
-    const enabled = String(req.body?.enabled || "0") === "1" ? 1 : 0;
-
-    const tx = db.transaction(() => {
-      db.prepare(`UPDATE users SET whitelist_enabled=? WHERE discord_id=?`).run(
-        enabled,
-        req.user.discord_id,
-      );
-
-      if (enabled) {
-        db.prepare(`UPDATE users SET discoverable=0 WHERE discord_id=?`).run(
-          req.user.discord_id,
-        );
-      }
+    const userId = String(req.user?.discord_id || "").trim();
+    const summary = getNotificationSummaryForUser(userId, {
+      limit: NOTIFICATION_MENU_LIMIT,
     });
-
-    tx();
-
-    logEvent({
-      type: enabled ? "whitelist_enabled" : "whitelist_disabled",
-      actorUserId: req.user.discord_id,
-      targetUserId: req.user.discord_id,
-      req,
-      payload: {},
-    });
-
-    if (wantsJson(req)) return res.json({ ok: true, enabled });
-    return res.redirect("/profile");
-  },
-);
-
-app.post(
-  "/profile/whitelist/add",
-  requireDiscord,
-  requireNotBanned,
-  (req, res) => {
-    const allowedId = String(req.body?.discord_id || "").trim();
-
-    if (!isDiscordId(allowedId)) {
-      return wantsJson(req)
-        ? res.status(400).json({ ok: false, message: "Bad Discord ID." })
-        : res.status(400).type("html").send("Bad Discord ID.");
-    }
-
-    if (allowedId === req.user.discord_id) {
-      return wantsJson(req)
-        ? res
-            .status(400)
-            .json({ ok: false, message: "You can’t add yourself." })
-        : res.status(400).type("html").send("You can’t add yourself.");
-    }
-
-    const exists = db
-      .prepare(`SELECT discord_id FROM users WHERE discord_id=?`)
-      .get(allowedId);
-    if (!exists) {
-      return wantsJson(req)
-        ? res
-            .status(400)
-            .json({
-              ok: false,
-              message: "That user hasn’t logged in yet (no user record).",
-            })
-        : res.status(400).type("html").send("That user hasn’t logged in yet.");
-    }
-
-    db.prepare(
-      `
-    INSERT OR IGNORE INTO user_whitelist (owner_id, allowed_id, created_at)
-    VALUES (?, ?, ?)
-  `,
-    ).run(req.user.discord_id, allowedId, Date.now());
-
-    logEvent({
-      type: "whitelist_added",
-      actorUserId: req.user.discord_id,
-      targetUserId: allowedId,
-      req,
-      payload: {},
-    });
-
-    if (wantsJson(req)) return res.json({ ok: true });
-    return res.redirect("/profile");
-  },
-);
-
-app.post(
-  "/profile/whitelist/remove",
-  requireDiscord,
-  requireNotBanned,
-  (req, res) => {
-    const allowedId = String(req.body?.discord_id || "").trim();
-
-    db.prepare(
-      `
-    DELETE FROM user_whitelist
-    WHERE owner_id=? AND allowed_id=?
-  `,
-    ).run(req.user.discord_id, allowedId);
-
-    logEvent({
-      type: "whitelist_removed",
-      actorUserId: req.user.discord_id,
-      targetUserId: allowedId,
-      req,
-      payload: {},
-    });
-
-    if (wantsJson(req)) return res.json({ ok: true });
-    return res.redirect("/profile");
-  },
-);
-
-app.post(
-  "/profile/api_key/reset",
-  requireDiscord,
-  requireNotBanned,
-  (req, res) => {
-    const raw = genApiKey();
-    const key_hash = hashApiKey(raw);
-    const now = Date.now();
-    const sent = getCommandsSentTotal(req.user.discord_id);
-
-    if (sent < API_MIN_COMMANDS) {
-      return res.status(403).type("html").send("Not eligible.");
-    }
-
-    db.prepare(
-      `
-    INSERT INTO api_keys (user_id, key_hash, created_at, last_reset_at)
-    VALUES (?, ?, COALESCE((SELECT created_at FROM api_keys WHERE user_id=?), ?), ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      key_hash=excluded.key_hash,
-      last_reset_at=excluded.last_reset_at
-  `,
-    ).run(req.user.discord_id, key_hash, req.user.discord_id, now, now);
 
     return res.json({
       ok: true,
-      api_key: raw,
-      last_reset_at: now,
+      items: summary.items,
+      unreadCount: summary.unreadCount,
+      totalCount: summary.totalCount,
     });
   },
 );
 
-app.get("/device/:pairCode", requireDiscord, requireNotBanned, (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  if (!/^\d{6}$/.test(pairCode)) return res.status(400).send("Bad device code");
+app.post("/notifications/mark-read", requireDiscord, requireNotBanned, (req, res) => {
+  const userId = String(req.user.discord_id || "").trim();
+  const changed = markAllNotificationsReadForUser(userId);
+  const totalCount = countNotificationsForUser(userId);
 
-  const me = req.viewUser?.discord_id || null;
-
-  res.locals.pairCode = pairCode;
-
-  const codeHash = hmac(pairCode);
-  const pc = db
-    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
-    .get(codeHash);
-  if (!pc) return res.status(404).send("Unknown code");
-
-  const ownerId = pc.user_id;
-  res.locals.ownerId = ownerId;
-
-  const ownerUser = db
-    .prepare(
-      `
-    SELECT discord_id, username, global_name, avatar
-    FROM users
-    WHERE discord_id=?
-  `,
-    )
-    .get(ownerId);
-  res.locals.ownerUser = ownerUser;
-
-  const viewerRow = db
-    .prepare(
-      `
-    SELECT commands_sent_total
-    FROM users
-    WHERE discord_id=?
-  `,
-    )
-    .get(req.user.discord_id);
-  const viewerCommandsSentTotal = Number(viewerRow?.commands_sent_total || 0);
-  res.locals.cooldownApplies = viewerCommandsSentTotal < 100;
-
-  res.locals.viewerIsOwner = req.user.discord_id === ownerId;
-  res.locals.boardMsgs = getBoardMessages(ownerId, 10);
-
-  const ownerPrefs = getCommandPrefsForUser(ownerId);
-
-  const ownerSelections = getUserSelections(ownerId);
-  const catalog = getCatalogItems();
-
-  res.locals.aboutMe = getAboutMe(ownerId);
-
-  res.locals.labelByKey = new Map(catalog.map((it) => [it.key, it.label]));
-  res.locals.favKeys = Array.from(ownerSelections.favorites || []);
-  res.locals.disKeys = Array.from(ownerSelections.dislikes || []);
-
-  const devices = db
-    .prepare(
-      `
-    SELECT dp.device_id, d.last_seen_at
-    FROM device_pairs dp
-    JOIN devices_v2 d ON d.device_id = dp.device_id
-    WHERE dp.user_id = ?
-    ORDER BY d.last_seen_at DESC
-  `,
-    )
-    .all(ownerId);
-
-  res.locals.anyOnline = devices.some((d) => isDeviceOnline(d.device_id));
-
-  const canPopup = isCommandEnabled(ownerPrefs, "popup");
-  const canOpenUrl = isCommandEnabled(ownerPrefs, "open_url");
-  const canImage = isCommandEnabled(ownerPrefs, "image_popup");
-  const canSetWallpaper = isCommandEnabled(ownerPrefs, "set_wallpaper");
-
-  res.locals.canPopup = canPopup;
-  res.locals.canOpenUrl = canOpenUrl;
-  res.locals.canImage = canImage;
-  res.locals.canSetWallpaper = canSetWallpaper;
-  res.locals.anyCommandsEnabled =
-    canPopup || canOpenUrl || canImage || canSetWallpaper;
-
-  let isFavorited = false;
-  if (me) {
-    isFavorited = !!db
-      .prepare(
-        `
-      SELECT 1 FROM favorites
-      WHERE user_id = ? AND favorite_user_id = ?
-    `,
-      )
-      .get(me, ownerId);
+  if (!wantsJson(req)) {
+    return res.redirect("/notifications");
   }
-  res.locals.isFavorited = isFavorited;
 
-  renderWithLayout(res, "pages/control_links/con_main", {
-    title: "Control",
-    meta: {
-      ogTitle: `Control ${ownerUser?.global_name || ownerUser?.username || "User"}'s device!`,
-      ogDesc: `Open this control page to send commands.`,
-    },
-  });
-});
-
-api.get("/user/:pairCode", (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-
-  const row = db
-    .prepare(
-      `
-    SELECT
-      u.discord_id,
-      u.username,
-      u.global_name,
-      u.avatar,
-      pc.code_plain,
-      IFNULL(u.whitelist_enabled, 0) AS whitelist_enabled,
-      IFNULL(u.discoverable, 0) AS discoverable
-    FROM pair_codes pc
-    JOIN users u ON u.discord_id = pc.user_id
-    WHERE pc.code_plain = ?
-  `,
-    )
-    .get(pairCode);
-
-  if (!row) return res.status(404).json({ ok: false, code: "USER_NOT_FOUND" });
-
-  const devs = db
-    .prepare(`SELECT device_id FROM device_pairs WHERE user_id=?`)
-    .all(row.discord_id);
-  const online = devs.some((d) => isDeviceOnline(d.device_id));
-
-  res.json({
+  return res.json({
     ok: true,
-    user: {
-      displayName: row.global_name || row.username || row.discord_id,
-      username: row.username || null,
-      discordId: row.discord_id,
-      pairCode: row.code_plain,
-      avatarUrl: discordAvatarUrl(row, 128),
-      online,
-      discoverable: !!row.discoverable,
-      whitelistEnabled: !!row.whitelist_enabled,
-    },
+    changed,
+    unreadCount: 0,
+    totalCount,
   });
 });
 
-app.get("/discover", (req, res) => {
-  function fnv1a32(str) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-    }
-    return h >>> 0;
+app.post("/notifications/clear-all", requireDiscord, requireNotBanned, (req, res) => {
+  const userId = String(req.user.discord_id || "").trim();
+  const clearedCount = clearAllNotificationsForUser(userId);
+
+  if (!wantsJson(req)) {
+    return res.redirect("/notifications");
   }
 
-  function windowIdNow10m() {
-    return Math.floor(Date.now() / (10 * 60 * 1000));
-  }
-
-  const rows = db
-    .prepare(
-      `
-    SELECT
-      u.discord_id,
-      u.username,
-      u.global_name,
-      u.avatar,
-      pc.code_plain
-    FROM users u
-    JOIN pair_codes pc ON pc.user_id = u.discord_id
-    WHERE u.discoverable = 1 AND IFNULL(u.whitelist_enabled, 0) = 0
-    ORDER BY u.global_name COLLATE NOCASE, u.username COLLATE NOCASE
-    LIMIT 500
-  `,
-    )
-    .all();
-
-  const onlineByUser = new Map();
-  const ids = rows.map((r) => r.discord_id);
-
-  if (ids.length) {
-    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-    const args = {};
-    ids.forEach((id, i) => (args[`id${i}`] = id));
-
-    const pairs = db
-      .prepare(
-        `
-      SELECT user_id, device_id
-      FROM device_pairs
-      WHERE user_id IN (${placeholders})
-    `,
-      )
-      .all(args);
-
-    const deviceIdsByUser = new Map();
-    for (const p of pairs) {
-      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-      deviceIdsByUser.get(p.user_id).push(p.device_id);
-    }
-
-    for (const userId of ids) {
-      const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some((did) => isDeviceOnline(did));
-      onlineByUser.set(userId, anyOnline);
-    }
-  }
-
-  let onlineRows = rows.filter((u) => !!onlineByUser.get(u.discord_id));
-
-  const winId = windowIdNow10m();
-  onlineRows.sort((a, b) => {
-    const ak = fnv1a32(String(winId) + ":" + String(a.code_plain || ""));
-    const bk = fnv1a32(String(winId) + ":" + String(b.code_plain || ""));
-    return ak - bk;
-  });
-
-  res.locals.onlineRows = onlineRows;
-
-  renderWithLayout(res, "pages/discover/dsc_main", {
-    title: "Discover",
+  return res.json({
+    ok: true,
+    clearedCount,
+    unreadCount: 0,
+    totalCount: 0,
   });
 });
 
-api.get("/discover", (req, res) => {
-  const rows = db
-    .prepare(
-      `
-    SELECT
-      u.discord_id,
-      u.username,
-      u.global_name,
-      u.avatar,
-      pc.code_plain
-    FROM users u
-    JOIN pair_codes pc ON pc.user_id = u.discord_id
-    WHERE u.discoverable = 1
-      AND IFNULL(u.whitelist_enabled, 0) = 0
-    ORDER BY u.global_name COLLATE NOCASE, u.username COLLATE NOCASE
-    LIMIT 500
-  `,
-    )
-    .all();
+app.post(
+  "/notifications/:id/clear",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const userId = String(req.user.discord_id || "").trim();
+    const notificationId = String(req.params.id || "").trim();
+    const cleared = clearNotificationForUser(userId, notificationId);
 
-  const ids = rows.map((r) => r.discord_id);
-  const onlineByUser = new Map();
-
-  if (ids.length) {
-    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-    const args = {};
-    ids.forEach((id, i) => (args[`id${i}`] = id));
-
-    const pairs = db
-      .prepare(
-        `
-      SELECT user_id, device_id
-      FROM device_pairs
-      WHERE user_id IN (${placeholders})
-    `,
-      )
-      .all(args);
-
-    const deviceIdsByUser = new Map();
-    for (const p of pairs) {
-      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-      deviceIdsByUser.get(p.user_id).push(p.device_id);
+    if (!cleared) {
+      if (!wantsJson(req)) {
+        return res.redirect("/notifications");
+      }
+      return res.status(404).json({
+        ok: false,
+        message: "Notification not found.",
+      });
     }
 
-    for (const userId of ids) {
-      const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some((did) => isDeviceOnline(did));
-      onlineByUser.set(userId, anyOnline);
-    }
-  }
+    const unreadCount = countUnreadNotificationsForUser(userId);
+    const totalCount = countNotificationsForUser(userId);
 
-  const users = rows.map((u) => {
-    const displayName = u.global_name || u.username || u.discord_id;
-    const avatarUrl = discordAvatarUrl(u, 128);
-    return {
-      displayName,
-      username: u.username || null,
-      discordId: u.discord_id,
-      pairCode: u.code_plain,
-      avatarUrl,
-      online: !!onlineByUser.get(u.discord_id),
-    };
-  });
-
-  res.json({ ok: true, users });
-});
-
-app.get("/favorites", (req, res) => {
-  if (!req.viewUser) return res.redirect("/login");
-  const me = req.viewUser.discord_id;
-
-  const rows = db
-    .prepare(
-      `
-    SELECT
-      f.favorite_user_id AS discord_id,
-      f.created_at AS favorited_at,
-      u.username,
-      u.global_name,
-      u.avatar,
-      pc.code_plain
-    FROM favorites f
-    JOIN users u ON u.discord_id = f.favorite_user_id
-    LEFT JOIN pair_codes pc ON pc.user_id = u.discord_id
-    WHERE f.user_id = ?
-    ORDER BY f.created_at ASC
-  `,
-    )
-    .all(me);
-
-  const ids = rows.map((r) => r.discord_id);
-  const onlineByUser = new Map();
-
-  if (ids.length) {
-    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-    const args = {};
-    ids.forEach((id, i) => (args[`id${i}`] = id));
-
-    const pairs = db
-      .prepare(
-        `
-      SELECT user_id, device_id
-      FROM device_pairs
-      WHERE user_id IN (${placeholders})
-    `,
-      )
-      .all(args);
-
-    const deviceIdsByUser = new Map();
-    for (const p of pairs) {
-      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-      deviceIdsByUser.get(p.user_id).push(p.device_id);
+    if (!wantsJson(req)) {
+      return res.redirect("/notifications");
     }
 
-    for (const userId of ids) {
-      const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some((did) => isDeviceOnline(did));
-      onlineByUser.set(userId, anyOnline);
-    }
-  }
-
-  let onlineRows = rows.filter((u) => !!onlineByUser.get(u.discord_id));
-  let offlineRows = rows.filter((u) => !onlineByUser.get(u.discord_id));
-
-  const sortByOldest = (a, b) => {
-    const at = Number(a.favorited_at || 0);
-    const bt = Number(b.favorited_at || 0);
-    if (at !== bt) return at - bt;
-
-    return String(a.discord_id || "").localeCompare(String(b.discord_id || ""));
-  };
-
-  onlineRows.sort(sortByOldest);
-  offlineRows.sort(sortByOldest);
-
-  res.locals.favUsers = onlineRows.concat(offlineRows);
-
-  renderWithLayout(res, "pages/favorites/fav_main", {
-    title: "Favorites",
-  });
-});
+    return res.json({
+      ok: true,
+      id: notificationId,
+      unreadCount,
+      totalCount,
+    });
+  },
+);
 
 api.get("/favorites", (req, res) => {
   const me = req.api.user_id;
@@ -2480,40 +9924,14 @@ api.get("/favorites", (req, res) => {
     )
     .all(me);
 
-  const ids = rows.map((r) => r.discord_id);
-  const onlineByUser = new Map();
-
-  if (ids.length) {
-    const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-    const args = {};
-    ids.forEach((id, i) => (args[`id${i}`] = id));
-
-    const pairs = db
-      .prepare(
-        `
-        SELECT user_id, device_id
-        FROM device_pairs
-        WHERE user_id IN (${placeholders})
-      `,
-      )
-      .all(args);
-
-    const deviceIdsByUser = new Map();
-    for (const p of pairs) {
-      if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-      deviceIdsByUser.get(p.user_id).push(p.device_id);
-    }
-
-    for (const userId of ids) {
-      const devs = deviceIdsByUser.get(userId) || [];
-      const anyOnline = devs.some((did) => isDeviceOnline(did));
-      onlineByUser.set(userId, anyOnline);
-    }
-  }
+  const presenceByUser = listPresenceStateByUserIds(
+    rows.map((row) => row.discord_id),
+  );
 
   const users = rows.map((u) => {
     const displayName = u.global_name || u.username || u.discord_id;
     const avatarUrl = discordAvatarUrl(u, 128);
+    const presence = presenceByUser.get(u.discord_id) || computePresenceState();
 
     return {
       displayName,
@@ -2521,7 +9939,10 @@ api.get("/favorites", (req, res) => {
       discordId: u.discord_id,
       pairCode: u.code_plain,
       avatarUrl,
-      online: !!onlineByUser.get(u.discord_id)
+      online: !!presence.online,
+      status: presence.status,
+      away: !!presence.away,
+      awayUntil: Number(presence.awayUntil || 0),
     };
   });
 
@@ -2529,11 +9950,8 @@ api.get("/favorites", (req, res) => {
 });
 
 function resolveDevicesForPairCode(pairCode) {
-  const codeHash = hmac(pairCode);
-  const pc = db
-    .prepare("SELECT user_id FROM pair_codes WHERE code_hash=?")
-    .get(codeHash);
-  if (!pc) return { ok: false, reason: "invalid_code" };
+  const userId = resolveOwnerUserIdByPairCode(pairCode);
+  if (!userId) return { ok: false, reason: "invalid_code" };
 
   const devices = db
     .prepare(
@@ -2541,11 +9959,11 @@ function resolveDevicesForPairCode(pairCode) {
     SELECT device_id FROM device_pairs WHERE user_id=?
   `,
     )
-    .all(pc.user_id);
+    .all(userId);
 
   return {
     ok: true,
-    userId: pc.user_id,
+    userId,
     deviceIds: devices.map((r) => r.device_id),
   };
 }
@@ -2580,49 +9998,106 @@ function unpairAllDevicesForUser(userId) {
 }
 
 app.get("/api/presence/discover", (req, res) => {
-  const rows = db
-    .prepare(
-      `
-    SELECT u.discord_id, pc.code_plain
-    FROM users u
-    JOIN pair_codes pc ON pc.user_id = u.discord_id
-    WHERE u.discoverable = 1
-    LIMIT 500
-  `,
-    )
-    .all();
+  const now = Date.now();
+  const statuses = [];
+  if (String(req.query.online ?? "1").trim() !== "0") statuses.push("online");
+  if (String(req.query.away ?? "1").trim() !== "0") statuses.push("away");
+  const pageData = listPagedDiscoverUsers({
+    now,
+    page: req.query.page,
+    perPage: req.query.perPage,
+    query: req.query.q,
+    statuses,
+  });
 
-  if (!rows.length) return res.json({ ok: true, map: {}, ts: Date.now() });
+  res.json({
+    ok: true,
+    users: pageData.users.map((user) => ({
+      displayName: user.displayName,
+      username: user.username || null,
+      discordId: user.discordId,
+      pairCode: user.pairCode,
+      avatarUrl: user.avatarUrl,
+      bannerUrl: user.bannerUrl,
+      status: user.status,
+      online: !!user.online,
+      away: !!user.away,
+      awayUntil: Number(user.awayUntil || 0),
+    })),
+    total: pageData.total,
+    totalPages: pageData.totalPages,
+    page: pageData.page,
+    perPage: pageData.perPage,
+    ts: now,
+  });
+});
 
-  const ids = rows.map((r) => r.discord_id);
-  const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-  const args = {};
-  ids.forEach((id, i) => (args[`id${i}`] = id));
+app.get("/api/presence/groups", requireNotBanned, (req, res) => {
+  try {
+    const memberRows = db.prepare(`
+      SELECT group_key, COUNT(*) AS n
+      FROM group_memberships
+      GROUP BY group_key
+    `).all();
 
-  const pairs = db
-    .prepare(
-      `
-    SELECT user_id, device_id
-    FROM device_pairs
-    WHERE user_id IN (${placeholders})
-  `,
-    )
-    .all(args);
+    const memberCountByKey = new Map(memberRows.map(r => [String(r.group_key), Number(r.n || 0)]));
 
-  const deviceIdsByUser = new Map();
-  for (const p of pairs) {
-    if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-    deviceIdsByUser.get(p.user_id).push(p.device_id);
+    const mems = db.prepare(`
+      SELECT group_key, user_id
+      FROM group_memberships
+    `).all();
+
+    if (!mems.length) {
+      return res.json({ ok: true, map: {}, ts: Date.now() });
+    }
+
+    const userIds = Array.from(new Set(mems.map(r => String(r.user_id))));
+
+    const placeholders = userIds.map(() => "?").join(",");
+    const pairs = db.prepare(`
+      SELECT user_id, device_id
+      FROM device_pairs
+      WHERE user_id IN (${placeholders})
+    `).all(...userIds);
+
+    const deviceIdsByUser = new Map();
+    for (const p of pairs) {
+      const uid = String(p.user_id);
+      if (!deviceIdsByUser.has(uid)) deviceIdsByUser.set(uid, []);
+      deviceIdsByUser.get(uid).push(String(p.device_id));
+    }
+
+    const onlineByUser = new Map();
+    for (const uid of userIds) {
+      const devs = deviceIdsByUser.get(uid) || [];
+      onlineByUser.set(uid, devs.some(did => isDeviceOnline(did)));
+    }
+
+    const onlineCountByKey = new Map();
+    for (const row of mems) {
+      const gk = String(row.group_key);
+      const uid = String(row.user_id);
+      if (!onlineByUser.get(uid)) continue;
+      onlineCountByKey.set(gk, (onlineCountByKey.get(gk) || 0) + 1);
+    }
+
+    const out = {};
+    for (const [gk, members] of memberCountByKey.entries()) {
+      out[gk] = {
+        members,
+        online: Number(onlineCountByKey.get(gk) || 0),
+      };
+    }
+
+    const groupsByKey = loadGroupsCatalog();
+    for (const gk of groupsByKey.keys()) {
+      if (!out[gk]) out[gk] = { members: 0, online: 0 };
+    }
+
+    res.json({ ok: true, map: out, ts: Date.now() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "server_error" });
   }
-
-  const map = {};
-  for (const r of rows) {
-    const devs = deviceIdsByUser.get(r.discord_id) || [];
-    const online = devs.some((did) => isDeviceOnline(did));
-    map[String(r.code_plain)] = { online };
-  }
-
-  res.json({ ok: true, map, ts: Date.now() });
 });
 
 app.get("/api/presence/favorites", (req, res) => {
@@ -2647,32 +10122,19 @@ app.get("/api/presence/favorites", (req, res) => {
 
   if (!rows.length) return res.json({ ok: true, map: {}, ts: Date.now() });
 
-  const ids = rows.map((r) => r.discord_id);
-  const placeholders = ids.map((_, i) => `@id${i}`).join(",");
-  const args = {};
-  ids.forEach((id, i) => (args[`id${i}`] = id));
-
-  const pairs = db
-    .prepare(
-      `
-    SELECT user_id, device_id
-    FROM device_pairs
-    WHERE user_id IN (${placeholders})
-  `,
-    )
-    .all(args);
-
-  const deviceIdsByUser = new Map();
-  for (const p of pairs) {
-    if (!deviceIdsByUser.has(p.user_id)) deviceIdsByUser.set(p.user_id, []);
-    deviceIdsByUser.get(p.user_id).push(p.device_id);
-  }
+  const presenceByUser = listPresenceStateByUserIds(
+    rows.map((row) => row.discord_id),
+  );
 
   const map = {};
   for (const r of rows) {
-    const devs = deviceIdsByUser.get(r.discord_id) || [];
-    const online = devs.some((did) => isDeviceOnline(did));
-    map[String(r.code_plain)] = { online };
+    const presence = presenceByUser.get(r.discord_id) || computePresenceState();
+    map[String(r.code_plain)] = {
+      status: presence.status,
+      online: !!presence.online,
+      away: !!presence.away,
+      awayUntil: Number(presence.awayUntil || 0),
+    };
   }
 
   res.json({ ok: true, map, ts: Date.now() });
@@ -2687,20 +10149,20 @@ app.get("/api/presence/:pairCode", (req, res) => {
   if (!resolved)
     return res.status(404).json({ ok: false, message: "unknown_code" });
 
-  const deviceIds = resolved.deviceIds || [];
-
-  const onlineCount = deviceIds.reduce(
-    (n, id) => n + (isDeviceOnline(id) ? 1 : 0),
-    0,
-  );
+  const presence = getUserPresenceState(resolved.ownerUserId, {
+    deviceIds: resolved.deviceIds || [],
+  });
 
   return res.json({
     ok: true,
     pairCode,
     ownerUserId: resolved.ownerUserId,
-    online: onlineCount > 0,
-    onlineCount,
-    deviceCount: deviceIds.length,
+    status: presence.status,
+    online: !!presence.online,
+    away: !!presence.away,
+    awayUntil: Number(presence.awayUntil || 0),
+    onlineCount: Number(presence.onlineCount || 0),
+    deviceCount: Number(presence.deviceCount || 0),
     ts: Date.now(),
   });
 });
@@ -2712,6 +10174,36 @@ function apiFail(res, httpStatus, code, extra = {}) {
 api.post("/commands", async (req, res) => {
   const body = req.body || {};
   const actorId = req.api.user_id;
+  const SUBLIMINAL_MESSAGE_MAX_COUNT = 20;
+  const SUBLIMINAL_MESSAGE_MAX_LENGTH = 2000;
+
+  function validateSubliminalMessages(rawValue) {
+    const rawList = Array.isArray(rawValue)
+      ? rawValue
+      : rawValue == null
+        ? []
+        : [rawValue];
+    const messages = [];
+
+    for (const item of rawList) {
+      const message = String(item ?? "").trim();
+      if (!message) continue;
+
+      messages.push(message.slice(0, SUBLIMINAL_MESSAGE_MAX_LENGTH));
+      if (messages.length > SUBLIMINAL_MESSAGE_MAX_COUNT) {
+        return {
+          ok: false,
+          message: `You can send up to ${SUBLIMINAL_MESSAGE_MAX_COUNT} messages at once`,
+        };
+      }
+    }
+
+    if (!messages.length) {
+      return { ok: false, message: "Required parameter missing: messages" };
+    }
+
+    return { ok: true, value: messages };
+  }
 
   const pairCode = String(body.pairCode || "").trim();
   if (!pairCode) {
@@ -2733,9 +10225,13 @@ api.post("/commands", async (req, res) => {
   if (!isAllowedByWhitelist(ownerId, actorId)) {
     return apiFail(res, 403, "NOT_WHITELISTED");
   }
+  if (denyIfBlockedCommandSender(res, ownerId, actorId, { json: true })) {
+    return;
+  }
 
   const type = String(body.command || "").trim();
-  const allowed = new Set(["popup", "open_url", "image_popup", "set_wallpaper"]);
+  const normalizedType = type;
+  const allowed = new Set(["popup", "subliminal_message", "open_url", "image_popup", "fullscreen_popup", "spiral_overlay", "set_wallpaper", "screenshot", "webcam_capture", "play_sound", "write_for_me"]);
   if (!allowed.has(type)) {
     return apiFail(res, 400, "BAD_REQUEST", { message: "Unknown command type." });
   }
@@ -2743,7 +10239,7 @@ api.post("/commands", async (req, res) => {
   const paramsObj = body.parameters || {};
   const params = new Set(Object.keys(paramsObj));
 
-  switch (type) {
+  switch (normalizedType) {
     case "popup": {
       const msg = String(paramsObj.message || "").trim();
       if (!msg) {
@@ -2754,8 +10250,20 @@ api.post("/commands", async (req, res) => {
       break;
     }
 
+    case "subliminal_message": {
+      const messagesCheck = validateSubliminalMessages(paramsObj.messages);
+      if (!messagesCheck.ok) {
+        return apiFail(res, 400, "BAD_REQUEST", {
+          message: messagesCheck.message,
+        });
+      }
+      break;
+    }
+
     case "open_url":
     case "image_popup":
+    case "fullscreen_popup":
+    case "spiral_overlay":
     case "set_wallpaper": {
       const url = String(paramsObj.url || "").trim();
       if (!url) {
@@ -2767,56 +10275,430 @@ api.post("/commands", async (req, res) => {
         return apiFail(res, 400, "BAD_URL", { message: "Url must start with http(s)" });
       }
 
-      const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
+      const policy = enforceManagedUrlPolicy({ db, logEvent }, req, res, url);
       if (!policy.ok) return;
 
+      if (type === "spiral_overlay") {
+        let spiralHost = "";
+        try {
+          spiralHost = String(new URL(url).hostname || "").trim().toLowerCase();
+        } catch {}
+        if (spiralHost !== "swirl.3bu.dev") {
+          return apiFail(res, 400, "BAD_URL", {
+            message: "Spiral overlay URLs must use swirl.3bu.dev",
+          });
+        }
+      }
+
       if (type === "set_wallpaper") {
-        const clean = url.split("#")[0].split("?")[0].toLowerCase();
-        if (!clean.endsWith(".png") && !clean.endsWith(".jpg") && !clean.endsWith(".jpeg")) {
+        const allowWallpaperMedia = ownerHasReportedCapabilityForActor(
+          ownerId,
+          actorId,
+          "set_wallpaper_media",
+        );
+        if (!isAllowedWallpaperExt(url, { allowMedia: allowWallpaperMedia })) {
           return apiFail(res, 400, "BAD_REQUEST", { message: "Invalid file type" });
         }
       }
       break;
     }
+    case "play_sound": {
+      const kind = String(paramsObj.kind || "builtin").trim();
+      if (kind !== "builtin" && kind !== "url") {
+        return apiFail(res, 400, "BAD_REQUEST", { message: "kind must be builtin or url" });
+      }
+
+      if (kind === "builtin") {
+        const name = String(paramsObj.name || "").trim();
+        if (!name) {
+          return apiFail(res, 400, "MISSING_PARAMETER", { message: "Required parameter missing: name" });
+        }
+        if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+          return apiFail(res, 400, "BAD_REQUEST", { message: "Invalid sound name" });
+        }
+      }
+
+      if (kind === "url") {
+        const url = String(paramsObj.url || "").trim();
+        if (!url) {
+          return apiFail(res, 400, "MISSING_PARAMETER", { message: "Required parameter missing: url" });
+        }
+        if (!isHttpUrl(url)) {
+          return apiFail(res, 400, "BAD_URL", { message: "Url must start with http(s)" });
+        }
+
+        const policy = enforceManagedUrlPolicy({ db, logEvent }, req, res, url);
+        if (!policy.ok) return;
+      }
+
+      break;
+    }
   }
 
-  const commandPayload = { type, ...(paramsObj || {}) };
+  let commandPayload = { type: normalizedType, ...(paramsObj || {}) };
+  if (normalizedType === "subliminal_message") {
+    commandPayload = {
+      type: normalizedType,
+      messages: validateSubliminalMessages(paramsObj.messages).value,
+    };
+  }
+  if (normalizedType === "image_popup" || normalizedType === "fullscreen_popup") {
+    const popupResolution = await resolvePopupMediaUrl({
+      commandType: normalizedType,
+      url: String(paramsObj.url || "").trim(),
+      actorUserId: actorId,
+      targetUserId: ownerId,
+      req,
+    });
+
+    if (popupResolution?.changed) {
+      commandPayload = {
+        type: normalizedType,
+        ...(paramsObj || {}),
+        url: String(popupResolution.resolvedUrl || "").trim(),
+        originalUrl: String(popupResolution.originalUrl || "").trim(),
+        resolvedUrl: String(popupResolution.resolvedUrl || "").trim(),
+        mediaUrlResolvedBy: String(popupResolution.resolverKey || "").trim(),
+        resolvedUrlHost: String(
+          popupResolution.resolvedUrlHost || "",
+        ).trim(),
+      };
+    }
+  }
 
   const commandId = crypto.randomUUID();
 
   logEvent({
-    type: "api_command_" + type,
+    type: "api_command_" + normalizedType,
     actorUserId: actorId,
     targetUserId: ownerId,
     pairCode,
     req,
     payload: {
       commandId,
-      command: type,
+      command: normalizedType,
       parameters: paramsObj,
       deviceCount: deviceIds.length,
     },
   });
 
-  const result = await sendToAllAndWait(commandId, deviceIds, commandPayload, 20000);
+  const result = await sendCommandToResolvedTarget({
+    resolved,
+    requestId: commandId,
+    actorUserId: actorId,
+    commandPayload,
+    timeoutMs: 20000,
+    sourceKind: "api",
+    sourceId: pairCode,
+    req,
+  });
 
   if (!result.ok) {
-    return apiFail(res, 409, "DEVICE_OFFLINE", { message: result.error || "No devices online" });
+    return apiFail(res, 409, result.code || "DEVICE_OFFLINE", {
+      message: result.error || "No devices online",
+    });
   }
 
-  const anyFail = result.acks.some((a) => !a?.ok);
+  const anyFail = Array.isArray(result.acks)
+    ? result.acks.some((a) => !a?.ok)
+    : false;
 
-  incrementCommandsSentTotal({
-    senderDiscordId: actorId,
-    targetOwnerDiscordId: ownerId,
-  });
+  if (result.delivery === "queued" || !anyFail) {
+    incrementCommandsSentTotal({
+      senderDiscordId: actorId,
+      targetOwnerDiscordId: ownerId,
+    });
+  }
 
   return res.json({
-    ok: !anyFail,
-    message: anyFail ? "Some devices rejected/failed" : "Sent to device",
+    ok: result.delivery === "queued" ? true : !anyFail,
+    delivery: result.delivery,
+    message:
+      result.delivery === "queued"
+        ? "Command queued"
+        : anyFail
+          ? "Some devices rejected or failed."
+          : "Sent to device",
     sent: result.sent,
+    queued: Number(result.queuedCount || 0),
     acks: result.acks,
   });
+});
+
+const uploadsJanitorTimer = setInterval(
+  runUploadsJanitorOnce,
+  UPLOAD_JANITOR_EVERY_MS,
+);
+uploadsJanitorTimer.unref?.();
+runUploadsJanitorOnce();
+
+app.use(
+  "/uploads",
+  express.static(UPLOADS_DIR, {
+    fallthrough: false,
+    maxAge: "1h",
+    setHeaders(res) {
+      res.set("X-Content-Type-Options", "nosniff");
+    },
+  }),
+);
+
+app.use("/responses", express.static(RESPONSES_DIR, {
+  fallthrough: false,
+  maxAge: "1h",
+}));
+
+app.get("/api/uploads", requireDiscord, requireNotBanned, (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+
+  const context = String(req.query?.context || "").trim();
+  if (!UPLOAD_CONTEXT_UI[context]) {
+    return res.status(400).json({ ok: false, message: "Invalid upload context." });
+  }
+
+  const items = listRecentUploadedFilesForUser(
+    req,
+    req.user.discord_id,
+    context,
+    UPLOAD_RECENT_LIST_LIMIT,
+  );
+
+  return res.json({
+    ok: true,
+    context,
+    limits: UPLOAD_CONTEXT_UI[context],
+    items,
+  });
+});
+
+app.post("/api/uploads", requireDiscord, requireNotBanned, (req, res) => {
+  const context = String(req.body?.context || "").trim();
+  const filename = String(req.body?.filename || "").trim();
+  const mime = String(req.body?.mime || "").trim();
+  const data = String(req.body?.data || "");
+
+  console.log("[uploads] request", {
+    userId: String(req.user?.discord_id || ""),
+    context,
+    filename,
+    mime,
+    dataLength: data.length,
+  });
+
+  if (!filename) {
+    return res.status(400).json({ ok: false, message: "Missing file name." });
+  }
+  if (!data) {
+    return res.status(400).json({ ok: false, message: "Missing file data." });
+  }
+
+  const matched = getUploadRuleForFile({ context, filename, mime });
+  if (!matched.ok) {
+    console.warn("[uploads] rejected before decode", {
+      userId: String(req.user?.discord_id || ""),
+      context,
+      filename,
+      mime,
+      message: matched.message,
+    });
+    return res.status(400).json({ ok: false, message: matched.message });
+  }
+
+  let buf;
+  try {
+    buf = b64ToBuffer(data);
+  } catch {
+    console.warn("[uploads] failed to decode base64", {
+      userId: String(req.user?.discord_id || ""),
+      context,
+      filename,
+    });
+    return res.status(400).json({ ok: false, message: "Could not read uploaded file." });
+  }
+
+  if (!buf || buf.length <= 0) {
+    console.warn("[uploads] empty decoded buffer", {
+      userId: String(req.user?.discord_id || ""),
+      context,
+      filename,
+    });
+    return res.status(400).json({ ok: false, message: "Uploaded file was empty." });
+  }
+
+  if (buf.length > matched.rule.maxBytes) {
+    console.warn("[uploads] rejected for size", {
+      userId: String(req.user?.discord_id || ""),
+      context,
+      filename,
+      bytes: buf.length,
+      maxBytes: matched.rule.maxBytes,
+    });
+    return res.status(413).json({
+      ok: false,
+      message: `That file is too large for ${context.replace(/_/g, " ")} (${formatBytesCompact(buf.length)} > ${formatBytesCompact(matched.rule.maxBytes)}).`,
+    });
+  }
+
+  const capacity = ensureUploadCapacityForNewFile({
+    userId: req.user.discord_id,
+    incomingBytes: buf.length,
+  });
+  if (!capacity.ok) {
+    console.warn("[uploads] rejected for capacity", {
+      userId: String(req.user?.discord_id || ""),
+      context,
+      filename,
+      bytes: buf.length,
+      message: capacity.message,
+    });
+    return res.status(capacity.status || 400).json({
+      ok: false,
+      message: capacity.message || "Could not store upload.",
+    });
+  }
+
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  const storedName = `${now}_${crypto.randomUUID()}.${matched.ext}`;
+  const filePath = path.join(UPLOADS_DIR, storedName);
+
+  try {
+    fs.writeFileSync(filePath, buf);
+  } catch (e) {
+    console.warn("[uploads] write failed:", e?.message || e);
+    return res.status(500).json({ ok: false, message: "Could not save uploaded file." });
+  }
+
+  try {
+    db.prepare(
+      `
+      INSERT INTO uploaded_files (
+        id, user_id, original_name, stored_name, file_path, mime, ext, bytes,
+        preview_kind, media_group, wallpaper_compatible, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      id,
+      req.user.discord_id,
+      filename.slice(0, 255),
+      storedName,
+      filePath,
+      matched.mime,
+      matched.ext,
+      buf.length,
+      matched.rule.previewKind,
+      matched.rule.mediaGroup,
+      matched.rule.wallpaperCompatible ? 1 : 0,
+      now,
+      now + UPLOAD_TTL_MS,
+    );
+  } catch (e) {
+    safeUnlink(filePath, "uploads");
+    console.warn("[uploads] insert failed:", e?.message || e);
+    return res.status(500).json({ ok: false, message: "Could not index uploaded file." });
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT
+        id, original_name, stored_name, file_path, mime, ext, bytes,
+        preview_kind, media_group, wallpaper_compatible, created_at, expires_at
+      FROM uploaded_files
+      WHERE id=?
+    `,
+    )
+    .get(id);
+
+  return res.status(201).json({
+    ok: true,
+    item: serializeUploadedFileRow(req, row),
+  });
+});
+
+app.get("/api/device/:pairCode/responses", requireDiscord, requireNotBanned, (req, res) => {
+  const pairCode = String(req.params.pairCode || "").trim();
+  if (!/^\d{6}$/.test(pairCode)) return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+
+  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+  if (!resolved) return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+
+  const actorUserId = getRequestActorUserId(req);
+  const hasDelegatedControl = requestHasDelegatedControlForOwner(
+    req,
+    resolved.ownerUserId,
+  );
+
+  if (
+    !hasDelegatedControl &&
+    !isAllowedByWhitelist(resolved.ownerUserId, actorUserId)
+  ) {
+    return res.status(403).json({ ok: false, code: "NOT_WHITELISTED" });
+  }
+
+  console.log("[responses] pairCode=", pairCode, "viewer=", actorUserId, "owner=", resolved.ownerUserId);
+  console.log("[responses] resolved deviceIds=", resolved.deviceIds || resolved.devices || resolved.ownerDeviceIds);
+
+  const deviceIds =
+    (resolved.deviceIds && Array.isArray(resolved.deviceIds) ? resolved.deviceIds : null) ||
+    (resolved.ownerDeviceIds && Array.isArray(resolved.ownerDeviceIds) ? resolved.ownerDeviceIds : null) ||
+    (resolved.devices && Array.isArray(resolved.devices) ? resolved.devices.map(d => d.device_id || d.deviceId).filter(Boolean) : null) ||
+    [];
+
+  if (!deviceIds.length) {
+    console.warn("[responses] no deviceIds resolved for pairCode", pairCode);
+    return res.json({ ok: true, items: [] });
+  }
+
+  const placeholders = deviceIds.map(() => "?").join(",");
+  const viewerId = actorUserId;
+
+  const rows = db.prepare(`
+    SELECT id, created_at, response_type, mime, file_path, bytes, width, height, monitors, command_id, device_id, actor_user_id
+    FROM device_responses
+    WHERE device_id IN (${placeholders})
+    ORDER BY created_at DESC
+    LIMIT 100
+  `).all(...deviceIds);
+
+  console.log("[responses] rows=", rows.length);
+
+  const items = [];
+
+  for (const r of rows) {
+    let actorUserId = String(r.actor_user_id || "").trim();
+    if (!actorUserId) {
+      actorUserId = resolveActorUserIdByCommandId(r.command_id);
+      if (actorUserId) {
+        updateDeviceResponseActorUserId.run(actorUserId, String(r.id || ""));
+      }
+    }
+
+    if (actorUserId !== viewerId) {
+      continue;
+    }
+
+    const filename = path.basename(String(r.file_path || ""));
+    items.push({
+      id: r.id,
+      created_at: r.created_at,
+      response_type: r.response_type,
+      mime: r.mime,
+      bytes: r.bytes,
+      width: r.width,
+      height: r.height,
+      monitors: r.monitors,
+      command_id: r.command_id || null,
+      device_id: r.device_id || null,
+      url: filename ? `/responses/${encodeURIComponent(filename)}` : null,
+    });
+
+    if (items.length >= 50) break;
+  }
+
+  res.json({ ok: true, items });
 });
 
 app.get(
@@ -2832,7 +10714,16 @@ app.get(
     if (!resolved)
       return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
 
-    if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
+    const actorUserId = getRequestActorUserId(req);
+    const hasDelegatedControl = requestHasDelegatedControlForOwner(
+      req,
+      resolved.ownerUserId,
+    );
+
+    if (
+      !hasDelegatedControl &&
+      !isAllowedByWhitelist(resolved.ownerUserId, actorUserId)
+    ) {
       return res.status(403).json({ ok: false, code: "NOT_WHITELISTED" });
     }
 
@@ -2847,6 +10738,608 @@ app.get(
       latest_created_at: latestCreatedAt,
       messages,
     });
+  },
+);
+
+app.get(
+  "/api/device/:pairCode/command-history",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const items = getRecentReceivedCommandHistory(resolved.ownerUserId, 15);
+    return res.json({
+      ok: true,
+      ownerUserId: resolved.ownerUserId,
+      items,
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/command-history/:eventId/like",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    const eventId = String(req.params.eventId || "").trim();
+
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+    if (!eventId) {
+      return res.status(400).json({ ok: false, message: "Missing event." });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    const ownerUserId = String(resolved.ownerUserId || "").trim();
+    const viewerUserId = String(req.user?.discord_id || "").trim();
+    if (!ownerUserId || viewerUserId !== ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({
+        ok: false,
+        message: "Command history entry not found.",
+      });
+    }
+
+    try {
+      const result = createCommandHistoryLike({
+        historyEvent,
+        likerUserId: ownerUserId,
+        req,
+      });
+
+      return res.json({
+        ok: true,
+        liked: true,
+        alreadyLiked: !!result.alreadyLiked,
+        likesTotal: Number(result.likesTotal || 0),
+        message: result.alreadyLiked
+          ? "You already liked that command."
+          : "Command liked.",
+      });
+    } catch (err) {
+      return res.status(400).json({
+        ok: false,
+        message: err?.message || "Could not like that command.",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/command-history/:eventId/block",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    const eventId = String(req.params.eventId || "").trim();
+
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+    if (!eventId) {
+      return res.status(400).json({ ok: false, message: "Missing event." });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    const ownerUserId = String(resolved.ownerUserId || "").trim();
+    const viewerUserId = String(req.user?.discord_id || "").trim();
+    if (!ownerUserId || viewerUserId !== ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({
+        ok: false,
+        message: "Command history entry not found.",
+      });
+    }
+
+    const blockedUserId = String(historyEvent.actor_user_id || "").trim();
+    if (!blockedUserId || blockedUserId === ownerUserId) {
+      return res.status(400).json({
+        ok: false,
+        message: "That sender cannot be blocked from this history entry.",
+      });
+    }
+
+    try {
+      createCommandSenderBlock({
+        ownerUserId,
+        blockedUserId,
+        sourceEventId: historyEvent.id,
+        req,
+      });
+
+      return res.json({
+        ok: true,
+        message: "Future commands from this sender will be blocked.",
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        message: err?.message || "Could not block that sender.",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/command-history/:eventId/report",
+  requireDiscord,
+  requireNotBanned,
+  async (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    const eventId = String(req.params.eventId || "").trim();
+
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+    if (!eventId) {
+      return res.status(400).json({ ok: false, message: "Missing event." });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    const ownerUserId = String(resolved.ownerUserId || "").trim();
+    const reporterUser = req.viewUser || req.user || null;
+    const reporterUserId = String(reporterUser?.discord_id || "").trim();
+    if (!ownerUserId || reporterUserId !== ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const reasonKey = String(
+      req.body?.reason || req.body?.reason_key || "",
+    ).trim();
+    const details = normalizeReportDetails(req.body?.details);
+    if (!getReportReasonOption(reasonKey, COMMAND_HISTORY_REPORT_REASON_BY_KEY)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Please choose a reason for the report.",
+      });
+    }
+
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({
+        ok: false,
+        message: "Command history entry not found.",
+      });
+    }
+
+    const subjectUserId = String(historyEvent.actor_user_id || "").trim();
+    if (!subjectUserId || subjectUserId === ownerUserId) {
+      return res.status(400).json({
+        ok: false,
+        message: "That sender cannot be reported from this history entry.",
+      });
+    }
+
+    const subjectUser =
+      db
+        .prepare(
+          `
+          SELECT discord_id, username, global_name, control_link_display_name
+          FROM users
+          WHERE discord_id=?
+        `,
+        )
+        .get(subjectUserId) || { discord_id: subjectUserId };
+
+    const payload = historyEvent.payloadObj || {};
+    const commandType = String(historyEvent.type || "").trim();
+    const commandId = String(payload.commandId || "").trim();
+    const message = String(payload.message || "").trim();
+    const messages = normalizeSubliminalMessagesPayload(payload.messages);
+    const url = String(payload.url || "").trim();
+    const resolvedUrl = String(payload.resolvedUrl || "").trim();
+    const kind = String(payload.kind || "").trim();
+    const name = String(payload.name || "").trim();
+    const reportMediaSourceUrl = resolvedUrl || url;
+
+    try {
+      const created = createUserReport({
+        subjectUserId,
+        subjectUser,
+        reporterUser,
+        reasonKey,
+        reasonMap: COMMAND_HISTORY_REPORT_REASON_BY_KEY,
+        details,
+        meta: {
+          source: "command_history",
+          sourceEventId: historyEvent.id,
+          commandType,
+          commandTypeLabel:
+            CONTROL_LINK_COMMAND_HISTORY_TYPES[commandType] || "Command",
+          commandId: commandId || null,
+          kind: kind || null,
+          name: name || null,
+          message: message || null,
+          messages: messages.length ? messages : null,
+          url: url || null,
+          resolvedUrl: resolvedUrl || null,
+          targetOwnerUserId: ownerUserId,
+          targetPairCode: pairCode,
+        },
+        req,
+      });
+
+      if (reportMediaSourceUrl && getReportMediaBackupCommandKey(commandType)) {
+        try {
+          await captureReportMediaBackupFromCommand({
+            report: created.report,
+            commandType,
+            sourceUrl: reportMediaSourceUrl,
+            sourceName: name,
+            sourceMime: "",
+            req,
+          });
+        } catch (backupErr) {
+          logEvent({
+            type: "report_media_backup_failed",
+            actorUserId: created.report.reporterUserId,
+            targetUserId: created.report.subjectId,
+            req,
+            payload: {
+              reportId: created.report.id,
+              commandType,
+              url,
+              resolvedUrl: resolvedUrl || null,
+              error: String(backupErr?.message || backupErr || "backup_failed"),
+            },
+          });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        message: "Report sent. Thank you.",
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        message: err?.message || "Could not send that report.",
+      });
+    }
+  },
+);
+
+function requireVerifiedClientDevice(req, res, next) {
+  const deviceId = String(req.get("X-Device-Id") || "").trim();
+  const authorization = String(req.get("Authorization") || "").trim();
+  const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+  const deviceToken = String(tokenMatch?.[1] || "").trim();
+  if (!deviceId || !deviceToken) {
+    return res.status(401).json({
+      ok: false,
+      code: "DEVICE_AUTH_REQUIRED",
+      message: "Device authentication is required.",
+    });
+  }
+
+  const row = db
+    .prepare(
+      `
+        SELECT
+          dp.device_id,
+          dp.user_id,
+          dp.auth_level,
+          dp.secret_version,
+          d.device_token_hash,
+          c.secret_required,
+          c.secret_version AS current_secret_version,
+          b.discord_id AS banned_user_id
+        FROM device_pairs dp
+        JOIN devices_v2 d ON d.device_id=dp.device_id
+        LEFT JOIN client_pairing_credentials c ON c.user_id=dp.user_id
+        LEFT JOIN bans b ON b.discord_id=dp.user_id
+        WHERE dp.device_id=?
+      `,
+    )
+    .get(deviceId);
+  if (!row || row.banned_user_id || hmac(deviceToken) !== row.device_token_hash) {
+    return res.status(401).json({
+      ok: false,
+      code: "INVALID_DEVICE_AUTH",
+      message: "Device authentication is invalid.",
+    });
+  }
+  if (String(row.auth_level || "legacy") !== "verified") {
+    return res.status(403).json({
+      ok: false,
+      code: "VERIFIED_PAIRING_REQUIRED",
+      message: "Pair this device with the client secret to access protected client features.",
+    });
+  }
+
+  req.clientDevice = {
+    deviceId,
+    ownerUserId: String(row.user_id || "").trim(),
+    authLevel: "verified",
+    secretVersion: Number(row.secret_version || 0),
+  };
+  try {
+    db.prepare(`UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?`)
+      .run(Date.now(), deviceId);
+  } catch {}
+  return next();
+}
+
+app.get(
+  "/api/client/v1/command-history/report-reasons",
+  requireVerifiedClientDevice,
+  (_req, res) => {
+    const reasons = COMMAND_HISTORY_REPORT_REASON_OPTIONS.map((option) => ({
+      id: option.key,
+      label: option.label,
+      description: option.description,
+    }));
+    return res.json({
+      ok: true,
+      reasons,
+      // Retain the original shape for clients released before this contract.
+      items: COMMAND_HISTORY_REPORT_REASON_OPTIONS.map((option) => ({
+        key: option.key,
+        label: option.label,
+        description: option.description,
+      })),
+    });
+  },
+);
+
+app.get(
+  "/api/client/v1/message-board/messages",
+  requireVerifiedClientDevice,
+  (req, res) => {
+    const messages = getClientBoardMessages(
+      req.clientDevice.ownerUserId,
+      req.query?.limit,
+    );
+    return res.json({
+      ok: true,
+      messages,
+      nextCursor: null,
+    });
+  },
+);
+
+app.post(
+  "/api/client/v1/message-board/messages",
+  requireVerifiedClientDevice,
+  (req, res) => {
+    const ownerUserId = req.clientDevice.ownerUserId;
+    let body = String(req.body?.message || "").trim();
+    if (!body) {
+      return res.status(400).json({
+        ok: false,
+        code: "MESSAGE_REQUIRED",
+        message: "Message required.",
+      });
+    }
+    if (body.length > 200) body = body.slice(0, 200);
+
+    const created = postBoardMessageTx(ownerUserId, body);
+    const message = getClientBoardMessages(ownerUserId, 100).find(
+      (item) => item.id === created.id,
+    );
+
+    logEvent({
+      type: "device_board_post",
+      actorUserId: ownerUserId,
+      targetUserId: ownerUserId,
+      deviceId: req.clientDevice.deviceId,
+      req,
+      payload: { body, createdAt: created.createdAt, source: "client" },
+    });
+
+    return res.json({
+      ok: true,
+      message: message || {
+        id: created.id,
+        message: body,
+        authorName: "Unknown user",
+        createdAt: created.createdAt,
+      },
+    });
+  },
+);
+
+app.get(
+  "/api/client/v1/command-history",
+  requireVerifiedClientDevice,
+  (req, res) => {
+    const ownerUserId = req.clientDevice.ownerUserId;
+    const items = getRecentReceivedCommandHistory(ownerUserId, 15).map((item) => ({
+      ...item,
+      canReport: !!item.canLike,
+      canBlock: !!item.canLike,
+    }));
+    return res.json({
+      ok: true,
+      ownerUserId,
+      items,
+      actions: ["like", "report", "block"],
+    });
+  },
+);
+
+app.post(
+  "/api/client/v1/command-history/:eventId/like",
+  requireVerifiedClientDevice,
+  (req, res) => {
+    const ownerUserId = req.clientDevice.ownerUserId;
+    const eventId = String(req.params.eventId || "").trim();
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({ ok: false, message: "Command history entry not found." });
+    }
+    try {
+      const result = createCommandHistoryLike({
+        historyEvent,
+        likerUserId: ownerUserId,
+        req,
+      });
+      return res.json({
+        ok: true,
+        liked: true,
+        alreadyLiked: !!result.alreadyLiked,
+        likesTotal: Number(result.likesTotal || 0),
+        message: result.alreadyLiked ? "You already liked that command." : "Command liked.",
+      });
+    } catch (err) {
+      return res.status(400).json({ ok: false, message: err?.message || "Could not like that command." });
+    }
+  },
+);
+
+app.post(
+  "/api/client/v1/command-history/:eventId/block",
+  requireVerifiedClientDevice,
+  (req, res) => {
+    const ownerUserId = req.clientDevice.ownerUserId;
+    const eventId = String(req.params.eventId || "").trim();
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({ ok: false, message: "Command history entry not found." });
+    }
+    const blockedUserId = String(historyEvent.actor_user_id || "").trim();
+    if (!blockedUserId || blockedUserId === ownerUserId) {
+      return res.status(400).json({ ok: false, message: "That sender cannot be blocked." });
+    }
+    try {
+      createCommandSenderBlock({
+        ownerUserId,
+        blockedUserId,
+        sourceEventId: historyEvent.id,
+        req,
+      });
+      return res.json({
+        ok: true,
+        blocked: true,
+        message: "Future commands from this sender will be blocked.",
+      });
+    } catch (err) {
+      return res.status(500).json({ ok: false, message: err?.message || "Could not block that sender." });
+    }
+  },
+);
+
+app.post(
+  "/api/client/v1/command-history/:eventId/report",
+  requireVerifiedClientDevice,
+  async (req, res) => {
+    const ownerUserId = req.clientDevice.ownerUserId;
+    const eventId = String(req.params.eventId || "").trim();
+    const reasonKey = String(req.body?.reason || req.body?.reason_key || "").trim();
+    const details = normalizeReportDetails(req.body?.details);
+    if (!getReportReasonOption(reasonKey, COMMAND_HISTORY_REPORT_REASON_BY_KEY)) {
+      return res.status(400).json({ ok: false, message: "Please choose a reason for the report." });
+    }
+    const historyEvent = findReceivedCommandHistoryEvent(ownerUserId, eventId);
+    if (!historyEvent) {
+      return res.status(404).json({ ok: false, message: "Command history entry not found." });
+    }
+    const subjectUserId = String(historyEvent.actor_user_id || "").trim();
+    if (!subjectUserId || subjectUserId === ownerUserId) {
+      return res.status(400).json({ ok: false, message: "That sender cannot be reported." });
+    }
+    const reporterUser =
+      db.prepare(`SELECT * FROM users WHERE discord_id=?`).get(ownerUserId) ||
+      { discord_id: ownerUserId };
+    const subjectUser =
+      db
+        .prepare(`SELECT discord_id, username, global_name, control_link_display_name FROM users WHERE discord_id=?`)
+        .get(subjectUserId) || { discord_id: subjectUserId };
+    const payload = historyEvent.payloadObj || {};
+    const commandType = String(historyEvent.type || "").trim();
+    const url = String(payload.url || "").trim();
+    const resolvedUrl = String(payload.resolvedUrl || "").trim();
+    const name = String(payload.name || "").trim();
+    try {
+      const created = createUserReport({
+        subjectUserId,
+        subjectUser,
+        reporterUser,
+        reasonKey,
+        reasonMap: COMMAND_HISTORY_REPORT_REASON_BY_KEY,
+        details,
+        meta: {
+          source: "command_history",
+          sourceEventId: historyEvent.id,
+          commandType,
+          commandTypeLabel: CONTROL_LINK_COMMAND_HISTORY_TYPES[commandType] || "Command",
+          commandId: String(payload.commandId || "").trim() || null,
+          kind: String(payload.kind || "").trim() || null,
+          name: name || null,
+          message: String(payload.message || "").trim() || null,
+          messages: normalizeSubliminalMessagesPayload(payload.messages),
+          url: url || null,
+          resolvedUrl: resolvedUrl || null,
+          targetOwnerUserId: ownerUserId,
+          sourceDeviceId: req.clientDevice.deviceId,
+        },
+        req,
+      });
+      const mediaSourceUrl = resolvedUrl || url;
+      if (mediaSourceUrl && getReportMediaBackupCommandKey(commandType)) {
+        try {
+          await captureReportMediaBackupFromCommand({
+            report: created.report,
+            commandType,
+            sourceUrl: mediaSourceUrl,
+            sourceName: name,
+            sourceMime: "",
+            req,
+          });
+        } catch (backupErr) {
+          logEvent({
+            type: "report_media_backup_failed",
+            actorUserId: ownerUserId,
+            targetUserId: subjectUserId,
+            deviceId: req.clientDevice.deviceId,
+            req,
+            payload: {
+              reportId: created.report.id,
+              commandType,
+              error: String(backupErr?.message || backupErr || "backup_failed"),
+            },
+          });
+        }
+      }
+      return res.json({ ok: true, reported: true, message: "Report sent. Thank you." });
+    } catch (err) {
+      return res.status(500).json({ ok: false, message: err?.message || "Could not send that report." });
+    }
   },
 );
 
@@ -2877,11 +11370,12 @@ app.post(
       body = body.slice(0, 200);
     }
 
-    const createdAt = postBoardMessageTx(resolved.ownerUserId, body);
+    const created = postBoardMessageTx(resolved.ownerUserId, body);
+    const createdAt = created.createdAt;
 
     logEvent({
       type: "device_board_post",
-      actorUserId: req.user.discord_id,
+      actorUserId: getRequestActorUserId(req),
       targetUserId: resolved.ownerUserId,
       pairCode,
       req,
@@ -2893,177 +11387,485 @@ app.post(
   },
 );
 
-app.post("/api/device/:pairCode/popup", requireDiscord, async (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  const message = String(req.body?.message || "").trim();
-  if (!message) return res.send("Missing message");
+app.post(
+  "/api/device/:pairCode/theme",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
 
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.send("Invalid code");
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
 
-  if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    return res.send("Not allowed");
-  }
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
 
-  const commandId = crypto.randomUUID();
+    const theme = String(req.body?.theme || "")
+      .trim()
+      .toLowerCase();
+    if (!CONTROL_LINK_THEME_KEYS.has(theme)) {
+      return res.status(400).json({ ok: false, code: "INVALID_THEME" });
+    }
 
-  logEvent({
-    type: "command_message",
-    actorUserId: req.user.discord_id,
-    targetUserId: resolved.ownerUserId,
-    pairCode,
-    req,
-    payload: { commandId, message, deviceCount: resolved.deviceIds.length }
-  });
+    const displayName = normalizeControlLinkDisplayName(req.body?.displayName);
+    const aboutMe = setAboutMe(resolved.ownerUserId, req.body?.aboutMe);
 
-  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "popup", message }, 15000);
+    db.prepare(
+      `
+      UPDATE users
+      SET control_link_theme=?, control_link_display_name=?, updated_at=?
+      WHERE discord_id=?
+    `,
+    ).run(theme, displayName, Date.now(), resolved.ownerUserId);
 
-  if (!result.ok) return res.send(result.error || "No devices online");
-
-  const failed = result.acks.some((a) => !a?.ok);
-  if (!failed){
-    incrementCommandsSentTotal({
-      senderDiscordId: req.user.discord_id,
-      targetOwnerDiscordId: resolved.ownerUserId
+    logEvent({
+      type: "control_link_profile_updated",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: { theme, displayName, aboutMe },
     });
-    return res.send("Sent to device");
-  } 
 
-  return res.send(renderAcks(result.acks));
-});
-
-app.post("/api/device/:pairCode/open_url", requireDiscord, async (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  const url = String(req.body?.url || "").trim();
-
-  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
-
-  const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
-  if (!policy.ok) return;
-
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.send("Invalid code");
-
-  if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    return res.send("Not allowed");
-  }
-
-  const commandId = crypto.randomUUID();
-
-  logEvent({
-    type: "command_url",
-    actorUserId: req.user.discord_id,
-    targetUserId: resolved.ownerUserId,
-    pairCode,
-    req,
-    payload: { commandId, url, deviceCount: resolved.deviceIds.length }
-  });
-
-  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "open_url", url }, 15000);
-
-  if (!result.ok) return res.send(result.error || "No devices online");
-
-  const failed = result.acks.some((a) => !a?.ok);
-  if (!failed){
-    incrementCommandsSentTotal({
-      senderDiscordId: req.user.discord_id,
-      targetOwnerDiscordId: resolved.ownerUserId
+    return res.json({
+      ok: true,
+      theme,
+      displayName: displayName || "",
+      aboutMe,
     });
-    return res.send("Sent to device");
-  }
+  },
+);
 
-  return res.send(renderAcks(result.acks));
-});
+app.post(
+  "/api/device/:pairCode/top-favorite",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
 
-app.post("/api/device/:pairCode/image_popup", requireDiscord, async (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  const url = String(req.body?.url || "").trim();
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
 
-  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
 
-  const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
-  if (!policy.ok) return;
+    const itemKey = String(req.body?.itemKey || "").trim();
+    const rawEnabled = req.body?.enabled;
+    const enabled =
+      rawEnabled === true ||
+      rawEnabled === 1 ||
+      String(rawEnabled || "0").trim().toLowerCase() === "1" ||
+      String(rawEnabled || "").trim().toLowerCase() === "true";
 
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.send("Invalid code");
+    try {
+      const topFavoriteKeys = setTopFavoriteState(
+        resolved.ownerUserId,
+        itemKey,
+        enabled,
+      );
+      const catalog = getCatalogItems();
+      const ownerSelections = getUserSelections(resolved.ownerUserId);
+      const orderedFavoriteKeys = orderFavoriteKeys(
+        Array.from(ownerSelections.favorites || []),
+        catalog,
+        topFavoriteKeys,
+      );
 
-  if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    return res.send("Not allowed");
-  }
+      logEvent({
+        type: "control_link_top_favorite_updated",
+        actorUserId: getRequestActorUserId(req),
+        targetUserId: resolved.ownerUserId,
+        pairCode,
+        req,
+        payload: {
+          itemKey,
+          enabled,
+          topCount: topFavoriteKeys.length,
+        },
+      });
 
-  const commandId = crypto.randomUUID();
+      return res.json({
+        ok: true,
+        itemKey,
+        enabled,
+        limit: TOP_FAVORITES_LIMIT,
+        topFavoriteKeys,
+        orderedFavoriteKeys,
+      });
+    } catch (e) {
+      const code = String(e?.message || "top_favorite_failed");
+      if (code === "bad_item_key") {
+        return res.status(400).json({
+          ok: false,
+          code: "BAD_ITEM_KEY",
+          message: "That favorite could not be found.",
+        });
+      }
+      if (code === "not_a_favorite") {
+        return res.status(400).json({
+          ok: false,
+          code: "NOT_A_FAVORITE",
+          message: "Only favorites can be pinned to the top.",
+        });
+      }
+      if (code === "top_favorites_limit") {
+        return res.status(400).json({
+          ok: false,
+          code: "TOP_FAVORITES_LIMIT",
+          message: `You can only set ${TOP_FAVORITES_LIMIT} top favorites. Unstar one first.`,
+        });
+      }
 
-  logEvent({
-    type: "command_image",
-    actorUserId: req.user.discord_id,
-    targetUserId: resolved.ownerUserId,
-    pairCode,
-    req,
-    payload: { commandId, url, deviceCount: resolved.deviceIds.length }
-  });
+      return res.status(400).json({
+        ok: false,
+        code: "TOP_FAVORITE_FAILED",
+        message: "Could not update top favorites.",
+      });
+    }
+  },
+);
 
-  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "image_popup", url }, 20000);
+app.post(
+  "/api/device/:pairCode/avatar",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
 
-  if (!result.ok) return res.send(result.error || "No devices online");
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
 
-  const failed = result.acks.some((a) => !a?.ok);
-  if (!failed){
-    incrementCommandsSentTotal({
-      senderDiscordId: req.user.discord_id,
-      targetOwnerDiscordId: resolved.ownerUserId
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = setCustomSiteAvatar(resolved.ownerUserId, {
+      filename: req.body?.filename,
+      mime: req.body?.mime,
+      data: req.body?.data,
     });
-    return res.send("Sent to device");
-  } 
 
-  return res.send(renderAcks(result.acks));
-});
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not update avatar.",
+      });
+    }
 
-app.post("/api/device/:pairCode/set_wallpaper", requireDiscord, async (req, res) => {
-  const pairCode = String(req.params.pairCode || "").trim();
-  const url = String(req.body?.url || "").trim();
-
-  if (!/^https?:\/\//i.test(url)) return res.send("Invalid URL");
-
-  const clean = url.split("#")[0].split("?")[0].toLowerCase();
-  if (!clean.endsWith(".png") && !clean.endsWith(".jpg") && !clean.endsWith(".jpeg")) {
-    return res.send("Invalid file type");
-  }
-
-  const policy = enforceUrlPolicy({ db, logEvent }, req, res, url);
-  if (!policy.ok) return;
-
-  const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
-  if (!resolved) return res.send("Invalid code");
-
-  if (!isAllowedByWhitelist(resolved.ownerUserId, req.user.discord_id)) {
-    return res.send("Not allowed");
-  }
-
-  const commandId = crypto.randomUUID();
-
-  logEvent({
-    type: "command_set_wallpaper",
-    actorUserId: req.user.discord_id,
-    targetUserId: resolved.ownerUserId,
-    pairCode,
-    req,
-    payload: { commandId, url, deviceCount: resolved.deviceIds.length }
-  });
-
-  const result = await sendToAllAndWait(commandId, resolved.deviceIds, { type: "set_wallpaper", url }, 20000);
-
-  if (!result.ok) return res.send(result.error || "No devices online");
-
-  const failed = result.acks.some((a) => !a?.ok);
-    if (!failed){
-    incrementCommandsSentTotal({
-      senderDiscordId: req.user.discord_id,
-      targetOwnerDiscordId: resolved.ownerUserId
+    logEvent({
+      type: "control_link_avatar_updated",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        mime: result.mime,
+        updatedAt: result.updatedAt,
+      },
     });
-    return res.send("Sent to device");
-  }
 
-  return res.send(renderAcks(result.acks));
+    return res.json({
+      ok: true,
+      hasCustomAvatar: true,
+      updatedAt: result.updatedAt,
+      avatarUrl: siteAvatarUrl({ discord_id: resolved.ownerUserId }, 128),
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/avatar/delete",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = clearCustomSiteAvatar(resolved.ownerUserId);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not remove avatar.",
+      });
+    }
+
+    logEvent({
+      type: "control_link_avatar_removed",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        updatedAt: result.updatedAt,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      hasCustomAvatar: false,
+      updatedAt: result.updatedAt,
+      avatarUrl: siteAvatarUrl({ discord_id: resolved.ownerUserId }, 128),
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/banner",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = setCustomSiteBanner(resolved.ownerUserId, {
+      filename: req.body?.filename,
+      mime: req.body?.mime,
+      data: req.body?.data,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not update banner.",
+      });
+    }
+
+    logEvent({
+      type: "control_link_banner_updated",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        mime: result.mime,
+        updatedAt: result.updatedAt,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      hasCustomBanner: true,
+      updatedAt: result.updatedAt,
+      bannerUrl: siteBannerUrl({ discord_id: resolved.ownerUserId }, 1600),
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/banner/delete",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = clearCustomSiteBanner(resolved.ownerUserId);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not remove banner.",
+      });
+    }
+
+    logEvent({
+      type: "control_link_banner_removed",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        updatedAt: result.updatedAt,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      hasCustomBanner: false,
+      updatedAt: result.updatedAt,
+      bannerUrl: "",
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/background",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = setCustomSiteBackground(resolved.ownerUserId, {
+      filename: req.body?.filename,
+      mime: req.body?.mime,
+      data: req.body?.data,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not update background.",
+      });
+    }
+
+    logEvent({
+      type: "control_link_background_updated",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        mime: result.mime,
+        updatedAt: result.updatedAt,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      hasCustomBackground: true,
+      updatedAt: result.updatedAt,
+      backgroundUrl: siteBackgroundUrl(
+        { discord_id: resolved.ownerUserId },
+        1920,
+      ),
+    });
+  },
+);
+
+app.post(
+  "/api/device/:pairCode/background/delete",
+  requireDiscord,
+  requireNotBanned,
+  (req, res) => {
+    const pairCode = String(req.params.pairCode || "").trim();
+    if (!/^\d{6}$/.test(pairCode)) {
+      return res.status(400).json({ ok: false, code: "BAD_PAIR_CODE" });
+    }
+
+    const resolved = resolveOwnerAndDevicesByPairCode(pairCode);
+    if (!resolved) {
+      return res.status(404).json({ ok: false, code: "UNKNOWN_CODE" });
+    }
+
+    if (req.user.discord_id !== resolved.ownerUserId) {
+      return res.status(403).json({ ok: false, code: "NOT_OWNER" });
+    }
+
+    const result = clearCustomSiteBackground(resolved.ownerUserId);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        ok: false,
+        message: result.message || "Could not remove background.",
+      });
+    }
+
+    logEvent({
+      type: "control_link_background_removed",
+      actorUserId: getRequestActorUserId(req),
+      targetUserId: resolved.ownerUserId,
+      pairCode,
+      req,
+      payload: {
+        updatedAt: result.updatedAt,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      hasCustomBackground: false,
+      updatedAt: result.updatedAt,
+      backgroundUrl: "",
+    });
+  },
+);
+
+registerCommandRoutes(app, {
+  buildDirectDeliveryMessage,
+  buildGroupDeliveryMessage,
+  crypto,
+  db,
+  denyIfBlockedCommandSender,
+  denyIfDisabled,
+  enforceManagedUrlPolicy,
+  enforceWebCooldownForNewUsers,
+  groupHasReportedCapabilityForActor,
+  heavyCooldown,
+  incrementCommandsSentTotal,
+  incrementCommandsSentTotalOnce,
+  isCommunityGroupCommandEnabled,
+  isAllowedByWhitelist,
+  isAllowedWallpaperExt,
+  isHttpUrl,
+  logEvent,
+  logDeliveredDirectCommandHistory,
+  ownerHasReportedCapabilityForActor,
+  requireDiscord,
+  requireNotBanned,
+  resolvePopupMediaUrl,
+  resolveOwnerAndDevicesByPairCode,
+  sendCommandToResolvedTarget,
+  sendToGroupAndWait,
 });
 
 app.post("/favorites/toggle", requireDiscord, (req, res) => {
@@ -3100,21 +11902,34 @@ app.post("/favorites/toggle", requireDiscord, (req, res) => {
 app.use(express.static(path.join(__dirname, "../public")));
 
 function loadCatalogItems() {
-  const file = path.join(__dirname, CATALOG);
-  const raw = fs.readFileSync(file, "utf8");
-  const data = JSON.parse(raw);
-  const items = Array.isArray(data.items) ? data.items : [];
-  return items
-    .map((it) => ({
-      key: String(it.key || "").trim(),
-      label: String(it.label || "").trim(),
-      sort: Number.isFinite(Number(it.sort)) ? Number(it.sort) : 0,
-    }))
-    .filter((it) => it.key && it.label);
+  try {
+    const stat = fs.statSync(CATALOG);
+    if (!stat.isFile()) {
+      console.warn(`[catalog] skipped sync, not a file: ${CATALOG}`);
+      return null;
+    }
+
+    const raw = fs.readFileSync(CATALOG, "utf8");
+    const data = JSON.parse(raw);
+    const items = Array.isArray(data.items) ? data.items : [];
+    return items
+      .map((it, index) => ({
+        key: String(it.key || "").trim(),
+        label: String(it.label || "").trim(),
+        sort: Number.isFinite(Number(it.sort)) ? Number(it.sort) : index,
+      }))
+      .filter((it) => it.key && it.label);
+  } catch (err) {
+    console.warn(
+      `[catalog] skipped sync, failed to load ${CATALOG}: ${err?.message || err}`,
+    );
+    return null;
+  }
 }
 
 function syncCatalogToDb() {
   const items = loadCatalogItems();
+  if (!items) return;
   const now = Date.now();
 
   const upsert = db.prepare(`
@@ -3147,7 +11962,9 @@ function syncCatalogToDb() {
   );
 }
 
-syncCatalogToDb();
+if (!IS_AVATAR_BACKFILL_CLI) {
+  syncCatalogToDb();
+}
 
 function getCatalogItems() {
   return db
@@ -3155,7 +11972,7 @@ function getCatalogItems() {
       `
     SELECT key, label
     FROM list_items
-    ORDER BY sort_order ASC, label COLLATE NOCASE ASC
+    ORDER BY label COLLATE NOCASE ASC, key COLLATE NOCASE ASC
   `,
     )
     .all();
@@ -3180,6 +11997,139 @@ function getUserSelections(userId) {
   return out;
 }
 
+function orderSelectionKeysByCatalog(keys, catalog) {
+  const wanted = new Set(
+    Array.isArray(keys)
+      ? keys.map((key) => String(key || "").trim()).filter(Boolean)
+      : [],
+  );
+  const ordered = [];
+
+  for (const item of catalog || []) {
+    const key = String(item?.key || "").trim();
+    if (!key || !wanted.has(key)) continue;
+    ordered.push(key);
+    wanted.delete(key);
+  }
+
+  for (const key of wanted) ordered.push(key);
+  return ordered;
+}
+
+function getTopFavoriteKeys(userId) {
+  const rows = db
+    .prepare(
+      `
+    SELECT utf.item_key
+    FROM user_top_favorites utf
+    JOIN user_list_items uli
+      ON uli.user_id = utf.user_id
+     AND uli.list_key = 'favorites'
+     AND uli.item_key = utf.item_key
+    WHERE utf.user_id = ?
+    ORDER BY utf.created_at DESC, utf.item_key COLLATE NOCASE ASC
+  `,
+    )
+    .all(userId);
+
+  return rows
+    .map((row) => String(row?.item_key || "").trim())
+    .filter(Boolean);
+}
+
+function orderFavoriteKeys(favoriteKeys, catalog, topFavoriteKeys = []) {
+  const base = orderSelectionKeysByCatalog(favoriteKeys, catalog);
+  const favoriteSet = new Set(base);
+  const topOrdered = [];
+  const seen = new Set();
+
+  for (const key of topFavoriteKeys || []) {
+    const normalized = String(key || "").trim();
+    if (!normalized || seen.has(normalized) || !favoriteSet.has(normalized)) {
+      continue;
+    }
+    topOrdered.push(normalized);
+    seen.add(normalized);
+  }
+
+  const rest = base.filter((key) => !seen.has(key));
+  return topOrdered.concat(rest);
+}
+
+function setTopFavoriteState(userId, itemKey, enabled) {
+  const normalizedItemKey = String(itemKey || "").trim();
+  if (!normalizedItemKey) throw new Error("bad_item_key");
+
+  const exists = db
+    .prepare(`SELECT 1 FROM list_items WHERE key=?`)
+    .get(normalizedItemKey);
+  if (!exists) throw new Error("bad_item_key");
+
+  const favoriteExists = !!db
+    .prepare(
+      `
+    SELECT 1
+    FROM user_list_items
+    WHERE user_id=? AND list_key='favorites' AND item_key=?
+  `,
+    )
+    .get(userId, normalizedItemKey);
+
+  const tx = db.transaction(() => {
+    if (enabled) {
+      if (!favoriteExists) throw new Error("not_a_favorite");
+
+      const alreadyTop = !!db
+        .prepare(
+          `
+        SELECT 1
+        FROM user_top_favorites
+        WHERE user_id=? AND item_key=?
+      `,
+        )
+        .get(userId, normalizedItemKey);
+
+      if (!alreadyTop) {
+        const countRow = db
+          .prepare(
+            `
+          SELECT COUNT(*) AS n
+          FROM user_top_favorites utf
+          JOIN user_list_items uli
+            ON uli.user_id = utf.user_id
+           AND uli.list_key = 'favorites'
+           AND uli.item_key = utf.item_key
+          WHERE utf.user_id=?
+        `,
+          )
+          .get(userId);
+
+        const count = Number(countRow?.n || 0);
+        if (count >= TOP_FAVORITES_LIMIT) {
+          throw new Error("top_favorites_limit");
+        }
+
+        db.prepare(
+          `
+          INSERT INTO user_top_favorites (user_id, item_key, created_at)
+          VALUES (?, ?, ?)
+        `,
+        ).run(userId, normalizedItemKey, Date.now());
+      }
+    } else {
+      db.prepare(
+        `
+        DELETE FROM user_top_favorites
+        WHERE user_id=? AND item_key=?
+      `,
+      ).run(userId, normalizedItemKey);
+    }
+  });
+
+  tx();
+  return getTopFavoriteKeys(userId);
+}
+
 function setUserItem(userId, listKey, itemKey, enabled) {
   if (!LISTS[listKey]) throw new Error("bad_list_key");
 
@@ -3199,6 +12149,15 @@ function setUserItem(userId, listKey, itemKey, enabled) {
       `,
       ).run(userId, otherListKey, itemKey);
 
+      if (listKey === "dislikes") {
+        db.prepare(
+          `
+          DELETE FROM user_top_favorites
+          WHERE user_id=? AND item_key=?
+        `,
+        ).run(userId, itemKey);
+      }
+
       db.prepare(
         `
         INSERT OR IGNORE INTO user_list_items (user_id, list_key, item_key, created_at)
@@ -3212,17 +12171,153 @@ function setUserItem(userId, listKey, itemKey, enabled) {
         WHERE user_id=? AND list_key=? AND item_key=?
       `,
       ).run(userId, listKey, itemKey);
+
+      if (listKey === "favorites") {
+        db.prepare(
+          `
+          DELETE FROM user_top_favorites
+          WHERE user_id=? AND item_key=?
+        `,
+        ).run(userId, itemKey);
+      }
     }
   });
 
   tx();
 }
 
+registerProfileRoutes(app, {
+  API_MIN_COMMANDS,
+  CONTROL_LINK_THEME_OPTIONS,
+  CUSTOM_CONTROL_URL_MAX_LEN,
+  CUSTOM_CONTROL_URL_MIN_COMMANDS,
+  CUSTOM_CONTROL_URL_MIN_LEN,
+  MAX_USER_STRIKES,
+  PAIR_CODE_RESET_COOLDOWN_MS,
+  WHITELIST_SEARCH_MIN_LEN,
+  WebSocket,
+  buildCustomControlUrl,
+  canChangeCustomControlUrl,
+  clearQueuedCommandsForUser,
+  clientPairingCredentials,
+  createNotificationsForUsers,
+  db,
+  ensurePairCode,
+  ensureUserApiKeyExists,
+  formatDateTimeLabel,
+  gen6,
+  genApiKey,
+  getAboutMe,
+  getApiKeyMeta,
+  getCatalogItems,
+  getCommandsSentTotal,
+  getPairCodeResetNextAllowedAt,
+  getPairCodeResetState,
+  getProfileFlash,
+  getUserPresenceState,
+  getUserSelections,
+  getUserStrikeCount,
+  getUserStrikeState,
+  getWhitelist,
+  getPreferredDisplayName,
+  hashApiKey,
+  hmac,
+  isDiscordId,
+  isDeviceOnline,
+  isValidCustomControlSlug,
+  listUserStrikeHistory,
+  logEvent,
+  normalizeControlLinkDisplayName,
+  normalizeControlLinkTheme,
+  normalizeCustomControlSlug,
+  normalizeWhitelistSearchQuery,
+  renderWithLayout,
+  requireDiscord,
+  requireNotBanned,
+  searchWhitelistUsers,
+  siteAvatarUrl,
+  setAboutMe,
+  setUserItem,
+  unpairAllDevicesForUser,
+  wantsJson,
+  wsByDeviceId,
+});
+
+registerControlLinkRoutes(app, {
+  COMMAND_HISTORY_REPORT_REASON_OPTIONS,
+  CONTROL_LINK_REPORT_REASON_BY_KEY,
+  CONTROL_LINK_REPORT_REASON_OPTIONS,
+  CONTROL_LINK_THEME_OPTIONS,
+  TOP_FAVORITES_LIMIT,
+  createControlLinkReport,
+  db,
+  ensurePairCode,
+  getBoardMessages,
+  getCatalogItems,
+  getCommandPrefsForUser,
+  getCommandsSentMilestoneBadge,
+  getResolvedEnabledCommandsForActor,
+  getUserPresenceState,
+  getRecentUploadsByContextForUser,
+  getReportReasonOption,
+  getSupporterBadge,
+  getTopFavoriteKeys,
+  getUserSelections,
+  hmac,
+  isCommandEnabled,
+  isDeviceOnline,
+  isValidCustomControlSlug,
+  normalizeControlLinkDisplayName,
+  normalizeControlLinkTheme,
+  normalizeCustomControlSlug,
+  normalizeReportDetails,
+  orderFavoriteKeys,
+  orderSelectionKeysByCatalog,
+  ownerHasReportedCapabilityForActor,
+  renderWithLayout,
+  requestLooksLikeLinkPreview,
+  requireDiscord,
+  requireNotBanned,
+});
+
+registerDiscoveryRoutes({ app, api }, {
+  CONTROL_LINK_REPORT_REASON_BY_KEY,
+  CONTROL_LINK_REPORT_REASON_OPTIONS,
+  COMMUNITY_GROUP_PUBLIC_MIN_COMMANDS,
+  COMMUNITY_GROUP_COMMAND_OPTIONS,
+  GROUP_CHAT_REPORT_REASON_BY_KEY,
+  GROUP_CHAT_REPORT_REASON_OPTIONS,
+  createCommunityGroupReport,
+  createUserReport,
+  db,
+  discordAvatarUrl,
+  clearCustomCommunityGroupAvatar,
+  clearCustomCommunityGroupBanner,
+  groupAvatarUrl,
+  groupBannerUrl,
+  getCommunityGroupCommandPrefs,
+  getUserPresenceState,
+  getRecentUploadsByContextForUser,
+  groupHasReportedCapability,
+  isAdmin,
+  listFilteredDiscoverUsers,
+  listPagedDiscoverUsers,
+  listPresenceStateByUserIds,
+  loadGroupsCatalog,
+  logEvent,
+  renderWithLayout,
+  requireDiscord,
+  requireNotBanned,
+  siteAvatarUrl,
+  setCustomCommunityGroupAvatar,
+  setCustomCommunityGroupBanner,
+});
+
 app.get("/download/client", requireDiscord, requireNotBanned, (req, res) => {
   const filePath = path.join(
     __dirname,
     "../downloads",
-    "PlayCtrl.me Client_0.1.10_x64-setup.exe",
+    "PlayCtrl.me Client-setup.exe",
   );
 
   if (!fs.existsSync(filePath)) {
@@ -3232,898 +12327,122 @@ app.get("/download/client", requireDiscord, requireNotBanned, (req, res) => {
   res.download(filePath, "PlayCtrl.me-setup.exe");
 });
 
-app.get("/admin", requireDiscord, requireAdmin, (req, res) => {
-  renderWithLayout(res, "pages/admin/admin_main", {
-    title: "PlayCtrl.me",
-  });
-});
-
-app.get("/admin/admins", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.admins = db
-    .prepare(
-      `
-    SELECT a.discord_id, a.is_bootstrap, u.username, u.global_name, a.added_by, a.created_at
-    FROM admins a
-    LEFT JOIN users u ON u.discord_id = a.discord_id
-    ORDER BY a.is_bootstrap DESC, a.created_at DESC
-  `,
-    )
-    .all();
-
-  renderWithLayout(res, "pages/admin/manage/mng_main", {
-    title: "PlayCtrl.me",
-  });
-});
-
-app.post("/admin/admins/add", requireDiscord, requireAdmin, (req, res) => {
-  const id = String(req.body?.discord_id || "").trim();
-  if (!/^\d{10,20}$/.test(id)) return res.status(400).send("Bad discord id");
-
-  db.prepare(
-    `
-    INSERT INTO admins (discord_id, added_by, created_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(discord_id) DO NOTHING
-  `,
-  ).run(id, req.user.discord_id, Date.now());
-
-  logEvent({
-    type: "admin_added",
-    actorUserId: req.user.discord_id,
-    targetUserId: id,
-    req,
-    payload: {},
-  });
-  res.redirect("/admin/admins");
-});
-
-app.post("/admin/admins/remove", requireDiscord, requireAdmin, (req, res) => {
-  const targetId = String(req.body?.discord_id || "").trim();
-  if (!targetId) return res.status(400).send("bad_request");
-
-  const row = db
-    .prepare(`SELECT is_bootstrap FROM admins WHERE discord_id=?`)
-    .get(targetId);
-  if (!row) return res.status(404).send("not_found");
-
-  if (row.is_bootstrap) {
-    return res.status(403).send("Cannot remove bootstrap admin");
-  }
-
-  db.prepare(`DELETE FROM admins WHERE discord_id=?`).run(targetId);
-  res.redirect("/admin/admins");
-});
-
-app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
-  const PAGE_SIZE = 50;
-
-  const page = Math.max(1, parseIntSafe(req.query.page, 1));
-  const q = String(req.query.q || "").trim();
-  const typesParam = String(req.query.types || "").trim();
-  const selectedTypes = typesParam
-    ? typesParam
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
-
-  res.locals.q = q;
-  res.locals.selectedTypes = selectedTypes;
-
-  const typeRows = db
-    .prepare(
-      `
-    SELECT type, COUNT(*) as c
-    FROM events
-    GROUP BY type
-    ORDER BY c DESC
-    LIMIT 80
-  `,
-    )
-    .all();
-  res.locals.allTypes = typeRows.map((r) => r.type);
-
-  const where = [];
-  const args = {};
-
-  if (q) {
-    where.push(`
-      (
-        e.type LIKE @q OR
-        e.actor_user_id LIKE @q OR
-        e.target_user_id LIKE @q OR
-        e.pair_code LIKE @q OR
-        e.device_id LIKE @q OR
-        e.payload LIKE @q OR
-        au.username LIKE @q OR
-        au.global_name LIKE @q OR
-        tu.username LIKE @q OR
-        tu.global_name LIKE @q
-      )
-    `);
-    args.q = `%${q}%`;
-  }
-
-  if (selectedTypes.length) {
-    const placeholders = selectedTypes.map((_, i) => `@t${i}`);
-    where.push(`e.type IN (${placeholders.join(",")})`);
-    selectedTypes.forEach((t, i) => (args[`t${i}`] = t));
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-  const total = Number(
-    db
-      .prepare(
-        `
-    SELECT COUNT(*) as n
-    FROM events e
-    LEFT JOIN users au ON au.discord_id = e.actor_user_id
-    LEFT JOIN users tu ON tu.discord_id = e.target_user_id
-    ${whereSql}
-  `,
-      )
-      .get(args)?.n || 0,
-  );
-  res.locals.total = total;
-
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, pages);
-  const offset = (safePage - 1) * PAGE_SIZE;
-  res.locals.pages = pages;
-  res.locals.safePage = safePage;
-
-  const rows = db
-    .prepare(
-      `
-    SELECT
-      e.created_at, e.type, e.actor_user_id, e.target_user_id, e.pair_code, e.device_id, e.payload,
-
-      au.discord_id as actor_id,
-      au.username as actor_username,
-      au.global_name as actor_global_name,
-      au.avatar as actor_avatar,
-
-      tu.discord_id as target_id,
-      tu.username as target_username,
-      tu.global_name as target_global_name,
-      tu.avatar as target_avatar
-
-    FROM events e
-    LEFT JOIN users au ON au.discord_id = e.actor_user_id
-    LEFT JOIN users tu ON tu.discord_id = e.target_user_id
-    ${whereSql}
-    ORDER BY e.created_at DESC
-    LIMIT ${PAGE_SIZE} OFFSET ${offset}
-  `,
-    )
-    .all(args);
-  res.locals.rows = rows;
-
-  function userChip(prefix, id, username, globalName, avatar) {
-    if (!id) return `<span class="uChip muted">(none)</span>`;
-    const display = globalName || username || id;
-    const avatarUrl = discordAvatarUrl({ discord_id: id, avatar }, 64);
-    return `
-      <span class="uChip" data-uid="${escapeHtml(id)}">
-        <img class="uAv" src="${escapeHtml(avatarUrl)}" alt="" />
-        <span class="uNm">${escapeHtml(display)}</span>
-        <span class="uId">${escapeHtml(id)}</span>
-      </span>
-    `;
-  }
-  res.locals.userChip = userChip;
-
-  res.locals.cards = rows.map((r) => {
-    const when = new Date(r.created_at).toISOString();
-    const payloadObj = tryJson(r.payload);
-    const pretty = payloadObj
-      ? JSON.stringify(payloadObj, null, 2)
-      : String(r.payload || "");
-
-    let summary = "";
-    if (payloadObj && typeof payloadObj === "object") {
-      const title = payloadObj.title ? `title="${payloadObj.title}"` : "";
-      const msg = payloadObj.message
-        ? `message="${String(payloadObj.message).slice(0, 80)}"`
-        : "";
-      const url = payloadObj.url ? `url="${payloadObj.url}"` : "";
-      const cmdId = payloadObj.commandId ? `cmd=${payloadObj.commandId}` : "";
-      summary = [cmdId, title, msg, url].filter(Boolean).join(" • ");
-    }
-
-    return {
-      type: r.type,
-      pair_code: r.pair_code,
-      device_id: r.device_id,
-
-      actor_id: r.actor_id,
-      actor_username: r.actor_username,
-      actor_global_name: r.actor_global_name,
-      actor_avatar: r.actor_avatar,
-
-      target_id: r.target_id,
-      target_username: r.target_username,
-      target_global_name: r.target_global_name,
-      target_avatar: r.target_avatar,
-
-      when,
-      summary,
-      pretty,
-    };
-  });
-
-  function qs(nextPage) {
-    const p = new URLSearchParams();
-    if (q) p.set("q", q);
-    if (selectedTypes.length) p.set("types", selectedTypes.join(","));
-    p.set("page", String(nextPage));
-    return "?" + p.toString();
-  }
-  res.locals.qs = qs;
-
-  res.locals.prevDisabled = safePage <= 1;
-  res.locals.nextDisabled = safePage >= pages;
-
-  const maxPageOptions = Math.min(pages, 400);
-  res.locals.pageOptionsHtml = Array.from(
-    { length: maxPageOptions },
-    (_, i) => {
-      const n = i + 1;
-      const sel = n === safePage ? "selected" : "";
-      return `<option value="${n}" ${sel}>${n}</option>`;
-    },
-  ).join("");
-
-  renderWithLayout(res, "pages/admin/logs/logs_main", {
-    title: "Admin Logs",
-  });
-});
-
-app.get("/admin/bans", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.users = db
-    .prepare(
-      `
-    SELECT
-      u.discord_id, u.username, u.global_name, u.avatar,
-      b.discord_id AS banned, b.reason, b.banned_by, b.created_at AS banned_at
-    FROM users u
-    LEFT JOIN bans b ON b.discord_id = u.discord_id
-    ORDER BY (b.discord_id IS NOT NULL) DESC, u.created_at DESC
-    LIMIT 2000
-  `,
-    )
-    .all();
-
-  renderWithLayout(res, "pages/admin/bans/bans_main", {
-    title: "PlayCtrl.me",
-  });
-});
-
-app.post("/admin/bans/ban", requireDiscord, requireAdmin, (req, res) => {
-  const targetId = String(req.body?.discord_id || "").trim();
-  const reason = String(req.body?.reason || "")
-    .trim()
-    .slice(0, 300);
-
-  if (!/^\d{10,20}$/.test(targetId))
-    return res.status(400).send("Bad discord id");
-
-  db.prepare(
-    `
-    INSERT INTO bans (discord_id, reason, banned_by, created_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(discord_id) DO UPDATE SET
-      reason=excluded.reason,
-      banned_by=excluded.banned_by,
-      created_at=excluded.created_at
-  `,
-  ).run(targetId, reason || null, req.user.discord_id, Date.now());
-
-  logEvent({
-    type: "user_banned",
-    actorUserId: req.user.discord_id,
-    targetUserId: targetId,
-    req,
-    payload: { reason: reason || null },
-  });
-
-  res.redirect("/admin/bans");
-});
-
-app.post("/admin/bans/unban", requireDiscord, requireAdmin, (req, res) => {
-  const targetId = String(req.body?.discord_id || "").trim();
-  if (!/^\d{10,20}$/.test(targetId))
-    return res.status(400).send("Bad discord id");
-
-  db.prepare(`DELETE FROM bans WHERE discord_id=?`).run(targetId);
-
-  logEvent({
-    type: "user_unbanned",
-    actorUserId: req.user.discord_id,
-    targetUserId: targetId,
-    req,
-    payload: {},
-  });
-
-  res.redirect("/admin/bans");
-});
-
-app.get("/admin/invites", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.rows = db
-    .prepare(
-      `
-    SELECT created_at, created_by, used_at, used_by
-    FROM invite_codes
-    ORDER BY created_at DESC
-    LIMIT 500
-  `,
-    )
-    .all();
-
-  res.locals.enrollmentOpen = isEnrollmentOpen();
-
-  renderWithLayout(res, "pages/admin/invites/inv_main", {
-    title: "Invites",
-  });
-});
-
-app.post("/admin/invites/new", requireDiscord, requireAdmin, (req, res) => {
-  let count = Number(req.body?.count || 1);
-  if (!Number.isFinite(count)) count = 1;
-  count = Math.max(1, Math.min(50, Math.floor(count)));
-
-  const now = Date.now();
-  const createdBy = req.user.discord_id;
-
-  const insert = db.prepare(`
-    INSERT INTO invite_codes (code_hash, created_at, created_by)
-    VALUES (?, ?, ?)
-  `);
-
-  const codes = [];
-
-  const tx = db.transaction(() => {
-    for (let i = 0; i < count; i++) {
-      let code, hash;
-      for (let tries = 0; tries < 10; tries++) {
-        code = genInviteCode();
-        hash = inviteHash(code);
-        try {
-          insert.run(hash, now, createdBy);
-          codes.push(code);
-          break;
-        } catch (e) {
-          if (!String(e?.message || "").includes("UNIQUE")) throw e;
-        }
-      }
-    }
-  });
-
-  tx();
-
-  logEvent({
-    type: "invite_generated",
-    actorUserId: createdBy,
-    targetUserId: null,
-    req,
-    payload: { count: codes.length },
-  });
-
-  const codeHtml = codes
-    .map(
-      (c) =>
-        `<li style="font-family:monospace;font-size:16px;">${escapeHtml(c)}</li>`,
-    )
-    .join("");
-
-  res.type("html").send(
-    layout({
-      title: "Invites Generated",
-      user: req.viewUser,
-      isAdmin: req.viewIsAdmin,
-      body: `
-      <h1>Invite codes generated</h1>
-      <p>Copy these now — you won’t be able to view them again.</p>
-      <ol>${codeHtml}</ol>
-      <p><a href="/admin/invites">Back to Invites</a></p>
-    `,
-    }),
-  );
-});
-
-app.post(
-  "/admin/invites/enrollment-toggle",
-  requireDiscord,
+registerAdminRoutes(app, {
+  ALLOWLIST_PATH,
+  ADMIN_ACTIVITY_RANGE_24H,
+  ADMIN_ACTIVITY_RANGE_7D,
+  BLOCKLIST_PATH,
+  COMMAND_BLOCKS_PAGE_LIMIT,
+  CONTROL_LINK_COMMAND_HISTORY_TYPE_KEYS,
+  MAX_USER_STRIKES,
+  NOTIFICATION_MENU_LIMIT,
+  RESPONSES_DIR,
+  REPORTS_PAGE_SIZE,
+  REPORT_MEDIA_BACKUPS_DIR,
+  appendHostToFile,
+  broadcastNotificationToAllUsers,
+  clearCustomSiteAvatar,
+  clearCustomSiteBackground,
+  clearCustomSiteBanner,
+  clearCustomCommunityGroupAvatar,
+  clearCustomCommunityGroupBanner,
+  countCommandSenderBlocks,
+  countReports,
+  db,
+  deleteUploadedFiles,
+  escapeHtml,
+  formatBytesCompact,
+  formatCountLabel,
+  genInviteCode,
+  getAdminCommandActivityDatasets,
+  getAllowSet,
+  getBlockSet,
+  getNotificationSummaryForUser,
+  getPreferredDisplayName,
+  getUserStrikeStatesByUserIds,
+  inviteHash,
+  isEnrollmentOpen,
+  isManagedPathInDir,
+  listAllUploadedFilesForAdmin,
+  listControlLinkAssetsForAdmin,
+  listRecentAdminNotificationEvents,
+  listRecentCommandSenderBlocks,
+  listRecentReports,
+  loadGroupsCatalog,
+  logEvent,
+  markAdminReportQueueNotificationsReadForUser,
+  normalizeNotificationActionLabel,
+  normalizeNotificationActionUrl,
+  normalizeNotificationMessage,
+  normalizeNotificationTitle,
+  normalizeStoredMime,
+  normalizeStrikeCount,
+  parseIntSafe,
+  removeHostFromFile,
+  renderWithLayout,
   requireAdmin,
-  (req, res) => {
-    const enabled = String(req.body?.enabled || "0") === "1";
-
-    setSetting("enrollment_open", enabled ? "1" : "0");
-
-    try {
-      logEvent({
-        type: "enrollment_toggle",
-        actorUserId: req.user.discord_id,
-        targetUserId: null,
-        req,
-        payload: { enrollment_open: enabled ? 1 : 0 },
-      });
-    } catch {}
-
-    if ((req.headers["x-requested-with"] || "") === "XMLHttpRequest") {
-      return res.json({ ok: true, enrollment_open: enabled });
-    }
-
-    return res.redirect("/admin/invites");
-  },
-);
-
-app.get("/admin/url-blocklist", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.pending = db
-    .prepare(
-      `
-    SELECT host, sample_url, first_seen_at, last_seen_at, seen_count
-    FROM url_verification_queue
-    WHERE decided IS NULL
-    ORDER BY last_seen_at DESC
-    LIMIT 500
-  `,
-    )
-    .all();
-
-  renderWithLayout(res, "pages/admin/blocklist/bl_main", {
-    title: "URL Blocklist",
-  });
+  requireBootstrapAdmin,
+  requireDiscord,
+  requireNotBanned,
+  deleteMediaUrlResolverSite,
+  listMediaUrlResolverSites,
+  listSupportedMediaUrlResolvers,
+  resolveReportForAdmin,
+  groupAvatarUrl,
+  groupBannerUrl,
+  resolveStoredSiteAvatarPath,
+  saveMediaUrlResolverSite,
+  setSetting,
+  setUserStrikeCountByAdmin,
+  siteAvatarUrl,
+  tryJson,
+  wantsJson,
 });
-
-app.get(
-  "/admin/url-blocklist/list",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const which = String(req.query.which || "allow").toLowerCase();
-    const qRaw = String(req.query.q || "");
-    const q = qRaw.trim().toLowerCase();
-    const offset = Math.max(0, Number(req.query.offset || 0) || 0);
-    const limit = Math.min(
-      500,
-      Math.max(10, Number(req.query.limit || 200) || 200),
-    );
-
-    const set = which === "block" ? getBlockSet() : getAllowSet();
-
-    let items = Array.from(set);
-    if (q) items = items.filter((h) => String(h).toLowerCase().includes(q));
-    items.sort();
-
-    const total = items.length;
-    const page = items.slice(offset, offset + limit);
-
-    res.json({
-      ok: true,
-      which,
-      total,
-      offset,
-      limit,
-      items: page,
-    });
-  },
-);
-
-app.post(
-  "/admin/url-blocklist/allow/add",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const host = String(req.body?.host || "").trim();
-    appendHostToFile(ALLOWLIST_PATH, host);
-    return res.json({ ok: true });
-  },
-);
-
-app.post(
-  "/admin/url-blocklist/allow/remove",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const host = String(req.body?.host || "").trim();
-    removeHostFromFile(ALLOWLIST_PATH, host);
-    return res.json({ ok: true });
-  },
-);
-
-app.post(
-  "/admin/url-blocklist/block/add",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const host = String(req.body?.host || "").trim();
-    appendHostToFile(BLOCKLIST_PATH, host);
-    return res.json({ ok: true });
-  },
-);
-
-app.post(
-  "/admin/url-blocklist/block/remove",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const host = String(req.body?.host || "").trim();
-    removeHostFromFile(BLOCKLIST_PATH, host);
-    return res.json({ ok: true });
-  },
-);
-
-app.post(
-  "/admin/url-blocklist/queue/decide",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const host = String(req.body?.host || "")
-      .trim()
-      .toLowerCase();
-    const decision = String(req.body?.decision || "").trim();
-    if (!host || (decision !== "allow" && decision !== "block")) {
-      return res.status(400).json({ ok: false, message: "Bad request." });
-    }
-
-    if (decision === "allow") appendHostToFile(ALLOWLIST_PATH, host);
-    if (decision === "block") appendHostToFile(BLOCKLIST_PATH, host);
-
-    db.prepare(
-      `
-    UPDATE url_verification_queue
-    SET decided=?, decided_by=?, decided_at=?
-    WHERE host=?
-  `,
-    ).run(decision, req.user.discord_id, Date.now(), host);
-
-    logEvent({
-      type: "url_queue_decided",
-      actorUserId: req.user.discord_id,
-      targetUserId: null,
-      req,
-      payload: { host, decision },
-    });
-
-    return res.json({ ok: true });
-  },
-);
-
-app.get("/admin/users", requireDiscord, requireAdmin, (req, res) => {
-  const PAGE_SIZE = 50;
-
-  const page = Math.max(1, parseIntSafe(req.query.page, 1));
-  const q = String(req.query.q || "").trim();
-  const sortKey = String(req.query.sort || "commands").trim();
-  const dir =
-    String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-  res.locals.q = q;
-  res.locals.dir = dir;
-
-  const where = [];
-  const args = {};
-
-  if (q) {
-    where.push(`
-      (
-        u.discord_id LIKE @q OR
-        u.username LIKE @q OR
-        u.global_name LIKE @q OR
-        pc.code_plain LIKE @q
-      )
-    `);
-    args.q = `%${q}%`;
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-  const SORT_MAP = {
-    display: "COALESCE(u.global_name, u.username, '')",
-    username: "COALESCE(u.username, '')",
-    discord: "u.discord_id",
-    paircode: "COALESCE(pc.code_plain, '')",
-    commands: "COALESCE(u.commands_sent_total, 0)",
-    api_limit: "COALESCE(u.api_rate_limit, 0)",
-  };
-
-  const orderBy = SORT_MAP[sortKey] || SORT_MAP.commands;
-
-  const total = Number(
-    db
-      .prepare(
-        `
-    SELECT COUNT(*) AS n
-    FROM users u
-    LEFT JOIN pair_codes pc
-      ON pc.rowid = (
-        SELECT MAX(rowid) FROM pair_codes WHERE user_id = u.discord_id
-      )
-    ${whereSql}
-  `,
-      )
-      .get(args)?.n || 0,
-  );
-  res.locals.total = total;
-
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, pages);
-  const offset = (safePage - 1) * PAGE_SIZE;
-  res.locals.pages = pages;
-  res.locals.safePage = safePage;
-
-  res.locals.rows = db
-    .prepare(
-      `
-    SELECT
-      u.discord_id,
-      u.username,
-      u.global_name,
-      u.avatar,
-      COALESCE(u.commands_sent_total, 0) AS commands_sent_total,
-      COALESCE(u.api_rate_limit, 0) AS api_rate_limit,
-      pc.code_plain AS pair_code
-    FROM users u
-    LEFT JOIN pair_codes pc
-      ON pc.rowid = (
-        SELECT MAX(rowid) FROM pair_codes WHERE user_id = u.discord_id
-      )
-    ${whereSql}
-    ORDER BY ${orderBy} ${dir}, u.discord_id ASC
-    LIMIT ${PAGE_SIZE} OFFSET ${offset}
-  `,
-    )
-    .all(args);
-
-  function qs(nextPage) {
-    const p = new URLSearchParams();
-    if (q) p.set("q", q);
-    if (sortKey) p.set("sort", sortKey);
-    if (dir) p.set("dir", dir.toLowerCase());
-    p.set("page", String(nextPage));
-    return "?" + p.toString();
-  }
-  res.locals.qs = qs;
-
-  res.locals.prevDisabled = safePage <= 1;
-  res.locals.nextDisabled = safePage >= pages;
-
-  res.locals.pageOptions = Array.from({ length: pages }, (_, i) => {
-    const n = i + 1;
-    return `<option value="${n}" ${n === safePage ? "selected" : ""}>${n}</option>`;
-  }).join("");
-
-  res.locals.sortOptions = [
-    ["commands", "Commands sent"],
-    ["api_limit", "API limit"],
-    ["display", "Display name"],
-    ["username", "Username"],
-    ["discord", "Discord ID"],
-    ["paircode", "Pair code"],
-  ]
-    .map(([k, label]) => {
-      const sel = k === sortKey ? "selected" : "";
-      return `<option value="${escapeHtml(k)}" ${sel}>${escapeHtml(label)}</option>`;
-    })
-    .join("");
-
-  renderWithLayout(res, "pages/admin/users/usr_main", {
-    title: "Users",
-  });
-});
-
-app.post(
-  "/admin/users/set-commands",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    try {
-      const targetId = String(req.body?.discord_id || "").trim();
-      const nRaw = req.body?.commands_sent_total;
-      const n = Number.parseInt(String(nRaw), 10);
-
-      if (!/^\d{10,20}$/.test(targetId)) {
-        return res.status(400).json({ ok: false, message: "Bad discord id" });
-      }
-      if (!Number.isFinite(n) || n < 0) {
-        return res
-          .status(400)
-          .json({ ok: false, message: "Bad commands_sent_total" });
-      }
-
-      db.prepare(
-        `
-      UPDATE users
-      SET commands_sent_total = ?
-      WHERE discord_id = ?
-    `,
-      ).run(n, targetId);
-
-      logEvent({
-        type: "admin_set_commands_sent",
-        actorUserId: req.user.discord_id,
-        targetUserId: targetId,
-        req,
-        payload: { commands_sent_total: n },
-      });
-
-      return res.json({ ok: true });
-    } catch (e) {
-      return res.status(500).json({ ok: false, message: "Server error" });
-    }
-  },
-);
-
-app.post(
-  "/admin/users/:discordId/commands-sent",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const uid = String(req.params.discordId || "").trim();
-    if (!uid)
-      return res.status(400).json({ ok: false, message: "Missing user id" });
-
-    const nRaw = req.body?.commands_sent_total;
-    const n = Math.max(0, Math.floor(Number(nRaw)));
-    if (!Number.isFinite(n))
-      return res.status(400).json({ ok: false, message: "Bad number" });
-
-    const info = db
-      .prepare(
-        `
-    UPDATE users
-    SET commands_sent_total = @n
-    WHERE discord_id = @uid
-  `,
-      )
-      .run({ n, uid });
-
-    if (!info.changes)
-      return res.status(404).json({ ok: false, message: "User not found" });
-    return res.json({ ok: true });
-  },
-);
-
-function getHostListPage(filePath, { q = "", offset = 0, limit = 200 } = {}) {
-  q = String(q || "")
-    .trim()
-    .toLowerCase();
-  offset = Math.max(0, Number(offset) || 0);
-  limit = Math.min(500, Math.max(10, Number(limit) || 200));
-
-  const set = loadHostSetCached(
-    filePath,
-    filePath === ALLOWLIST_PATH ? cacheAllow : cacheBlock,
-  );
-  let arr = Array.from(set);
-  if (q) arr = arr.filter((h) => h.includes(q));
-  arr.sort();
-
-  const total = arr.length;
-  const page = arr.slice(offset, offset + limit);
-  return { total, offset, limit, items: page };
-}
-
-app.get(
-  "/admin/url-blocklist/list",
-  requireDiscord,
-  requireAdmin,
-  (req, res) => {
-    const which = String(req.query.which || "allow").toLowerCase();
-    const q = String(req.query.q || "");
-    const offset = Number(req.query.offset || 0);
-    const limit = Number(req.query.limit || 200);
-
-    const filePath = which === "block" ? BLOCKLIST_PATH : ALLOWLIST_PATH;
-    const page = getHostListPage(filePath, { q, offset, limit });
-    res.json({ ok: true, which, ...page });
-  },
-);
 
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-wss.on("connection", (ws, req) => {
-  let deviceId = null;
-
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    deviceId = url.searchParams.get("deviceId") || "";
-    const deviceToken = url.searchParams.get("deviceToken") || "";
-
-    if (!deviceId || !deviceToken) {
-      ws.close(1008, "Missing auth");
-      return;
-    }
-
-    const row = db
-      .prepare("SELECT device_token_hash FROM devices_v2 WHERE device_id=?")
-      .get(deviceId);
-    if (!row) {
-      ws.close(1008, "Unknown device");
-      return;
-    }
-
-    if (hmac(deviceToken) !== row.device_token_hash) {
-      ws.close(1008, "Invalid token");
-      return;
-    }
-
-    ws.isAlive = true;
-    ws.lastPongAt = Date.now();
-
-    ws.on("pong", () => {
-      ws.isAlive = true;
-      ws.lastPongAt = Date.now();
-      try {
-        db.prepare(
-          "UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?",
-        ).run(Date.now(), deviceId);
-      } catch {}
-    });
-
-    wsByDeviceId.set(deviceId, ws);
-    ws.lastPongAt = Date.now();
-    db.prepare("UPDATE devices_v2 SET last_seen_at=? WHERE device_id=?").run(
-      Date.now(),
-      deviceId,
-    );
-
-    ws.send(JSON.stringify({ type: "hello", deviceId }));
-
-    ws.on("message", (data) => {
-      let msg;
-      try { msg = JSON.parse(data); } catch { return; }
-
-      handleIncomingAck(msg);
-    });
-
-    ws.on("close", () => {
-      if (deviceId && wsByDeviceId.get(deviceId) === ws)
-        wsByDeviceId.delete(deviceId);
-    });
-  } catch (e) {
-    try {
-      ws.close();
-    } catch {}
-  }
-});
-
-const hbTimer = setInterval(() => {
-  for (const [deviceId, ws] of wsByDeviceId.entries()) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      wsByDeviceId.delete(deviceId);
-      continue;
-    }
-
-    if (ws.isAlive === false) {
-      try {
-        ws.terminate();
-      } catch {}
-      wsByDeviceId.delete(deviceId);
-      continue;
-    }
-
-    ws.isAlive = false;
-    try {
-      ws.ping();
-    } catch {
-      try {
-        ws.terminate();
-      } catch {}
-      wsByDeviceId.delete(deviceId);
-    }
-  }
-}, HEARTBEAT_INTERVAL_MS);
-
-hbTimer.unref?.();
+registerRealtimeServer(server);
 
 app.locals.discordAvatarUrl = discordAvatarUrl;
+app.locals.siteAvatarUrl = siteAvatarUrl;
+app.locals.siteBannerUrl = siteBannerUrl;
+app.locals.siteBackgroundUrl = siteBackgroundUrl;
 app.locals.escapeHtml = escapeHtml;
+app.locals.inlineScriptJson = inlineScriptJson;
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`HTTP: http://0.0.0.0:${PORT}`);
-  console.log(`WS: ws://0.0.0.0:${PORT}/ws?deviceId=...&secret=...`);
-  console.log("Discord ID:", process.env.DISCORD_CLIENT_ID);
+app.use((req, res) => {
+  res.status(404);
+  renderWithLayout(res, "pages/404", {
+    title: "Page Not Found"
+  });
 });
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = CLI_COMMAND;
+
+  if (command === "avatars:backfill") {
+    const force = args.includes("--force");
+    try {
+      await runAvatarCacheBackfillCommand({ force });
+      try {
+        db.close();
+      } catch {}
+      process.exit(0);
+    } catch (e) {
+      console.error("[avatar-cache] backfill command failed:", e?.message || e);
+      try {
+        db.close();
+      } catch {}
+      process.exit(1);
+    }
+    return;
+  }
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`HTTP: http://0.0.0.0:${PORT}`);
+    console.log(`WS: ws://0.0.0.0:${PORT}/ws?deviceId=...&secret=...`);
+    console.log("Discord ID:", process.env.DISCORD_CLIENT_ID);
+  });
+}
+
+void main();

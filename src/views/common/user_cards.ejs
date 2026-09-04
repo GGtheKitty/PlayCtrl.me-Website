@@ -1,7 +1,36 @@
-<div class="uCard" data-pair="<%= code %>" data-fav-ts="<%= favorited_at %>" data-online="<%= isOnline ? 1 : 0 %>">
-  <img class="uAvi" src="<%= avatar %>" alt="" />
-  <div class="statusDot statusDot--<%= isOnline ? "online" : "offline" %>" title="<%= isOnline ? "Online" : "Offline" %>"></div>
-  <div class="display"><%= display %></div>
-  <div class="handle">@<%= handle %></div>
-  <a class="control" href="/device/<%= encodeURIComponent(code) %>">Control</a>
+<%
+  const userCardStatus = String(
+    status || (isOnline ? "online" : "offline"),
+  ).trim() || "offline";
+  const userCardStatusLabel =
+    userCardStatus === "online"
+      ? "Online"
+      : userCardStatus === "away"
+        ? "Away"
+        : "Offline";
+%>
+<div
+  class="uCard"
+  data-pair="<%= code %>"
+  data-fav-ts="<%= favorited_at %>"
+  data-status="<%= userCardStatus %>"
+  data-online="<%= userCardStatus === "online" ? 1 : 0 %>"
+  data-has-banner="<%= banner ? 1 : 0 %>"
+>
+  <div
+    class="uCardBanner"
+    <% if (banner) { %>
+      style="background-image: linear-gradient(180deg, rgba(7, 10, 18, 0.08), rgba(7, 10, 18, 0.56)), url('<%= banner %>');"
+    <% } %>
+  ></div>
+  <div
+    class="statusDot statusDot--<%= userCardStatus %>"
+    title="<%= userCardStatusLabel %>"
+  ></div>
+  <div class="uCardBody">
+    <img class="uAvi" src="<%= avatar %>" alt="" />
+    <div class="display"><%= display %></div>
+    <div class="handle">@<%= handle %></div>
+    <a class="control" href="/device/<%= encodeURIComponent(code) %>">Control</a>
+  </div>
 </div>

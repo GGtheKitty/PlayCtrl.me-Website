@@ -1,0 +1,203 @@
+<script>
+  (function() {
+    if (window.PlayCtrlTabBadge) return;
+
+    const DEFAULT_FAVICON_HREF = "/favicon-96x96.png";
+    const FAVICON_SIZE = 96;
+    const MANAGED_LINK_ID = "playctrlTabFavicon";
+    const MANAGED_ATTR = "data-playctrl-favicon-managed";
+    const unreadSources = new Map();
+
+    let managedLink = null;
+    let baseImage = null;
+    let baseImageLoaded = false;
+    let badgeHref = "";
+
+    function getDefaultFaviconUrl() {
+      try {
+        return new URL(DEFAULT_FAVICON_HREF, window.location.origin).toString();
+      } catch {
+        return DEFAULT_FAVICON_HREF;
+      }
+    }
+
+    function ensureManagedLink() {
+      if (managedLink && managedLink.isConnected) return managedLink;
+
+      const existing = document.getElementById(MANAGED_LINK_ID);
+      if (existing instanceof HTMLLinkElement) {
+        managedLink = existing;
+      } else {
+        managedLink = document.createElement("link");
+        managedLink.id = MANAGED_LINK_ID;
+        managedLink.rel = "icon";
+        managedLink.type = "image/png";
+        managedLink.setAttribute(
+          "sizes",
+          String(FAVICON_SIZE) + "x" + String(FAVICON_SIZE),
+        );
+        managedLink.href = getDefaultFaviconUrl();
+        document.head.appendChild(managedLink);
+      }
+
+      if (!managedLink.href) {
+        managedLink.href = getDefaultFaviconUrl();
+      }
+
+      return managedLink;
+    }
+
+    function rememberOriginalLink(link) {
+      if (!link || link.getAttribute(MANAGED_ATTR) === "1") return;
+      link.setAttribute(MANAGED_ATTR, "1");
+      link.dataset.playctrlOriginalRel = link.getAttribute("rel") || "icon";
+      link.dataset.playctrlOriginalHref = link.getAttribute("href") || getDefaultFaviconUrl();
+      link.dataset.playctrlOriginalType = link.getAttribute("type") || "";
+      link.dataset.playctrlOriginalSizes = link.getAttribute("sizes") || "";
+    }
+
+    function getIconLinks() {
+      const head = document.head || document.querySelector("head");
+      if (!head) return [];
+
+      const managed = ensureManagedLink();
+      const links = Array.from(head.querySelectorAll('link[rel~="icon"]')).filter((link) => {
+        return !String(link.rel || "").split(/\s+/).includes("apple-touch-icon");
+      });
+
+      if (managed && !links.includes(managed)) links.push(managed);
+      links.forEach(rememberOriginalLink);
+      return links;
+    }
+
+    function setIconLinkToPng(link, href) {
+      if (!link) return;
+      rememberOriginalLink(link);
+      link.rel = "icon";
+      link.type = "image/png";
+      link.setAttribute(
+        "sizes",
+        String(FAVICON_SIZE) + "x" + String(FAVICON_SIZE),
+      );
+      link.href = href;
+    }
+
+    function restoreIconLink(link) {
+      if (!link) return;
+      const originalRel = link.dataset.playctrlOriginalRel || "icon";
+      const originalHref = link.dataset.playctrlOriginalHref || getDefaultFaviconUrl();
+      const originalType = link.dataset.playctrlOriginalType || "";
+      const originalSizes = link.dataset.playctrlOriginalSizes || "";
+
+      link.rel = originalRel;
+      link.href = originalHref;
+      if (originalType) link.type = originalType;
+      else link.removeAttribute("type");
+      if (originalSizes) link.setAttribute("sizes", originalSizes);
+      else link.removeAttribute("sizes");
+    }
+
+    function hasAnyUnread() {
+      for (const value of unreadSources.values()) {
+        if (value) return true;
+      }
+      return false;
+    }
+
+    function loadBaseImage() {
+      if (baseImage) return;
+
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = function() {
+        baseImageLoaded = true;
+        badgeHref = "";
+        applyFavicon();
+      };
+      img.onerror = function() {
+        baseImage = null;
+        baseImageLoaded = false;
+        badgeHref = "";
+      };
+      img.src = getDefaultFaviconUrl();
+
+      baseImage = img;
+    }
+
+    function getBadgeHref() {
+      if (badgeHref) return badgeHref;
+      if (!baseImageLoaded || !baseImage) return getDefaultFaviconUrl();
+
+      const canvas = document.createElement("canvas");
+      canvas.width = FAVICON_SIZE;
+      canvas.height = FAVICON_SIZE;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return getDefaultFaviconUrl();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+
+      const radius = Math.max(10, Math.round(canvas.width * 0.16));
+      const outlineWidth = Math.max(4, Math.round(canvas.width * 0.045));
+      const cx = canvas.width - radius - outlineWidth - 5;
+      const cy = canvas.height - radius - outlineWidth - 5;
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius + outlineWidth, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#e23b3b";
+      ctx.fill();
+
+      badgeHref = canvas.toDataURL("image/png");
+      return badgeHref;
+    }
+
+    function applyFavicon() {
+      const links = getIconLinks();
+      if (!links.length) return;
+
+      if (!hasAnyUnread()) {
+        links.forEach(restoreIconLink);
+        return;
+      }
+
+      if (!baseImageLoaded) {
+        loadBaseImage();
+        links.forEach((link) => setIconLinkToPng(link, getDefaultFaviconUrl()));
+        return;
+      }
+
+      const href = getBadgeHref();
+      links.forEach((link) => setIconLinkToPng(link, href));
+    }
+
+    window.PlayCtrlTabBadge = {
+      setSourceUnread: function(sourceKey, hasUnread) {
+        const key = String(sourceKey || "").trim() || "default";
+        if (hasUnread) unreadSources.set(key, true);
+        else unreadSources.delete(key);
+        applyFavicon();
+      },
+      clearSource: function(sourceKey) {
+        const key = String(sourceKey || "").trim() || "default";
+        unreadSources.delete(key);
+        applyFavicon();
+      },
+      refresh: function() {
+        applyFavicon();
+      },
+      hasUnread: function() {
+        return hasAnyUnread();
+      },
+    };
+
+    ensureManagedLink();
+    loadBaseImage();
+    applyFavicon();
+  })();
+</script>

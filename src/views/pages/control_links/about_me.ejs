@@ -1,51 +1,63 @@
 
 <div class="card gridCard">
-  <div class="cardHd"><%= LISTS.favorites.label %> / <%= LISTS.dislikes.label %> / About Me</div>
+  <div class="cardHd"><%= LISTS.favorites.label %> / <%= LISTS.dislikes.label %></div>
   <div class="cardBd">
-
-    <div class="pillTabs">
-      <button class="pillTab" id="favTab" type="button" data-active="true"><%= LISTS.favorites.label %></button>
-      <button class="pillTab pillTab--danger" id="disTab" type="button" data-active="false"><%= LISTS.dislikes.label %></button>
-      <button class="pillTab pillTab--info" id="aboutTab" type="button" data-active="false">About Me</button>
-    </div>
-
-    <div class="pillBox" id="favBox">
-      <% if (favKeys.length) { %>
-          <div class="pillWrap">
+    <div class="pillBox controlSidePrefsWindow">
+      <% if (favKeys.length || disKeys.length) { %>
+        <% if (favKeys.length) { %>
+          <div class="controlSidePrefsGroup">
+            <div class="pillWrap" data-favorite-list="1">
               <% for (const k of favKeys) { %>
-                <div class="pill pill--fav" title="<%= k %>">
+                <% const isTopFavorite = !!(topFavKeySet && topFavKeySet.has(k)); %>
+                <div
+                  class="pill pill--fav controlPrefPill"
+                  title="<%= k %>"
+                  data-favorite-chip="1"
+                  data-item-key="<%= k %>"
+                  data-top-favorite="<%= isTopFavorite ? '1' : '0' %>"
+                >
                   <span><%= labelByKey.get(k) || k %></span>
+                  <% if (viewerIsOwner) { %>
+                    <button
+                      class="topFavoriteStarBtn <%= isTopFavorite ? 'is-active' : '' %>"
+                      type="button"
+                      data-top-favorite-key="<%= k %>"
+                      data-enabled="<%= isTopFavorite ? '1' : '0' %>"
+                      aria-pressed="<%= isTopFavorite ? 'true' : 'false' %>"
+                      aria-label="<%= isTopFavorite ? 'Remove from top favorites' : 'Make this a top favorite' %>"
+                      title="<%= isTopFavorite ? 'Remove from top favorites' : 'Make this a top favorite' %>"
+                    ></button>
+                  <% } else if (isTopFavorite) { %>
+                    <span class="topFavoriteStarMarker" aria-hidden="true"></span>
+                  <% } %>
                 </div>
               <% } %>
+            </div>
           </div>
-      <% } else { %> 
-          <div class="muted">No <%= LISTS.favorites.label.toLowerCase() %> selected.</div>
-      <% } %>
-    </div>
+        <% } %>
 
-    <div class="pillBox" id="disBox" style="display:none;">
-      <% if (disKeys.length) { %>
-          <div class="pillWrap">
+        <% if (disKeys.length) { %>
+          <div class="controlSidePrefsGroup">
+            <div class="pillWrap">
               <% for (const k of disKeys) { %>
                 <div class="pill pill--dis" title="<%= k %>">
-                  <span><%= labelByKey.get(k) || k %></span>
+                  <span>- <%= labelByKey.get(k) || k %></span>
                 </div>
               <% } %>
+            </div>
           </div>
-      <% } else { %>              
-          <div class="muted">No <%= LISTS.dislikes.label.toLowerCase() %> selected.</div>
+        <% } %>
+      <% } else { %>
+        <div class="controlSidePrefsEmpty muted">No <%= LISTS.favorites.label.toLowerCase() %> or <%= LISTS.dislikes.label.toLowerCase() %> selected yet.</div>
       <% } %>
     </div>
-
-    <div class="pillBox" id="aboutBox" style="display:none; height:auto;">
-      <div class="aboutDisplay">
-        <% if ((aboutMe || "").trim()) { %>
-            <%= aboutMe %>
-        <% } else { %>
-            <span class="muted">This user hasn’t added an About Me yet.</span>
-        <% } %>
-      </div>
-    </div>
-
+    <% if (viewerIsOwner && favKeys.length) { %>
+      <div
+        id="topFavoriteStatus"
+        class="muted controlSidePrefsStatus"
+        data-top-favorites-limit="<%= Number(topFavoritesLimit || 3) %>"
+        hidden
+      ></div>
+    <% } %>
   </div>
 </div>

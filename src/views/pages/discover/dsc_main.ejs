@@ -6,36 +6,344 @@
 </head>
 
 <body>
-
-  <%- include("../../common/discord_notice") %>
-
-  <div class="card" style="align-items:center;">
-    <div class="cardHd">
-      <h2>Discover</h2>
-      <p style="opacity:.75;margin-top:6px;">
-        Online users who opted in to be discovered.
-      </p>
+  <div class="discoverToolbar">
+    <div class="discoverToggle" role="tablist" aria-label="Discover mode">
+      <button id="tabUsers" class="discoverToggleBtn" type="button" data-mode="users">
+        <span class="discoverToggleIcon">👤</span>
+        <span>Users</span>
+      </button>
+      <button id="tabGroups" class="discoverToggleBtn" type="button" data-mode="groups">
+        <span class="discoverToggleIcon">👥</span>
+        <span>Groups</span>
+      </button>
+      <button id="tabCommunity" class="discoverToggleBtn" type="button" data-mode="community">
+        <span class="discoverToggleIcon">🌐</span>
+        <span>Community</span>
+      </button>
     </div>
-    <div class="cardBd">
-      <% if (onlineRows && onlineRows.length) { %>
-      <div class="uGrid" id="uGrid">
-        <% for (const u of onlineRows) { %>
-        <%- include("../../common/user_cards", {
-            display: u.global_name || u.username || u.discord_id,
-            handle: u.username || "",
-            avatar: discordAvatarUrl(u, 128),
-            code: u.code_plain,
-            isOnline: 1,
-            favorited_at: null,
-          }) %>
-        <% } %>
+
+    <div class="discoverToolbarActions">
+      <div id="discoverSearchWrap" class="discoverSearchWrap">
+        <input
+          id="discoverSearchInput"
+          class="discoverSearchInput"
+          type="search"
+          placeholder="Search users"
+          aria-label="Search discover users"
+          autocomplete="off"
+          spellcheck="false"
+        />
       </div>
-      <% } else { %>
-      <div class="empty">(No users are online right now.)</div>
-      <% } %>
+
+      <div id="discoverFilterWrap" class="discoverFilterWrap">
+        <button
+          id="discoverFilterBtn"
+          class="discoverFilterBtn"
+          type="button"
+          aria-label="Filters"
+          aria-haspopup="true"
+          aria-expanded="false"
+          aria-controls="discoverFilterMenu"
+          title="Filters"
+        >
+          <svg
+            class="discoverFilterBtnIcon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M4.25 5h15.5a.75.75 0 0 1 .564 1.244L14 13.407V18a.75.75 0 0 1-.41.67l-3 1.5A.75.75 0 0 1 9.5 19.5v-6.093L3.686 6.244A.75.75 0 0 1 4.25 5Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+
+        <div id="discoverFilterMenu" class="discoverFilterMenu" hidden>
+          <div class="discoverFilterTitle">Show users who are:</div>
+          <label class="discoverFilterOption" for="discoverFilterOnline">
+            <input id="discoverFilterOnline" type="checkbox" checked />
+            <span>Online</span>
+          </label>
+          <label class="discoverFilterOption" for="discoverFilterAway">
+            <input id="discoverFilterAway" type="checkbox" checked />
+            <span>Away</span>
+          </label>
+        </div>
+      </div>
     </div>
   </div>
 
-  
+  <div class="card" style="align-items:center;">
+    <div class="cardHd">
+      <h2 id="discoverHeading">Discover</h2>
+
+      <p id="discoverSubheading" style="opacity:.75;margin-top:6px;">
+        Find opted-in users, join groups, and grow your own communities.
+      </p>
+    </div>
+
+    <div id="usersPane" class="cardBd discoverUsersPane">
+      <nav
+        id="discoverPagerTop"
+        class="discoverPager discoverPager--top"
+        aria-label="Discover pages"
+        hidden
+      >
+        <button
+          id="discoverPrevPageTop"
+          class="discoverPagerNav"
+          type="button"
+          aria-label="Previous discover page"
+        >
+          <span aria-hidden="true">&#8249;</span>
+        </button>
+
+        <div id="discoverPageListTop" class="discoverPageList"></div>
+
+        <button
+          id="discoverNextPageTop"
+          class="discoverPagerNav"
+          type="button"
+          aria-label="Next discover page"
+        >
+          <span aria-hidden="true">&#8250;</span>
+        </button>
+      </nav>
+
+      <div class="uGrid" id="uGrid" aria-live="polite"></div>
+      <div
+        id="discoverUsersEmpty"
+        class="empty"
+        data-default-message="(No users are online or away right now.)"
+        data-filtered-message="(No users match your search or filters.)"
+        hidden
+      >
+        (No users are online or away right now.)
+      </div>
+      <nav
+        id="discoverPagerBottom"
+        class="discoverPager discoverPager--bottom"
+        aria-label="Discover pages"
+        hidden
+      >
+        <button
+          id="discoverPrevPageBottom"
+          class="discoverPagerNav"
+          type="button"
+          aria-label="Previous discover page"
+        >
+          <span aria-hidden="true">&#8249;</span>
+        </button>
+
+        <div id="discoverPageListBottom" class="discoverPageList"></div>
+
+        <button
+          id="discoverNextPageBottom"
+          class="discoverPagerNav"
+          type="button"
+          aria-label="Next discover page"
+        >
+          <span aria-hidden="true">&#8250;</span>
+        </button>
+      </nav>
+    </div>
+
+    <div id="groupsPane" class="cardBd" style="display:none;">
+      <% if (groups && groups.length) { %>
+        <div class="gGrid" id="gGrid">
+          <% for (const g of groups) { %>
+            <div class="gCard" data-group="<%= g.key %>">
+              <img class="gIcon" src="<%= g.icon || '/groups/default.png' %>" alt="" />
+
+              <div class="gMain">
+                <div class="gTitle"><%= g.label %></div>
+                <div class="gMeta">
+                  <span class="gDot gDot--online"></span>
+                  <span class="gOnlineCount">0</span>
+                  <span class="gMetaText">online</span>
+                  <span class="gDot gDot--members"></span>
+                  <span class="gMemberCount">0</span>
+                  <span class="gMetaText">members</span>
+                </div>
+              </div>
+
+              <div class="gActions">
+                <button
+                  class="gJoinBtn <%= g.is_member ? 'isJoined' : '' %>"
+                  type="button"
+                  data-group="<%= g.key %>"
+                  aria-label="<%= g.is_member ? 'Leave group' : 'Join group' %>"
+                  title="<%= g.is_member ? 'Leave' : 'Join' %>"
+                >
+                  <span class="gJoinText"><%= g.is_member ? '✓' : 'Join' %></span>
+                </button>
+
+                <a class="gControl" href="/group/<%= encodeURIComponent(g.key) %>">Control</a>
+              </div>
+            </div>
+          <% } %>
+        </div>
+      <% } else { %>
+        <div class="empty">(No groups are configured right now.)</div>
+      <% } %>
+    </div>
+
+    <div id="communityPane" class="cardBd" style="display:none;">
+      <div class="communityWorkspace">
+        <aside class="communitySidebar" aria-label="Community group tools">
+          <div class="communityToolCard communityToolCard--create">
+            <div class="communityToolTitle">Create a community group</div>
+            <div id="communityCreateHint" class="communityHint">
+              You can still create private groups right away.
+            </div>
+            <button id="communityCreateLaunchBtn" class="communityPrimaryBtn" type="button">
+              Create Group
+            </button>
+          </div>
+
+          <form id="communityInviteJoinForm" class="communityToolCard">
+            <div class="communityToolTitle">Join from an invite</div>
+            <label class="communityField">
+              <span>Invite code or link</span>
+              <input
+                id="communityInviteInput"
+                name="code"
+                type="text"
+                placeholder="Paste a code or invite link"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <div class="communityHint">
+              Invite links ask for confirmation before joining.
+            </div>
+            <button id="communityInviteJoinBtn" class="communitySecondaryBtn" type="submit">
+              Join Group
+            </button>
+          </form>
+        </aside>
+
+        <div class="communityMain">
+          <section class="communitySection communitySection--first">
+            <div class="communitySectionHead">
+              <h4>My groups</h4>
+              <p>Private or public groups you own or already joined.</p>
+            </div>
+            <div id="communityMyGroups" class="communityGroupList"></div>
+            <div id="communityMyEmpty" class="empty" hidden>
+              (You haven't created or joined any community groups yet.)
+            </div>
+            <nav id="communityMyPager" class="communityPager" aria-label="My community group pages" hidden>
+              <button id="communityMyPrev" class="communityPagerBtn" type="button">Previous</button>
+              <span id="communityMyPageLabel" class="communityPagerLabel">Page 1 of 1</span>
+              <button id="communityMyNext" class="communityPagerBtn" type="button">Next</button>
+            </nav>
+          </section>
+
+          <section class="communitySection">
+            <div class="communitySectionHead">
+              <h4>Public community groups</h4>
+              <p id="communityPublicHint">
+                Public listings appear once the owner reaches <%= communityPublicMinCommands || 100 %> commands sent.
+              </p>
+            </div>
+            <div id="communityPublicGroups" class="communityGroupList"></div>
+            <div id="communityPublicEmpty" class="empty" hidden>
+              (No community groups are listed publicly right now.)
+            </div>
+            <nav id="communityPublicPager" class="communityPager" aria-label="Public community group pages" hidden>
+              <button id="communityPublicPrev" class="communityPagerBtn" type="button">Previous</button>
+              <span id="communityPublicPageLabel" class="communityPagerLabel">Page 1 of 1</span>
+              <button id="communityPublicNext" class="communityPagerBtn" type="button">Next</button>
+            </nav>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="communityCreateModal" class="communityModal" style="display:none;" aria-hidden="true">
+    <div class="communityModalBackdrop" data-community-modal-close="1"></div>
+
+    <div class="communityModalCard" role="dialog" aria-modal="true" aria-labelledby="communityCreateModalTitle">
+      <div class="communityModalHd">
+        <div id="communityCreateModalTitle" class="communityModalTitle">Create a Community Group</div>
+        <button class="communityModalClose" type="button" data-community-modal-close="1">Close</button>
+      </div>
+
+      <div class="communityModalBody">
+        <form id="communityCreateForm" class="communityModalForm">
+          <label class="communityField">
+            <span>Name</span>
+            <input
+              id="communityNameInput"
+              name="name"
+              type="text"
+              maxlength="48"
+              placeholder="Night owls"
+              autocomplete="off"
+            />
+          </label>
+          <label class="communityField">
+            <span>Description</span>
+            <textarea
+              id="communityDescriptionInput"
+              name="description"
+              maxlength="220"
+              placeholder="A low-key crew for late-night chaos."
+            ></textarea>
+          </label>
+          <label class="communityCheckbox">
+            <input id="communityPublicInput" name="isPublic" type="checkbox" value="1" />
+            <span>List this group on the public community page</span>
+          </label>
+          <div class="communityHint">
+            Private groups can be created immediately. Public listing unlocks at
+            <%= communityPublicMinCommands || 100 %> commands sent.
+          </div>
+          <div class="communityModalActions">
+            <button class="communitySecondaryBtn" type="button" data-community-modal-close="1">
+              Cancel
+            </button>
+            <button id="communityCreateBtn" class="communityPrimaryBtn" type="submit">
+              Create Group
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="communityInviteModal" class="communityModal" style="display:none;" aria-hidden="true">
+    <div class="communityModalBackdrop" data-community-invite-modal-close="1"></div>
+
+    <div class="communityModalCard communityModalCard--compact" role="dialog" aria-modal="true" aria-labelledby="communityInviteModalTitle">
+      <div class="communityModalHd">
+        <div id="communityInviteModalTitle" class="communityModalTitle">Join community group?</div>
+        <button class="communityModalClose" type="button" data-community-invite-modal-close="1">Close</button>
+      </div>
+
+      <div class="communityModalBody">
+        <p class="communityInvitePrompt">
+          This invite link wants to add you to a community group.
+        </p>
+        <div id="communityInviteDetails" class="communityInviteDetails">
+          <div class="communityLoading">Loading group details...</div>
+        </div>
+        <div class="communityModalActions">
+          <button class="communitySecondaryBtn" type="button" data-community-invite-modal-close="1">
+            Cancel
+          </button>
+          <button id="communityInviteConfirmBtn" class="communityPrimaryBtn" type="button">
+            Join Group
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <%- include("dsc_scripts.ejs") %>
 </body>
+
 </html>

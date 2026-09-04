@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/admin_groups.css">
+</head>
+
+<body>
+  <%
+    const groupStats = adminGroupsStats || {};
+    const groupQuery = String(adminGroupsQuery || "");
+  %>
+  <main id="adminGroupsRoot" class="adminGroupsRoot">
+    <div class="panel">
+      <div class="panelHd">
+        <div>
+          <h1>Group Moderation</h1>
+          <p class="muted">Review built-in group membership and moderate community groups, assets, and chats.</p>
+        </div>
+        <a class="btn" href="/admin">Back</a>
+      </div>
+      <% if (adminGroupsFlash) { %>
+        <div class="adminGroupFlash"><%= adminGroupsFlash %></div>
+      <% } %>
+    </div>
+
+    <div class="adminGroupsToolbar">
+      <form class="adminGroupsSearch" method="GET" action="/admin/groups">
+        <input
+          name="q"
+          value="<%= groupQuery %>"
+          placeholder="Search groups, owners, or keys"
+          autocomplete="off"
+        />
+        <button class="btn" type="submit">Search</button>
+        <% if (groupQuery) { %>
+          <a class="btn" href="/admin/groups">Clear</a>
+        <% } %>
+      </form>
+
+      <div class="adminGroupsStats">
+        <div class="statTile">
+          <span class="statValue"><%= Number(groupStats.builtInTotal || 0).toLocaleString() %></span>
+          <span class="statLabel">Groups</span>
+        </div>
+        <div class="statTile">
+          <span class="statValue"><%= Number(groupStats.communityTotal || 0).toLocaleString() %></span>
+          <span class="statLabel">Community</span>
+        </div>
+        <div class="statTile">
+          <span class="statValue"><%= Number(groupStats.publicCommunityTotal || 0).toLocaleString() %></span>
+          <span class="statLabel">Public</span>
+        </div>
+        <div class="statTile">
+          <span class="statValue"><%= Number(groupStats.privateCommunityTotal || 0).toLocaleString() %></span>
+          <span class="statLabel">Private</span>
+        </div>
+      </div>
+    </div>
+
+    <section class="adminGroupSection">
+    <div class="sectionHead">
+      <div>
+        <h2>Built-in groups</h2>
+        <p class="muted">Users currently joined to each catalog group.</p>
+      </div>
+      <% if (groupsPager) { %>
+        <div class="pager">
+          <span class="pagerSummary"><%= groupsPager.summary || "No matching groups." %></span>
+          <a class="btn pagerBtn <%= groupsPager.hasPrevPage ? "" : "isDisabled" %>" href="<%= groupsPager.hasPrevPage ? groupsPager.prevHref : "#" %>">Prev</a>
+          <span class="pagerPage"><%= groupsPager.currentPage %>/<%= groupsPager.totalPages %></span>
+          <a class="btn pagerBtn <%= groupsPager.hasNextPage ? "" : "isDisabled" %>" href="<%= groupsPager.hasNextPage ? groupsPager.nextHref : "#" %>">Next</a>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="groupList">
+      <% if (groups && groups.length) { %>
+        <% for (const g of groups) { %>
+          <details class="gCard">
+            <summary class="gSummary">
+              <div class="gLeft">
+                <img class="gIcon" src="<%= g.icon || '/groups/default.png' %>" alt="" />
+                <div class="gText">
+                  <div class="gTitle"><%= g.label %></div>
+                  <div class="gMeta">
+                    <span class="pill"><span class="k">key</span><span class="v"><%= g.key %></span></span>
+                    <span class="pill"><span class="k">members</span><span class="v"><%= g.members.length %></span></span>
+                    <span class="pill"><span class="k">chat</span><span class="v"><%= (g.messages || []).length %></span></span>
+                    <span class="pill"><span class="k">commands</span><span class="v"><%= (g.commands || []).length %></span></span>
+                  </div>
+                </div>
+              </div>
+
+              <span class="expandHint">Review</span>
+            </summary>
+
+            <div class="gBody">
+              <div class="moderationGrid">
+                <div class="moderationPanel">
+                  <h3>Members</h3>
+                  <div class="compactList">
+                    <% if (g.members.length) { %>
+                      <% for (const u of g.members) { %>
+                        <div class="uRow uRow--compact">
+                          <div class="uMain">
+                            <img class="uAv" src="<%= siteAvatarUrl({ discord_id: u.discord_id }, 64) %>" alt="" />
+                            <div>
+                              <div class="uName"><%= u.global_name || u.username || u.discord_id || "(unknown user)" %></div>
+                              <div class="uMeta">
+                                <span class="mono">@<%= u.username || "unknown" %></span>
+                                <span class="dot">•</span>
+                                <span class="mono"><%= u.discord_id || "(missing user record)" %></span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No users are currently in this group.</div>
+                    <% } %>
+                  </div>
+                </div>
+
+                <div class="moderationPanel">
+                  <h3>Recent commands</h3>
+                  <div class="chatList">
+                    <% if (g.commands && g.commands.length) { %>
+                      <% for (const cmd of g.commands) { %>
+                        <article class="chatItem commandItem">
+                          <div class="chatMeta">
+                            <strong><%= cmd.global_name || cmd.username || cmd.actor_user_id || "Unknown" %></strong>
+                            <span class="mono"><%= cmd.actor_user_id || "" %></span>
+                            <span class="mono"><%= cmd.created_at ? new Date(Number(cmd.created_at)).toISOString() : "" %></span>
+                          </div>
+                          <div class="commandType"><%= cmd.commandLabel %></div>
+                          <% if (cmd.summary) { %>
+                            <div class="chatBody"><%= cmd.summary %></div>
+                          <% } %>
+                        </article>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No recent group commands.</div>
+                    <% } %>
+                  </div>
+                </div>
+
+                <div class="moderationPanel moderationPanel--wide">
+                  <h3>Recent chat</h3>
+                  <div class="chatList">
+                    <% if (g.messages && g.messages.length) { %>
+                      <% for (const msg of g.messages) { %>
+                        <article class="chatItem">
+                          <div class="chatMeta">
+                            <strong><%= msg.global_name || msg.username || msg.author_user_id || "Unknown" %></strong>
+                            <span class="mono"><%= msg.author_user_id || "" %></span>
+                            <span class="mono"><%= msg.created_at ? new Date(Number(msg.created_at)).toISOString() : "" %></span>
+                          </div>
+                          <div class="chatBody"><%= msg.body || "" %></div>
+                          <form method="POST" action="/admin/groups/<%= encodeURIComponent(g.key) %>/messages/<%= encodeURIComponent(msg.id) %>/delete" onsubmit="return confirm('Delete this group chat message?');">
+                            <button class="btn btn--danger" type="submit">Delete message</button>
+                          </form>
+                        </article>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No recent chat messages.</div>
+                    <% } %>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        <% } %>
+      <% } else { %>
+        <div class="empty">No groups are configured right now.</div>
+      <% } %>
+    </div>
+    </section>
+
+    <section class="adminGroupSection">
+    <div class="sectionHead">
+      <div>
+        <h2>Community groups</h2>
+        <p class="muted">Moderate public/private groups, uploaded images, membership, and recent chat messages.</p>
+      </div>
+      <% if (communityGroupsPager) { %>
+        <div class="pager">
+          <span class="pagerSummary"><%= communityGroupsPager.summary || "No matching community groups." %></span>
+          <a class="btn pagerBtn <%= communityGroupsPager.hasPrevPage ? "" : "isDisabled" %>" href="<%= communityGroupsPager.hasPrevPage ? communityGroupsPager.prevHref : "#" %>">Prev</a>
+          <span class="pagerPage"><%= communityGroupsPager.currentPage %>/<%= communityGroupsPager.totalPages %></span>
+          <a class="btn pagerBtn <%= communityGroupsPager.hasNextPage ? "" : "isDisabled" %>" href="<%= communityGroupsPager.hasNextPage ? communityGroupsPager.nextHref : "#" %>">Next</a>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="communityAdminList">
+      <% if (communityGroups && communityGroups.length) { %>
+        <% for (const g of communityGroups) { %>
+          <details class="gCard communityAdminCard">
+            <summary class="gSummary communitySummary">
+              <div class="gLeft">
+                <img class="gIcon" src="<%= g.avatarUrl || '/groups/default.png' %>" alt="" />
+                <div class="gText">
+                  <div class="gTitle"><%= g.name %></div>
+                  <div class="gMeta">
+                    <span class="pill"><span class="k">key</span><span class="v"><%= g.key %></span></span>
+                    <span class="pill <%= g.isPublic ? "pill--public" : "pill--private" %>"><span class="k">visibility</span><span class="v"><%= g.isPublic ? "public" : "private" %></span></span>
+                    <span class="pill"><span class="k">members</span><span class="v"><%= g.members.length %></span></span>
+                    <span class="pill"><span class="k">chat</span><span class="v"><%= g.messages.length %></span></span>
+                    <span class="pill"><span class="k">commands</span><span class="v"><%= (g.commands || []).length %></span></span>
+                  </div>
+                  <div class="muted communityOwnerLine">
+                    Owner: <%= g.owner.global_name || g.owner.username || g.owner.discord_id || "Unknown" %>
+                    <span class="mono"><%= g.owner.discord_id || "" %></span>
+                  </div>
+                </div>
+              </div>
+              <span class="expandHint">Moderate</span>
+            </summary>
+
+            <div class="communityAdminBody">
+              <% if (g.bannerUrl) { %>
+                <div class="communityBannerPreview" style="background-image:url('<%= g.bannerUrl %>')"></div>
+              <% } %>
+
+              <% if (g.description) { %>
+                <div class="adminGroupNote"><%= g.description %></div>
+              <% } %>
+
+              <div class="moderationGrid">
+                <div class="moderationPanel">
+                  <h3>Actions</h3>
+                  <div class="actionStack">
+                    <a class="btn" href="/group/<%= encodeURIComponent(g.key) %>">Open group</a>
+                    <form method="POST" action="/admin/groups/community/<%= encodeURIComponent(g.key) %>/visibility">
+                      <input type="hidden" name="is_public" value="<%= g.isPublic ? "0" : "1" %>" />
+                      <button class="btn" type="submit"><%= g.isPublic ? "Make private" : "Make public" %></button>
+                    </form>
+                    <form method="POST" action="/admin/groups/community/<%= encodeURIComponent(g.key) %>/avatar/delete" onsubmit="return confirm('Remove this group avatar?');">
+                      <button class="btn btn--danger" type="submit" <%= g.hasCustomAvatar ? "" : "disabled" %>>Remove avatar</button>
+                    </form>
+                    <form method="POST" action="/admin/groups/community/<%= encodeURIComponent(g.key) %>/banner/delete" onsubmit="return confirm('Remove this group banner?');">
+                      <button class="btn btn--danger" type="submit" <%= g.hasCustomBanner ? "" : "disabled" %>>Remove banner</button>
+                    </form>
+                    <form method="POST" action="/admin/groups/community/<%= encodeURIComponent(g.key) %>/delete" onsubmit="return confirm('Delete this community group, memberships, invites, and chat messages? This cannot be undone.');">
+                      <button class="btn btn--danger" type="submit">Delete group</button>
+                    </form>
+                  </div>
+                </div>
+
+                <div class="moderationPanel">
+                  <h3>Members</h3>
+                  <div class="compactList">
+                    <% if (g.members.length) { %>
+                      <% for (const u of g.members) { %>
+                        <div class="uRow uRow--compact">
+                          <div class="uMain">
+                            <img class="uAv" src="<%= siteAvatarUrl({ discord_id: u.discord_id }, 64) %>" alt="" />
+                            <div>
+                              <div class="uName"><%= u.global_name || u.username || u.discord_id || "(unknown user)" %></div>
+                              <div class="uMeta"><span class="mono"><%= u.discord_id || "(missing user record)" %></span></div>
+                            </div>
+                          </div>
+                        </div>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No members.</div>
+                    <% } %>
+                  </div>
+                </div>
+
+                <div class="moderationPanel moderationPanel--wide">
+                  <h3>Recent commands</h3>
+                  <div class="chatList">
+                    <% if (g.commands && g.commands.length) { %>
+                      <% for (const cmd of g.commands) { %>
+                        <article class="chatItem commandItem">
+                          <div class="chatMeta">
+                            <strong><%= cmd.global_name || cmd.username || cmd.actor_user_id || "Unknown" %></strong>
+                            <span class="mono"><%= cmd.actor_user_id || "" %></span>
+                            <span class="mono"><%= cmd.created_at ? new Date(Number(cmd.created_at)).toISOString() : "" %></span>
+                          </div>
+                          <div class="commandType"><%= cmd.commandLabel %></div>
+                          <% if (cmd.summary) { %>
+                            <div class="chatBody"><%= cmd.summary %></div>
+                          <% } %>
+                        </article>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No recent group commands.</div>
+                    <% } %>
+                  </div>
+                </div>
+
+                <div class="moderationPanel moderationPanel--wide">
+                  <h3>Recent chat</h3>
+                  <div class="chatList">
+                    <% if (g.messages.length) { %>
+                      <% for (const msg of g.messages) { %>
+                        <article class="chatItem">
+                          <div class="chatMeta">
+                            <strong><%= msg.global_name || msg.username || msg.author_user_id || "Unknown" %></strong>
+                            <span class="mono"><%= msg.author_user_id || "" %></span>
+                            <span class="mono"><%= msg.created_at ? new Date(Number(msg.created_at)).toISOString() : "" %></span>
+                          </div>
+                          <div class="chatBody"><%= msg.body || "" %></div>
+                          <form method="POST" action="/admin/groups/community/<%= encodeURIComponent(g.key) %>/messages/<%= encodeURIComponent(msg.id) %>/delete" onsubmit="return confirm('Delete this group chat message?');">
+                            <button class="btn btn--danger" type="submit">Delete message</button>
+                          </form>
+                        </article>
+                      <% } %>
+                    <% } else { %>
+                      <div class="empty">No recent chat messages.</div>
+                    <% } %>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        <% } %>
+      <% } else { %>
+        <div class="empty">No community groups have been created yet.</div>
+      <% } %>
+    </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const rootId = "adminGroupsRoot";
+
+      function getRoot() {
+        return document.getElementById(rootId);
+      }
+
+      function isAdminGroupsUrl(url) {
+        return url.origin === window.location.origin && url.pathname === "/admin/groups";
+      }
+
+      async function loadAdminGroups(url, { push = true } = {}) {
+        const root = getRoot();
+        if (!root) {
+          window.location.href = url.href;
+          return;
+        }
+
+        root.classList.add("isLoading");
+        try {
+          const res = await fetch(url.href, {
+            headers: {
+              "Accept": "text/html",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error("Navigation failed");
+
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, "text/html");
+          const nextRoot = doc.getElementById(rootId);
+          if (!nextRoot) throw new Error("Missing page content");
+
+          root.replaceWith(nextRoot);
+          if (push) {
+            window.history.pushState({ adminGroups: true }, "", url.href);
+          }
+        } catch {
+          window.location.href = url.href;
+        } finally {
+          getRoot()?.classList.remove("isLoading");
+        }
+      }
+
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest("a[href]");
+        if (!link || link.classList.contains("isDisabled")) return;
+
+        const url = new URL(link.href, window.location.href);
+        if (!isAdminGroupsUrl(url)) return;
+
+        event.preventDefault();
+        loadAdminGroups(url);
+      });
+
+      document.addEventListener("submit", (event) => {
+        const form = event.target.closest(".adminGroupsSearch");
+        if (!form) return;
+
+        event.preventDefault();
+        const url = new URL(form.action || "/admin/groups", window.location.origin);
+        const params = new URLSearchParams(new FormData(form));
+        for (const [key, value] of params.entries()) {
+          const safeValue = String(value || "").trim();
+          if (safeValue) url.searchParams.set(key, safeValue);
+        }
+        loadAdminGroups(url);
+      });
+
+      window.addEventListener("popstate", () => {
+        const url = new URL(window.location.href);
+        if (isAdminGroupsUrl(url)) {
+          loadAdminGroups(url, { push: false });
+        }
+      });
+    })();
+  </script>
+</body>
+
+</html>

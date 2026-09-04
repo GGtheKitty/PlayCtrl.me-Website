@@ -22,7 +22,7 @@
       <% for (const u of users) { %>
       <tr class="urow" data-q="<%= ((u.discord_id + " " + (u.global_name || u.username || "") + " " + (u.username || "") + " " + (u.global_name||"")).toLowerCase()) %>">
         <td style="width:44px;">
-          <img src="<%= discordAvatarUrl(u, 64) %>" style="width:32px;height:32px;border-radius:999px;" />
+          <img src="<%= siteAvatarUrl(u, 64) %>" style="width:32px;height:32px;border-radius:999px;" />
         </td>
         <td>
           <div style="font-weight:700;"><%= (u.global_name || u.username || "") %></div>

@@ -1,0 +1,175 @@
+<script>
+  (function() {
+    const searchEl = document.getElementById('queueSearch');
+    const applyBtn = document.getElementById('queueApplyBtn');
+    const currentGroupBy = <%- inlineScriptJson(adminQueueGroupBy || 'receiver') %>;
+
+    function showToast(message, type) {
+      if (!message) return;
+      if (window.showToast) {
+        window.showToast(message, { type: type || 'info' });
+        return;
+      }
+      window.alert(message);
+    }
+
+    function applySearch() {
+      const params = new URLSearchParams(window.location.search);
+      const q = (searchEl && searchEl.value ? searchEl.value : '').trim();
+
+      if (q) params.set('q', q);
+      else params.delete('q');
+      params.delete('page');
+
+      if (currentGroupBy && currentGroupBy !== 'receiver') {
+        params.set('groupBy', currentGroupBy);
+      } else {
+        params.delete('groupBy');
+      }
+
+      window.location.search = params.toString();
+    }
+
+    async function post(path, body) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams(body || {}).toString(),
+        credentials: 'include'
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.message) || ('HTTP ' + res.status));
+      }
+      return data;
+    }
+
+    function setQueueGroupOpen(groupEl, open) {
+      if (!groupEl) return;
+      const nextOpen = !!open;
+      const toggleBtn = groupEl.querySelector('[data-queue-group-toggle="1"]');
+      const body = groupEl.querySelector('.adminQueueGroupBody');
+
+      groupEl.setAttribute('data-open', nextOpen ? 'true' : 'false');
+      if (toggleBtn) {
+        toggleBtn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      }
+      if (body) {
+        body.hidden = !nextOpen;
+      }
+    }
+
+    if (applyBtn) {
+      applyBtn.addEventListener('click', applySearch);
+    }
+
+    if (searchEl) {
+      searchEl.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        applySearch();
+      });
+    }
+
+    document.querySelectorAll('.adminQueueGroup').forEach((groupEl) => {
+      setQueueGroupOpen(groupEl, false);
+    });
+
+    document.addEventListener('click', async (event) => {
+      const groupToggleBtn = event.target.closest('[data-queue-group-toggle="1"]');
+      const deleteBtn = event.target.closest('[data-delete-queue-id]');
+      const clearUserBtn = event.target.closest('[data-clear-user-queue]');
+      const clearAllTrigger = event.target.closest('#clearAllQueuesBtn');
+
+      if (groupToggleBtn) {
+        const groupEl = groupToggleBtn.closest('.adminQueueGroup');
+        const isOpen = groupEl && groupEl.getAttribute('data-open') === 'true';
+        setQueueGroupOpen(groupEl, !isOpen);
+        return;
+      }
+
+      if (deleteBtn) {
+        const queueId = deleteBtn.getAttribute('data-delete-queue-id');
+        const commandLabel = deleteBtn.getAttribute('data-command-label') || 'queued command';
+        const ownerName = deleteBtn.getAttribute('data-owner-name') || 'this user';
+
+        if (!queueId) return;
+        if (!confirm('Delete the queued ' + commandLabel + ' command for ' + ownerName + '?')) return;
+
+        deleteBtn.disabled = true;
+        try {
+          await post('/admin/queues/' + encodeURIComponent(queueId) + '/delete', {});
+          showToast('Queued command deleted.', 'success');
+          setTimeout(() => location.reload(), 180);
+        } catch (err) {
+          showToast('Failed to delete queued command: ' + (err && err.message ? err.message : String(err)), 'error');
+          deleteBtn.disabled = false;
+        }
+        return;
+      }
+
+      if (clearUserBtn) {
+        const userId = clearUserBtn.getAttribute('data-clear-user-queue');
+        const scope = clearUserBtn.getAttribute('data-clear-user-queue-scope') === 'sender'
+          ? 'sender'
+          : 'receiver';
+        const displayName = clearUserBtn.getAttribute('data-display-name') || userId || 'this user';
+        const queueCount = parseInt(clearUserBtn.getAttribute('data-queue-count') || '0', 10);
+        const queueLabel = Number.isFinite(queueCount) && queueCount > 0
+          ? queueCount + ' queued command' + (queueCount === 1 ? '' : 's')
+          : 'queued commands';
+        const scopeLabel = scope === 'sender'
+          ? 'sent by '
+          : 'received by ';
+        const endpoint = scope === 'sender'
+          ? '/admin/users/' + encodeURIComponent(userId) + '/queue/sent/clear'
+          : '/admin/users/' + encodeURIComponent(userId) + '/queue/clear';
+
+        if (!userId) return;
+        if (!confirm('Clear ' + queueLabel + ' ' + scopeLabel + displayName + '?')) return;
+
+        clearUserBtn.disabled = true;
+        try {
+          const data = await post(endpoint, {});
+          showToast('Cleared ' + (data.clearedCount || 0) + ' queued command' + ((data.clearedCount || 0) === 1 ? '' : 's') + '.', 'success');
+          setTimeout(() => location.reload(), 180);
+        } catch (err) {
+          showToast('Failed to clear queue: ' + (err && err.message ? err.message : String(err)), 'error');
+          clearUserBtn.disabled = false;
+        }
+        return;
+      }
+
+      if (clearAllTrigger) {
+        if (clearAllTrigger.disabled) return;
+
+        const firstConfirm = confirm(
+          'Emergency clear will delete every queued command for every user. Are you sure?'
+        );
+        if (!firstConfirm) return;
+
+        const secondConfirm = confirm(
+          'Final confirmation: clear every queued command site-wide right now?'
+        );
+        if (!secondConfirm) return;
+
+        clearAllTrigger.disabled = true;
+        try {
+          const data = await post('/admin/queues/clear-all', {});
+          showToast(
+            'Cleared ' + (data.clearedCount || 0) + ' queued command' + ((data.clearedCount || 0) === 1 ? '' : 's') + ' across all queues.',
+            'success'
+          );
+          setTimeout(() => location.reload(), 180);
+        } catch (err) {
+          showToast('Failed to clear all queues: ' + (err && err.message ? err.message : String(err)), 'error');
+          clearAllTrigger.disabled = false;
+        }
+      }
+    });
+  })();
+</script>

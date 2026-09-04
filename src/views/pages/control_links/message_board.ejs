@@ -1,25 +1,145 @@
-<div class="card" id="boardCard">
-    <div class="cardHd" style="display:flex;align-items:center;justify-content:space-between;">
-      <span>Message Board</span>
-      <span class="muted" style="font-size:12px;">Owner posts only</span>
-    </div>
+<div class="boardDock">
+  <div class="boardDockButtons">
+    <% if (viewerIsOwner) { %>
+      <button
+        id="commandHistoryToggle"
+        class="boardFab"
+        type="button"
+        aria-controls="commandHistoryPanel"
+        aria-expanded="false"
+        aria-label="Open commands history"
+      >
+        <span class="boardFabLabel" aria-hidden="true">History</span>
+        <span class="boardFabIcon" aria-hidden="true">
+          <%- include("../../common/icons/history_icon") %>
+        </span>
+      </button>
+    <% } %>
 
-    <div class="cardBd">
-
-      <% if(viewerIsOwner) { %>
-        <div class="boardComposer">
-          <form id="boardForm" class="boardComposerInner">
-            <input id="boardInput" name="body" class="boardInput" placeholder="Type here" maxlength="200" />
-            <button id="boardSend" class="boardPostBtn" type="submit">Post</button>
-          </form>
-        </div>
-        <div class="muted" id="boardStatus" style="margin-top:10px;"></div>
-        <div style="height:12px;"></div>
-      <% } else { %>
-        <div class="muted" style="margin-bottom:12px;">Only the device owner can post.</div>
-      <% } %>
-
-      <div class="boardList" id="boardList" aria-label="Message board"></div>
-
-    </div>
+  <button
+    id="boardToggle"
+    class="boardFab"
+    type="button"
+    aria-controls="boardPanel"
+    aria-expanded="false"
+    aria-label="Open message board"
+  >
+    <span class="boardFabLabel" aria-hidden="true">Messages</span>
+    <span class="boardFabIcon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path
+          d="M10 9H17M10 13H17M7 9H7.01M7 13H7.01M21 20L17.6757 18.3378C17.4237 18.2118 17.2977 18.1488 17.1656 18.1044C17.0484 18.065 16.9277 18.0365 16.8052 18.0193C16.6672 18 16.5263 18 16.2446 18H6.2C5.07989 18 4.51984 18 4.09202 17.782C3.71569 17.5903 3.40973 17.2843 3.21799 16.908C3 16.4802 3 15.9201 3 14.8V7.2C3 6.07989 3 5.51984 3.21799 5.09202C3.40973 4.71569 3.71569 4.40973 4.09202 4.21799C4.51984 4 5.0799 4 6.2 4H17.8C18.9201 4 19.4802 4 19.908 4.21799C20.2843 4.40973 20.5903 4.71569 20.782 5.09202C21 5.51984 21 6.0799 21 7.2V20Z"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="1.7"
+        />
+      </svg>
+    </span>
+    <span id="boardUnreadBadge" class="boardUnreadBadge" hidden>0</span>
+  </button>
   </div>
+
+  <% if (viewerIsOwner) { %>
+    <div
+      id="commandHistoryPanelShell"
+      class="boardPanelShell"
+      data-control-dock-panel="1"
+      data-open="false"
+      aria-hidden="true"
+    >
+      <button
+        id="commandHistoryPanelBackdrop"
+        class="boardPanelBackdrop"
+        type="button"
+        aria-label="Close commands history"
+      ></button>
+
+      <aside
+        id="commandHistoryPanel"
+        class="boardPanel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="commandHistoryPanelTitle"
+      >
+        <div class="boardPanelHd">
+          <div>
+            <h2 id="commandHistoryPanelTitle" class="boardPanelTitle">Commands History</h2>
+            <div class="muted commandHistorySubhead">
+              The last 15 commands sent to your control link. Times are shown in your local time.
+            </div>
+          </div>
+
+          <button id="commandHistoryPanelClose" class="boardPanelClose" type="button">
+            Close
+          </button>
+        </div>
+
+        <div class="boardPanelBd">
+          <div
+            id="commandHistoryList"
+            class="commandHistoryList"
+            aria-label="Commands history"
+          ></div>
+        </div>
+      </aside>
+    </div>
+  <% } %>
+
+  <div
+    id="boardPanelShell"
+    class="boardPanelShell"
+    data-control-dock-panel="1"
+    data-open="false"
+    aria-hidden="true"
+  >
+    <button
+      id="boardPanelBackdrop"
+      class="boardPanelBackdrop"
+      type="button"
+      aria-label="Close message board"
+    ></button>
+
+    <aside
+      id="boardPanel"
+      class="boardPanel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="boardPanelTitle"
+    >
+      <div class="boardPanelHd">
+        <div>
+          <h2 id="boardPanelTitle" class="boardPanelTitle">Message Board</h2>
+        </div>
+
+        <button id="boardPanelClose" class="boardPanelClose" type="button">
+          Close
+        </button>
+      </div>
+
+      <div class="boardPanelBd">
+        <div class="boardList" id="boardList" aria-label="Message board"></div>
+      </div>
+
+      <div class="boardPanelFt">
+        <% if (viewerIsOwner) { %>
+          <form id="boardForm" class="boardComposerInner">
+            <input
+              id="boardInput"
+              name="body"
+              class="boardInput"
+              placeholder="Post a new message..."
+              maxlength="200"
+            />
+            <button id="boardSend" class="boardPostBtn" type="submit">Send</button>
+          </form>
+          <div class="muted boardStatus" id="boardStatus"></div>
+        <% } else { %>
+          <div class="muted boardReadonlyNote">
+            Only the device owner can post here.
+          </div>
+        <% } %>
+      </div>
+    </aside>
+  </div>
+</div>

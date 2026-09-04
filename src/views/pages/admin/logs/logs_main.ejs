@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" href="/css/logs.css">
+</head>
+
+<body>
+  <div class="panel">
+    <div class="panelHd">
+      <h1>Admin Logs</h1>
+      <a class="btn" href="/admin">Back</a>
+    </div>
+    <div class="panelBd">
+      <div class="toolbar toolbar--search">
+        <div class="searchBlock">
+          <label class="fieldLabel" for="q">Search logs</label>
+          <input id="q" placeholder="Search name, id, event type, device, pair code, payload..." value="<%= (q) %>" />
+          <div class="muted" style="margin-top:8px;">
+            Use <span class="mono">-123456789</span> to exclude logs involving that user ID.
+          </div>
+        </div>
+
+        <div class="searchActions">
+          <button class="btn" id="searchBtn" type="button">Search</button>
+          <button class="miniBtn" id="clearSearch" type="button">Clear</button>
+        </div>
+
+        <span class="muted toolbarMeta" id="count"></span>
+      </div>
+
+      <div class="pager" style="margin-top:12px;">
+        <a class="btn" href="/admin/logs<%= qs(safePage - 1) %>" aria-disabled="<%= prevDisabled ? "true" : "false" %>">Prev</a>
+        <div class="muted">Page <b><%= safePage %></b> / <b><%= pages %></b> — <%= total %> events</div>
+        <a class="btn" href="/admin/logs<%= qs(safePage + 1) %>" aria-disabled="<%= nextDisabled ? "true" : "false" %>">Next</a>
+      </div>
+
+      <div class="jumpRow">
+        <span class="muted">Jump:</span>
+        <select id="pageSelect" <%- pages <=1 ? "disabled" : "" %>>
+          <%- pageOptionsHtml %>
+        </select>
+        <span class="muted">or</span>
+        <input id="pageInput" type="number" min="1" max="<%= pages %>" placeholder="Page #" />
+        <button class="miniBtn" id="pageGo" type="button">Go</button>
+        <span class="muted"><%- pages > 400 ? "(dropdown capped at 400)" : "" %></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="logsWrap" style="margin-top:14px;">
+    <div class="logsLeft">
+      <div id="list">
+        <%- include("logs_cards") %>
+      </div>
+
+      <div class="pager">
+        <a class="btn" href="/admin/logs<%= qs(safePage - 1) %>" aria-disabled="<%= prevDisabled ? "true" : "false" %>">Prev</a>
+        <div class="muted">Page <b><%= safePage %></b> / <b><%= pages %></b> — <%= total %> events</div>
+        <a class="btn" href="/admin/logs<%= qs(safePage + 1) %>" aria-disabled="<%= nextDisabled ? "true" : "false" %>">Next</a>
+      </div>
+
+      <div class="hint">
+        Tip: click a user chip to drop that user ID into search, use <span class="mono">-userId</span> to exclude a user, and click “Details” to expand payload.
+      </div>
+    </div>
+
+    <div class="logsRight">
+      <div class="panel filterPanel">
+        <div class="panelHd">
+          <div>
+            <div class="filterEyebrow">Filters</div>
+            <div class="filterTitle">Event Types</div>
+          </div>
+          <button class="miniBtn" id="clearTypes" type="button">Clear</button>
+        </div>
+        <div class="panelBd filterPanelBd">
+          <div class="filterSection">
+            <div class="filterSectionHd">
+              <span class="filterLabel">Quick picks</span>
+              <span class="muted">Select a bundle fast.</span>
+            </div>
+            <div class="pillRow pillRow--filters">
+              <button class="pill" id="onlyCommands" type="button">Command events</button>
+              <button class="pill" id="onlyAuth" type="button">Auth events</button>
+              <button class="pill" id="onlyAdmin" type="button">Admin events</button>
+            </div>
+          </div>
+
+          <div class="filterSection">
+            <div class="filterSectionHd">
+              <span class="filterLabel">Type list</span>
+              <span class="muted" id="typeCount"></span>
+            </div>
+            <div class="typeSearchWrap">
+              <input
+                id="typeSearch"
+                class="typeSearch"
+                type="text"
+                placeholder="Filter event types..."
+                value="<%= typeSearch || '' %>"
+              />
+            </div>
+            <div class="typesBox" id="typesBox">
+              <% for (const t of allTypes) { %>
+              <label class="chk">
+                <input type="checkbox" value="<%= (t) %>" <%= selectedTypes.includes(t) ? "checked" : "" %> />
+                <span><%= (t) %></span>
+              </label>
+              <% } %>
+            </div>
+            <div class="typeEmpty" id="typeEmpty" hidden>No event types match that search.</div>
+          </div>
+
+          <div class="hint">
+            Type search and type selections affect pagination server-side. Change what you want, then hit “Apply”.
+          </div>
+
+          <div class="filterActions">
+            <button class="btn" id="apply" type="button">Apply</button>
+            <button class="miniBtn" id="resetAll" type="button">Reset</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="imageModal" id="imageModal" hidden>
+    <button class="imageModalClose" id="imageModalClose" type="button" aria-label="Close image preview">Close</button>
+    <img class="imageModalImg" id="imageModalImg" alt="" />
+  </div>
+
+  <%- include("logs_scripts", { user }) %>
+
+</body>
+
+</html>

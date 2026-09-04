@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/users.css">
+  <link rel="stylesheet" href="/css/admin_queue.css">
+</head>
+
+<body>
+  <div class="panel">
+    <div class="panelHd">
+      <div>
+        <h1>Queued Commands</h1>
+        <p class="muted adminQueueSubhead">
+          Commands waiting for recipients to come back online.
+        </p>
+      </div>
+
+      <div class="adminQueueHeaderActions">
+        <a class="btn btn--ghost" href="/admin/users">Users</a>
+        <a class="btn" href="/admin">Back</a>
+      </div>
+    </div>
+
+    <div class="panelBd">
+      <div class="toolbar adminQueueToolbar">
+        <input
+          id="queueSearch"
+          placeholder="Search sender, receiver, pair code, source, queue id..."
+          value="<%= adminQueueQuery || '' %>"
+        />
+        <button class="btn" id="queueApplyBtn" type="button">Search</button>
+        <button
+          class="btn btn--danger adminQueueEmergencyBtn"
+          id="clearAllQueuesBtn"
+          type="button"
+        >
+          Emergency: Clear every queue
+        </button>
+      </div>
+
+      <div class="adminQueueSwitchRow">
+        <a
+          class="btn <%= adminQueueGroupBy === 'receiver' ? '' : 'btn--ghost' %>"
+          href="<%= adminQueueReceiverHref %>"
+        >
+          Group by receiver
+        </a>
+        <a
+          class="btn <%= adminQueueGroupBy === 'sender' ? '' : 'btn--ghost' %>"
+          href="<%= adminQueueSenderHref %>"
+        >
+          Group by sender
+        </a>
+      </div>
+
+      <div class="adminQueueStats">
+        <span class="pill">
+          <span class="k">queued</span>
+          <span class="v"><%= Number(adminQueueTotalCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">groups</span>
+          <span class="v"><%= Number(adminQueueTotalGroupCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">senders</span>
+          <span class="v"><%= Number(adminQueueSenderCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">receivers</span>
+          <span class="v"><%= Number(adminQueueReceiverCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">view</span>
+          <span class="v"><%= adminQueueGroupBy === 'sender' ? 'Grouped by sender' : 'Grouped by receiver' %></span>
+        </span>
+      </div>
+
+      <% if (Number(adminQueueTotalGroupCount || 0) > 0) { %>
+        <div class="adminQueuePager">
+          <% if (adminQueueHasPrevPage) { %>
+            <a class="btn btn--ghost" href="<%= adminQueuePrevPageHref %>">Previous</a>
+          <% } else { %>
+            <span class="btn btn--ghost adminQueuePagerBtn" aria-disabled="true">Previous</span>
+          <% } %>
+
+          <div class="muted adminQueuePagerSummary">
+            Page <b><%= adminQueueCurrentPage || 1 %></b> of <b><%= adminQueueTotalPages || 1 %></b>
+            <% if (adminQueuePageSummary) { %>
+              — <%= adminQueuePageSummary %>
+            <% } %>
+          </div>
+
+          <% if (adminQueueHasNextPage) { %>
+            <a class="btn btn--ghost" href="<%= adminQueueNextPageHref %>">Next</a>
+          <% } else { %>
+            <span class="btn btn--ghost adminQueuePagerBtn" aria-disabled="true">Next</span>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="adminQueueList">
+    <% if (adminQueueGroups && adminQueueGroups.length) { %>
+      <% for (const group of adminQueueGroups) { %>
+        <%
+          const groupBodyId =
+            'admin_queue_group_' +
+            String(group.key || 'group').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        %>
+        <section class="uCard adminQueueGroup" data-queue-group="<%= group.key %>" data-open="false">
+          <div class="adminQueueGroupHd">
+            <button
+              class="adminQueueGroupToggle"
+              type="button"
+              data-queue-group-toggle="1"
+              aria-expanded="false"
+              aria-controls="<%= groupBodyId %>"
+            >
+              <span class="adminQueueGroupChevron" aria-hidden="true"></span>
+
+              <div class="uLeft">
+                <% if (group.avatarUrl) { %>
+                  <img class="uAv" src="<%= group.avatarUrl %>" alt="" />
+                <% } else { %>
+                  <div class="adminQueueAvatarPlaceholder" aria-hidden="true">
+                    <%= String(group.displayName || '?').trim().charAt(0).toUpperCase() || '?' %>
+                  </div>
+                <% } %>
+
+                <div class="adminQueueIdentity">
+                  <div class="uName"><%= group.displayName %></div>
+                  <% if (group.meta) { %>
+                    <div class="uMeta">
+                      <span class="mono"><%= group.meta %></span>
+                    </div>
+                  <% } %>
+                  <div class="uMeta">
+                    <span class="pill">
+                      <span class="k">queued</span>
+                      <span class="v"><%= Number(group.count || 0).toLocaleString() %></span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            <div class="uActions">
+              <% if (group.adminUrl) { %>
+                <a class="miniBtn" href="<%= group.adminUrl %>">View user</a>
+              <% } %>
+              <% if (group.userId && Number(group.count || 0) > 0) { %>
+                <button
+                  class="miniBtn miniBtn--danger"
+                  type="button"
+                  data-clear-user-queue="<%= group.userId %>"
+                  data-clear-user-queue-scope="<%= adminQueueGroupBy === 'sender' ? 'sender' : 'receiver' %>"
+                  data-display-name="<%= group.displayName %>"
+                  data-queue-count="<%= Number(group.count || 0) %>"
+                >
+                  <%= adminQueueGroupBy === 'sender' ? 'Clear sent' : 'Clear received' %>
+                </button>
+              <% } %>
+            </div>
+          </div>
+
+          <div id="<%= groupBodyId %>" class="adminQueueGroupBody" hidden>
+            <div class="adminQueueItems">
+              <% for (const item of group.items) { %>
+                <article class="adminQueueItem" data-queue-id="<%= item.id %>">
+                  <div class="adminQueueItemTop">
+                    <div class="adminQueueItemText">
+                      <div class="adminQueueItemTitle"><%= item.commandTypeLabel %></div>
+                      <div class="uMeta">
+                        <span class="pill">
+                          <span class="k">sender</span>
+                          <span class="v"><%= item.actor.displayName %></span>
+                        </span>
+                        <span class="pill">
+                          <span class="k">receiver</span>
+                          <span class="v"><%= item.owner.displayName %></span>
+                        </span>
+                        <span class="pill">
+                          <span class="k">source</span>
+                          <span class="v"><%= item.sourceLabel %></span>
+                        </span>
+                        <span class="pill">
+                          <span class="k">queued</span>
+                          <span class="v"><%= item.ageLabel %></span>
+                        </span>
+                      </div>
+                      <div class="muted adminQueueTimestamp"><%= item.createdAtLabel %></div>
+                    </div>
+
+                    <button
+                      class="miniBtn miniBtn--danger"
+                      type="button"
+                      data-delete-queue-id="<%= item.id %>"
+                      data-command-label="<%= item.commandTypeLabel %>"
+                      data-owner-name="<%= item.owner.displayName %>"
+                    >
+                      Delete
+                    </button>
+                  </div>
+
+                  <% if (item.summary) { %>
+                    <div class="adminQueueSummary"><%= item.summary %></div>
+                  <% } %>
+
+                  <% if (Array.isArray(item.mediaPreviews) && item.mediaPreviews.length) { %>
+                    <div class="adminQueuePreviewStrip">
+                      <% for (const preview of item.mediaPreviews) { %>
+                        <div class="adminQueuePreview adminQueuePreview--<%= preview.previewKind %>">
+                          <div class="adminQueuePreviewMedia">
+                            <% if (preview.previewKind === "audio") { %>
+                              <audio controls preload="metadata" src="<%= preview.url %>"></audio>
+                            <% } else if (preview.previewKind === "video") { %>
+                              <video controls preload="metadata" playsinline src="<%= preview.url %>"></video>
+                            <% } else { %>
+                              <a href="<%= preview.url %>" target="_blank" rel="noopener noreferrer">
+                                <img
+                                  src="<%= preview.url %>"
+                                  alt="<%= preview.originalName || preview.storedName || item.commandTypeLabel %> preview"
+                                  loading="lazy"
+                                />
+                              </a>
+                            <% } %>
+                          </div>
+                          <div class="adminQueuePreviewMeta">
+                            <div class="adminQueuePreviewName">
+                              <%= preview.originalName || preview.storedName || `${item.commandTypeLabel} media` %>
+                            </div>
+                            <div class="muted adminQueuePreviewType">
+                              <%= preview.previewKind.charAt(0).toUpperCase() + preview.previewKind.slice(1) %>
+                              <% if (preview.ext) { %> • <%= preview.ext %><% } %>
+                            </div>
+                          </div>
+                        </div>
+                      <% } %>
+                    </div>
+                  <% } %>
+
+                  <div class="adminQueueLinkRow">
+                    <% if (item.actor.adminUrl) { %>
+                      <a class="btnSm" href="<%= item.actor.adminUrl %>">View sender</a>
+                    <% } %>
+                    <% if (item.owner.adminUrl) { %>
+                      <a class="btnSm" href="<%= item.owner.adminUrl %>">View receiver</a>
+                    <% } %>
+                    <% if (item.owner.pairCode) { %>
+                      <a class="btnSm" href="/device/<%= encodeURIComponent(item.owner.pairCode) %>">Open device page</a>
+                    <% } %>
+                  </div>
+
+                  <details class="adminQueuePayload">
+                    <summary>Payload</summary>
+                    <pre><%= item.prettyPayload %></pre>
+                  </details>
+                </article>
+              <% } %>
+            </div>
+          </div>
+        </section>
+      <% } %>
+    <% } else { %>
+      <div class="hint adminQueueEmpty">
+        <%= adminQueueQuery ? 'No queued commands match that search.' : 'No queued commands right now.' %>
+      </div>
+    <% } %>
+  </div>
+
+  <% if (Number(adminQueueTotalGroupCount || 0) > 0) { %>
+    <div class="adminQueuePager adminQueuePager--bottom">
+      <% if (adminQueueHasPrevPage) { %>
+        <a class="btn btn--ghost" href="<%= adminQueuePrevPageHref %>">Previous</a>
+      <% } else { %>
+        <span class="btn btn--ghost adminQueuePagerBtn" aria-disabled="true">Previous</span>
+      <% } %>
+
+      <div class="muted adminQueuePagerSummary">
+        Page <b><%= adminQueueCurrentPage || 1 %></b> of <b><%= adminQueueTotalPages || 1 %></b>
+        <% if (adminQueuePageSummary) { %>
+          — <%= adminQueuePageSummary %>
+        <% } %>
+      </div>
+
+      <% if (adminQueueHasNextPage) { %>
+        <a class="btn btn--ghost" href="<%= adminQueueNextPageHref %>">Next</a>
+      <% } else { %>
+        <span class="btn btn--ghost adminQueuePagerBtn" aria-disabled="true">Next</span>
+      <% } %>
+    </div>
+  <% } %>
+</body>
+
+<%- include("que_scripts") %>
+
+</html>

@@ -1,0 +1,101 @@
+    <section class="card memberWelcome">
+      <div>
+        <h1>Welcome back<% if (user) { %>, <%= displayName %><% } %>.</h1>
+        <p class="muted">Your control page, devices, and community are all within reach.</p>
+      </div>
+      <div class="memberWelcomeStatus">
+        <span class="landingLiveDot"></span>
+        <strong><%= Number(onlineUserCount || 0).toLocaleString() %></strong>
+        online now
+      </div>
+    </section>
+
+    <section class="memberQuickGrid" aria-label="Quick actions">
+      <a class="memberQuickCard memberQuickCard--primary" href="<%= memberControlPath %>">
+        <span class="memberQuickIcon"><%- include("../common/icons/home_action_icon", { icon: "external" }) %></span>
+        <div>
+          <strong>My control page</strong>
+          <p>Open your control link.</p>
+        </div>
+        <b>Open →</b>
+      </a>
+      <a class="memberQuickCard" href="/profile">
+        <span class="memberQuickIcon"><%- include("../common/icons/home_action_icon", { icon: "device" }) %></span>
+        <div>
+          <strong>Connect a device</strong>
+          <p>Pair or manage your clients.</p>
+        </div>
+        <b>Manage →</b>
+      </a>
+      <a class="memberQuickCard" href="/discover">
+        <span class="memberQuickIcon"><%- include("../common/icons/home_action_icon", { icon: "discover" }) %></span>
+        <div>
+          <strong>Discover</strong>
+          <p>Find people and explore your groups.</p>
+        </div>
+        <b>Browse →</b>
+      </a>
+      <a class="memberQuickCard" href="/discover?tab=groups">
+        <span class="memberQuickIcon"><%- include("../common/icons/home_action_icon", { icon: "groups" }) %></span>
+        <div>
+          <strong>Groups</strong>
+          <p>Browse the group catalog and jump into shared controls.</p>
+        </div>
+        <b>View →</b>
+      </a>
+      <a class="memberQuickCard" href="/discover?tab=community">
+        <span class="memberQuickIcon"><%- include("../common/icons/home_action_icon", { icon: "community" }) %></span>
+        <div>
+          <strong>Community groups</strong>
+          <p>Create or join private and public community groups.</p>
+        </div>
+        <b>View →</b>
+      </a>
+    </section>
+
+    <section class="memberDashboardGrid memberDashboardGrid--setupOnly">
+      <article class="card memberSetupCard">
+        <div class="cardHd">How to set up</div>
+        <div class="cardBd memberChecklist">
+          <div><span>1</span><p><strong>Download and connect your client</strong><small>Download the client and pair your first device from Profile.</small></p></div>
+          <div><span>2</span><p><strong>Choose your commands</strong><small>Set standard and whitelisted permissions.</small></p></div>
+          <div><span>3</span><p><strong>Share your control page</strong><small>Invite someone you trust to try it.</small></p></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="landingSection memberBoards">
+      <div class="landingSectionHead landingSectionHead--row">
+        <div>
+          <div class="landingKicker">Community activity</div>
+          <h2>Command leaderboards</h2>
+        </div>
+        <span class="memberUtc">UTC <%= leaderboardUtcDate %></span>
+      </div>
+
+      <div class="landingLeaderboardGrid">
+        <% [
+          { title: "Top today", items: topSendersToday || [], suffix: "sent" },
+          { title: "Top all time", items: topSendersAllTime || [], suffix: "total" },
+        ].forEach((board) => { %>
+          <article class="landingLeaderboard landingLeaderboard--member">
+            <div class="landingLeaderboardHead"><%= board.title %></div>
+            <ol>
+              <% board.items.slice(0, 5).forEach((item, index) => { %>
+                <li>
+                  <span class="landingRank">#<%= index + 1 %></span>
+                  <img src="<%= item.avatarUrl %>" alt="" />
+                  <span class="landingLeaderName"><%= item.displayName %></span>
+                  <strong><%= Number(item.commandsSent || 0).toLocaleString() %> <small><%= board.suffix %></small></strong>
+                </li>
+              <% }) %>
+              <% if (!board.items.length) { %>
+                <li class="landingLeaderboardEmpty">No activity to show yet.</li>
+              <% } %>
+            </ol>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <%- include("../common/home_support_preview") %>

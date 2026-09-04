@@ -1,360 +1,3661 @@
 <% if (user) { %>
 <script>
-    const respBox = document.getElementById("respBox");
-    const clearBtn = document.getElementById("clearResp");
-    const pairCode = <%- JSON.stringify(pairCode) %>;
-  
-    function ts() {
-      return new Date().toISOString();
-    }
-  
-    function addLine(text, kind) {
-      const div = document.createElement("div");
-      div.className = "respLine";
-      div.textContent = "[" + ts() + "] " + (kind ? ("(" + kind + ") ") : "") + text;
-      respBox.appendChild(div);
-      respBox.scrollTop = respBox.scrollHeight;
-    }
-  
-    clearBtn.addEventListener("click", () => {
-      respBox.innerHTML = "";
-      addLine("Cleared.", "info");
-    });
-  
-    const COOLDOWN_APPLIES = <%-
-      JSON.stringify(!!cooldownApplies)
-    %>;
-    const COOLDOWN_MS = 3000;
+  const respBox = document.getElementById("respBox");
+  const clearBtn = document.getElementById("clearResp");
+  const pairCode = <%- inlineScriptJson(pairCode) %>;
+  const controlPageRoot = document.getElementById("controlPageRoot");
+  const controlPageBackgroundEl = document.getElementById("controlPageBackground");
+  const controlAvatarImg = document.getElementById("controlAvatarImg");
+  const controlBannerImageEl = document.getElementById("controlBannerImage");
+  const controlAboutCard = document.getElementById("controlAboutCard");
+  const controlAboutTextEl = document.getElementById("controlAboutText");
+  const controlDisplayNameEl = document.getElementById("controlDisplayName");
+  const topFavoriteList = document.querySelector("[data-favorite-list='1']");
+  const topFavoriteStatus = document.getElementById("topFavoriteStatus");
+  const ownerDiscordId = <%- inlineScriptJson(ownerId) %>;
+  const defaultControlDisplayName = <%- inlineScriptJson(ownerUser?.global_name || ownerUser?.username || ownerId) %>;
+  const emptyControlAboutText = "This user hasn't added an About Me yet.";
+  const topFavoritesLimitMessage = "You can only have up to 3 favorites at a time";
+  const topFavoritesLimit = Number(
+    topFavoriteStatus?.getAttribute("data-top-favorites-limit") || 3,
+  );
+  let activeControlTheme = <%- inlineScriptJson(controlLinkTheme) %>;
+  let activeControlDisplayName = <%- inlineScriptJson(controlLinkCustomName || "") %>;
+  let activeControlAboutMe = <%- inlineScriptJson(aboutMe || "") %>;
+  let activeControlAvatarVersion = <%- inlineScriptJson(Number(controlLinkAvatarVersion || 0)) %>;
+  let activeControlHasCustomAvatar = <%- inlineScriptJson(!!controlLinkHasCustomAvatar) %>;
+  let activeControlBannerVersion = <%- inlineScriptJson(Number(controlLinkBannerVersion || 0)) %>;
+  let activeControlHasCustomBanner = <%- inlineScriptJson(!!controlLinkHasCustomBanner) %>;
+  let activeControlBackgroundVersion = <%- inlineScriptJson(Number(controlLinkBackgroundVersion || 0)) %>;
+  let activeControlHasCustomBackground = <%- inlineScriptJson(!!controlLinkHasCustomBackground) %>;
+  const viewerDisablesCustomBackgrounds = <%- inlineScriptJson(!!viewerDisablesCustomBackgrounds) %>;
+  let ownerAvatar = buildControlAvatarUrl(64, activeControlAvatarVersion);
+  let topFavoriteBusy = false;
 
-    const overlay = document.getElementById("cooldownOverlay");
-    const overlaySeconds = document.getElementById("cooldownSeconds");
-  
-    let nextAllowedAt = 0;
-    let countdownTimer = null;
-  
-    function showOverlay(msLeft) {
-      if (!overlay) return;
-      const s = Math.max(0, Math.ceil(msLeft / 1000));
-      overlaySeconds.textContent = String(s);
-      overlay.setAttribute("data-show", "true");
-      overlay.setAttribute("aria-hidden", "false");
+  function ts() {
+    return new Date().toISOString();
+  }
+
+  function addLine(text, kind) {
+    const row = document.createElement("div");
+    row.className = "respRow";
+
+    const time = document.createElement("div");
+    time.className = "respBubble respTime";
+    time.textContent = new Date().toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    });
+
+    const msg = document.createElement("div");
+    msg.className = "respBubble respMsg";
+    msg.textContent = text;
+
+    row.appendChild(time);
+    row.appendChild(msg);
+
+    respBox.prepend(row);
+  }
+
+  const cmdModal = document.getElementById("cmdModal");
+  const cmdModalTitle = document.getElementById("cmdModalTitle");
+  const cmdModalBody = document.getElementById("cmdModalBody");
+  const controlViewerIsOwner = <%- inlineScriptJson(!!viewerIsOwner) %>;
+  const commandPreviewList = document.getElementById("cmdList");
+  const commandPreviewEmpty = document.getElementById("commandPreviewEmpty");
+  const commandPreviewEmptyTitle = document.getElementById("commandPreviewEmptyTitle");
+  const commandPreviewEmptyText = document.getElementById("commandPreviewEmptyText");
+  const commandPreviewTabs = document.querySelector(".commandPreviewTabs");
+  const commandPreviewModeButtons = Array.from(
+    document.querySelectorAll("[data-command-preview-mode]"),
+  );
+  let activeCommandPreviewMode = <%- inlineScriptJson(
+    commandPreviewToggleEnabled
+      ? commandPreviewDefaultMode === "standard"
+        ? "standard"
+        : "whitelisted"
+      : "current",
+  ) %>;
+  const boardDock = document.querySelector(".boardDock");
+  const controlThemeEditBtn = document.getElementById("controlThemeEditBtn");
+  const controlReportBtn = document.getElementById("controlReportBtn");
+  const avatarCropModal = document.getElementById("avatarCropModal");
+  const avatarCropTitle = document.getElementById("avatarCropTitle");
+  const avatarCropSubtitle = document.getElementById("avatarCropSubtitle");
+  const avatarCropPreviewLabel = document.getElementById("avatarCropPreviewLabel");
+  const avatarCropViewport = document.getElementById("avatarCropViewport");
+  const avatarCropImage = document.getElementById("avatarCropImage");
+  const avatarCropZoom = document.getElementById("avatarCropZoom");
+  const avatarCropPreviewCanvas = document.getElementById("avatarCropPreviewCanvas");
+  const avatarCropStatus = document.getElementById("avatarCropStatus");
+  const avatarCropConfirmBtn = document.getElementById("avatarCropConfirmBtn");
+
+  function syncControlOverlayThemeVars(node) {
+    if (!node || !node.style) return;
+    node.style.setProperty("--control-accent-rgb", "var(--ctl-accent-rgb, 167, 139, 250)");
+    node.style.setProperty("--control-accent-deep-rgb", "var(--ctl-accent-deep-rgb, 139, 92, 246)");
+    node.style.setProperty("--control-accent-glow-rgb", "var(--ctl-accent-glow-rgb, 139, 92, 246)");
+    node.style.setProperty("--control-surface-rgb", "var(--ctl-surface-rgb, 20, 20, 28)");
+    node.style.setProperty("--control-surface-2-rgb", "var(--ctl-surface-2-rgb, 14, 14, 24)");
+    node.style.setProperty("--control-panel-rgb", "var(--ctl-panel-rgb, 18, 18, 30)");
+    node.style.setProperty("--control-panel-2-rgb", "var(--ctl-panel-2-rgb, 12, 12, 22)");
+    node.style.setProperty("--control-accent-strong", "rgb(var(--control-accent-rgb))");
+  }
+
+  // Keep overlays out of the isolated control-page stacking context so they can cover the sticky topbar.
+  function hoistOverlayToBody(node) {
+    if (!node || !document.body || node.parentElement === document.body) return;
+    syncControlOverlayThemeVars(node);
+    document.body.appendChild(node);
+  }
+
+  syncControlOverlayThemeVars(cmdModal);
+  syncControlOverlayThemeVars(avatarCropModal);
+  syncControlOverlayThemeVars(boardDock);
+  hoistOverlayToBody(boardDock);
+  hoistOverlayToBody(cmdModal);
+  hoistOverlayToBody(avatarCropModal);
+
+  const CONTROL_CROP_MODES = Object.freeze({
+    avatar: {
+      kind: "avatar",
+      title: "Crop Avatar",
+      subtitle: "Drag to position and use the slider to zoom.",
+      previewLabel: "Preview",
+      confirmLabel: "Use Avatar",
+      viewportWidth: 360,
+      aspectRatio: 1,
+      stageRadius: 24,
+      frameInset: 18,
+      frameRadius: 18,
+      previewWidth: 160,
+      previewHeight: 160,
+      previewRadius: "999px",
+      outputWidth: 512,
+      outputHeight: 512,
+    },
+    banner: {
+      kind: "banner",
+      title: "Crop Banner",
+      subtitle: "Keep important details inside the inner safe zone for mobile and header crops.",
+      previewLabel: "Banner Preview",
+      confirmLabel: "Use Banner",
+      viewportWidth: 560,
+      aspectRatio: 220 / 96,
+      stageRadius: 20,
+      frameInset: 14,
+      frameRadius: 14,
+      previewWidth: 220,
+      previewHeight: 96,
+      previewRadius: "18px",
+      outputWidth: 1320,
+      outputHeight: 576,
+    },
+  });
+  let avatarCropState = null;
+  let avatarCropDrag = null;
+  let avatarCropRenderRaf = 0;
+
+  function applyControlTheme(theme) {
+    if (document.body) {
+      document.body.classList.add("page-control-link");
+      document.body.setAttribute("data-control-theme", theme || "purple");
     }
-  
-    function hideOverlay() {
-      if (!overlay) return;
-      overlay.setAttribute("data-show", "false");
-      overlay.setAttribute("aria-hidden", "true");
-    }
-  
-    function setButtonsDisabled(disabled) {
-      document.querySelectorAll(".cmdForm button[type=submit]").forEach(btn => {
-        btn.disabled = !!disabled;
-        btn.style.opacity = disabled ? "0.65" : "";
-        btn.style.cursor = disabled ? "not-allowed" : "";
-      });
-    }
-  
-    function startCooldown() {
-      if (!COOLDOWN_APPLIES) return;
-  
-      const now = Date.now();
-      nextAllowedAt = Math.max(nextAllowedAt, now + COOLDOWN_MS);
-  
-      setButtonsDisabled(true);
-      showOverlay(nextAllowedAt - now);
-  
-      if (countdownTimer) clearInterval(countdownTimer);
-      countdownTimer = setInterval(() => {
-        const left = nextAllowedAt - Date.now();
-        if (left <= 0) {
-          clearInterval(countdownTimer);
-          countdownTimer = null;
-          hideOverlay();
-          setButtonsDisabled(false);
-          return;
+    if (!controlPageRoot) return;
+    controlPageRoot.setAttribute("data-control-theme", theme || "purple");
+  }
+
+  function applyControlDisplayName(value) {
+    if (!controlDisplayNameEl) return;
+    controlDisplayNameEl.textContent = value || defaultControlDisplayName;
+  }
+
+  function escapeControlAboutHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function trimControlAboutLink(rawUrl, closingMarker) {
+    let end = String(rawUrl || "").length;
+
+    while (end > 0) {
+      const ch = rawUrl[end - 1];
+      if (/[.,!?;:]/.test(ch)) {
+        end -= 1;
+        continue;
+      }
+
+      if (ch === ")") {
+        const body = rawUrl.slice(0, end - 1);
+        const openCount = (body.match(/\(/g) || []).length;
+        const closeCount = (body.match(/\)/g) || []).length;
+        if (closeCount >= openCount) {
+          end -= 1;
+          continue;
         }
-        showOverlay(left);
-      }, 120);
+      }
+
+      break;
     }
-  
-    function isCoolingDown() {
-      return COOLDOWN_APPLIES && Date.now() < nextAllowedAt;
+
+    if (closingMarker && rawUrl[end - 1] === closingMarker) {
+      end -= 1;
     }
-  
-    function clearFormFields(form) {
-      form.querySelectorAll("input[type=text], input[type=url], input:not([type]), textarea").forEach(el => {
-        el.value = "";
+
+    return rawUrl.slice(0, Math.max(0, end));
+  }
+
+  function renderControlAboutLink(linkText) {
+    const href = /^https?:\/\//i.test(linkText)
+      ? linkText
+      : `https://${linkText}`;
+
+    return (
+      `<a href="${escapeControlAboutHtml(href)}" target="_blank" rel="noopener noreferrer nofollow">` +
+      `${escapeControlAboutHtml(linkText)}</a>`
+    );
+  }
+
+  function renderControlAboutMarkup(value) {
+    const source = String(value || "");
+    const markerTags = {
+      "*": "em",
+      "#": "strong",
+      "-": "s",
+      "_": "u",
+    };
+    const linkPattern = /^(https?:\/\/[^\s<]+|www\.[^\s<]+)/i;
+
+    function walk(startIndex, closingMarker) {
+      let html = "";
+      let index = startIndex;
+
+      while (index < source.length) {
+        const ch = source[index];
+
+        if (ch === "\\") {
+          const next = source[index + 1] || "";
+          if (next && (markerTags[next] || next === "\\")) {
+            html += escapeControlAboutHtml(next);
+            index += 2;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch);
+          index += 1;
+          continue;
+        }
+
+        const linkMatch = source.slice(index).match(linkPattern);
+        if (linkMatch && linkMatch[0]) {
+          const linkText = trimControlAboutLink(linkMatch[0], closingMarker);
+          if (linkText) {
+            html += renderControlAboutLink(linkText);
+            index += linkText.length;
+            continue;
+          }
+        }
+
+        if (closingMarker && ch === closingMarker) {
+          return { html, index: index + 1, closed: true };
+        }
+
+        if (markerTags[ch]) {
+          const nested = walk(index + 1, ch);
+
+          if (nested.closed && nested.html.trim()) {
+            const tag = markerTags[ch];
+            html += `<${tag}>${nested.html}</${tag}>`;
+            index = nested.index;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch) + nested.html;
+          index = nested.index;
+          continue;
+        }
+
+        html += escapeControlAboutHtml(ch);
+        index += 1;
+      }
+
+      return { html, index, closed: false };
+    }
+
+    return walk(0, "").html;
+  }
+
+  function applyControlAboutMe(value) {
+    if (!controlAboutTextEl || !controlAboutCard) return;
+    const text = String(value || "");
+    const hasText = !!text.trim();
+    if (hasText) {
+      controlAboutTextEl.innerHTML = renderControlAboutMarkup(text);
+    } else {
+      controlAboutTextEl.textContent = emptyControlAboutText;
+    }
+    controlAboutCard.classList.toggle("controlProfileAbout--empty", !hasText);
+  }
+
+  function buildControlAvatarUrl(size, version) {
+    const qs = new URLSearchParams({
+      size: String(size || 64),
+    });
+
+    if (version) {
+      qs.set("v", String(version));
+    }
+
+    return "/avatars/" + encodeURIComponent(ownerDiscordId) + "?" + qs.toString();
+  }
+
+  function buildControlBannerUrl(size, version) {
+    const qs = new URLSearchParams({
+      size: String(size || 1600),
+    });
+
+    if (version) {
+      qs.set("v", String(version));
+    }
+
+    return "/banners/" + encodeURIComponent(ownerDiscordId) + "?" + qs.toString();
+  }
+
+  function buildControlBackgroundUrl(size, version) {
+    const qs = new URLSearchParams({
+      size: String(size || 1920),
+    });
+
+    if (version) {
+      qs.set("v", String(version));
+    }
+
+    return "/backgrounds/" + encodeURIComponent(ownerDiscordId) + "?" + qs.toString();
+  }
+
+  function applyControlAvatar(version) {
+    if (version) {
+      activeControlAvatarVersion = Number(version) || Date.now();
+    }
+
+    const pageAvatarUrl = buildControlAvatarUrl(128, activeControlAvatarVersion);
+    ownerAvatar = buildControlAvatarUrl(64, activeControlAvatarVersion);
+
+    if (controlAvatarImg) {
+      controlAvatarImg.src = pageAvatarUrl;
+    }
+
+    document.querySelectorAll(".boardAvatar").forEach((img) => {
+      img.src = ownerAvatar;
+    });
+  }
+
+  function applyControlBanner(version) {
+    if (version) {
+      activeControlBannerVersion = Number(version) || Date.now();
+    }
+
+    if (!controlBannerImageEl) return;
+
+    if (!activeControlHasCustomBanner) {
+      controlBannerImageEl.hidden = true;
+      controlBannerImageEl.style.backgroundImage = "";
+      return;
+    }
+
+    controlBannerImageEl.hidden = false;
+    controlBannerImageEl.style.backgroundImage =
+      "url('" + buildControlBannerUrl(1600, activeControlBannerVersion) + "')";
+  }
+
+  function applyControlBackground(version) {
+    if (version) {
+      activeControlBackgroundVersion = Number(version) || Date.now();
+    }
+
+    if (!controlPageBackgroundEl) return;
+
+    if (!activeControlHasCustomBackground || viewerDisablesCustomBackgrounds) {
+      controlPageBackgroundEl.hidden = true;
+      controlPageBackgroundEl.style.backgroundImage = "";
+      return;
+    }
+
+    controlPageBackgroundEl.hidden = false;
+    controlPageBackgroundEl.style.backgroundImage =
+      "url('" + buildControlBackgroundUrl(1920, activeControlBackgroundVersion) + "')";
+  }
+
+  function setTopFavoriteStatus(text, isError = false) {
+    if (!topFavoriteStatus) return;
+    const message = String(text || "").trim();
+    topFavoriteStatus.textContent = message;
+    topFavoriteStatus.hidden = !message;
+    topFavoriteStatus.classList.toggle("isError", !!message && !!isError);
+  }
+
+  function setTopFavoriteBusyState(disabled) {
+    topFavoriteBusy = !!disabled;
+    if (!topFavoriteList) return;
+    topFavoriteList
+      .querySelectorAll("[data-top-favorite-key]")
+      .forEach((btn) => {
+        btn.disabled = topFavoriteBusy;
       });
+  }
+
+  function getActiveTopFavoriteCount() {
+    if (!topFavoriteList) return 0;
+    return topFavoriteList.querySelectorAll("[data-top-favorite='1']").length;
+  }
+
+  function applyTopFavoriteState(topFavoriteKeys, orderedFavoriteKeys) {
+    if (!topFavoriteList) return;
+
+    const topSet = new Set(
+      Array.isArray(topFavoriteKeys)
+        ? topFavoriteKeys.map((key) => String(key || "").trim()).filter(Boolean)
+        : [],
+    );
+    const chips = Array.from(
+      topFavoriteList.querySelectorAll("[data-favorite-chip='1']"),
+    );
+    const chipByKey = new Map();
+
+    chips.forEach((chip) => {
+      const key = String(chip.getAttribute("data-item-key") || "").trim();
+      if (!key) return;
+      chipByKey.set(key, chip);
+
+      const isTopFavorite = topSet.has(key);
+      chip.setAttribute("data-top-favorite", isTopFavorite ? "1" : "0");
+
+      const btn = chip.querySelector("[data-top-favorite-key]");
+      if (btn) {
+        btn.classList.toggle("is-active", isTopFavorite);
+        btn.setAttribute("data-enabled", isTopFavorite ? "1" : "0");
+        btn.setAttribute("aria-pressed", isTopFavorite ? "true" : "false");
+        btn.setAttribute(
+          "aria-label",
+          isTopFavorite
+            ? "Remove from top favorites"
+            : "Make this a top favorite",
+        );
+        btn.setAttribute(
+          "title",
+          isTopFavorite
+            ? "Remove from top favorites"
+            : "Make this a top favorite",
+        );
+      }
+    });
+
+    const orderedKeys = Array.isArray(orderedFavoriteKeys)
+      ? orderedFavoriteKeys.map((key) => String(key || "").trim()).filter(Boolean)
+      : [];
+
+    orderedKeys.forEach((key) => {
+      const chip = chipByKey.get(key);
+      if (!chip) return;
+      topFavoriteList.appendChild(chip);
+      chipByKey.delete(key);
+    });
+
+    chipByKey.forEach((chip) => {
+      topFavoriteList.appendChild(chip);
+    });
+  }
+
+  function clamp(value, min, max) {
+    const n = Number(value || 0);
+    if (n < min) return min;
+    if (n > max) return max;
+    return n;
+  }
+
+  function setAvatarCropStatus(text) {
+    if (avatarCropStatus) avatarCropStatus.textContent = text || "";
+  }
+
+  function isAvatarCropOpen() {
+    return !!(avatarCropModal && !avatarCropModal.hidden);
+  }
+
+  function getAvatarCropViewportRect(configOverride = null) {
+    const config = configOverride || avatarCropState?.config || CONTROL_CROP_MODES.avatar;
+    const fallbackWidth = Number(config.viewportWidth || 360);
+    const fallbackHeight = Math.max(
+      96,
+      Math.round(fallbackWidth / Number(config.aspectRatio || 1)),
+    );
+
+    if (!avatarCropViewport) {
+      return { width: fallbackWidth, height: fallbackHeight };
     }
-  
-    async function postForm(form) {
-      const action = form.getAttribute("action");
-      const cmd = form.dataset.cmd || "command";
-  
-      if (isCoolingDown()) {
-        startCooldown();
-        addLine("Please wait for cooldown.", "cooldown");
+
+    return {
+      width: Math.max(220, avatarCropViewport.clientWidth || fallbackWidth),
+      height: Math.max(96, avatarCropViewport.clientHeight || fallbackHeight),
+    };
+  }
+
+  function clampAvatarCropOffsets() {
+    if (!avatarCropState) return;
+
+    const viewportRect = getAvatarCropViewportRect(avatarCropState.config);
+    const scaledWidth = avatarCropState.naturalWidth * avatarCropState.scale;
+    const scaledHeight = avatarCropState.naturalHeight * avatarCropState.scale;
+    const maxOffsetX = Math.max(0, (scaledWidth - viewportRect.width) / 2);
+    const maxOffsetY = Math.max(0, (scaledHeight - viewportRect.height) / 2);
+
+    avatarCropState.offsetX = clamp(
+      avatarCropState.offsetX,
+      -maxOffsetX,
+      maxOffsetX,
+    );
+    avatarCropState.offsetY = clamp(
+      avatarCropState.offsetY,
+      -maxOffsetY,
+      maxOffsetY,
+    );
+  }
+
+  function getAvatarCropSourceRect() {
+    if (!avatarCropState) return null;
+
+    const viewportRect = getAvatarCropViewportRect(avatarCropState.config);
+    const scale = avatarCropState.scale;
+    const sourceWidth = Math.min(
+      viewportRect.width / scale,
+      avatarCropState.naturalWidth,
+    );
+    const sourceHeight = Math.min(
+      viewportRect.height / scale,
+      avatarCropState.naturalHeight,
+    );
+
+    const maxSourceX = Math.max(0, avatarCropState.naturalWidth - sourceWidth);
+    const maxSourceY = Math.max(0, avatarCropState.naturalHeight - sourceHeight);
+
+    const sx = clamp(
+      avatarCropState.naturalWidth / 2 -
+        sourceWidth / 2 -
+        avatarCropState.offsetX / scale,
+      0,
+      maxSourceX,
+    );
+    const sy = clamp(
+      avatarCropState.naturalHeight / 2 -
+        sourceHeight / 2 -
+        avatarCropState.offsetY / scale,
+      0,
+      maxSourceY,
+    );
+
+    return { sx, sy, sourceWidth, sourceHeight };
+  }
+
+  function renderAvatarCropPreview() {
+    avatarCropRenderRaf = 0;
+    if (!avatarCropState || !avatarCropPreviewCanvas) return;
+
+    const canvas = avatarCropPreviewCanvas;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const cropRect = getAvatarCropSourceRect();
+    if (!cropRect) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(
+      avatarCropState.image,
+      cropRect.sx,
+      cropRect.sy,
+      cropRect.sourceWidth,
+      cropRect.sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+  }
+
+  function queueAvatarCropPreviewRender() {
+    if (avatarCropRenderRaf) return;
+    avatarCropRenderRaf = window.requestAnimationFrame(renderAvatarCropPreview);
+  }
+
+  function syncAvatarCropUi() {
+    if (!avatarCropState || !avatarCropImage) return;
+
+    clampAvatarCropOffsets();
+
+    avatarCropImage.style.transform =
+      "translate(-50%, -50%) translate(" +
+      avatarCropState.offsetX +
+      "px, " +
+      avatarCropState.offsetY +
+      "px) scale(" +
+      avatarCropState.scale +
+      ")";
+
+    queueAvatarCropPreviewRender();
+  }
+
+  function closeAvatarCropModal(force = false) {
+    const wasOpen = isAvatarCropOpen();
+    if (!wasOpen || !avatarCropModal) return false;
+    if (avatarCropState?.busy && !force) return true;
+
+    avatarCropModal.hidden = true;
+    avatarCropModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("avatarCropOpen");
+    avatarCropModal.classList.remove("avatarCropModal--banner");
+    avatarCropModal.style.removeProperty("--crop-stage-width");
+    avatarCropModal.style.removeProperty("--crop-stage-aspect");
+    avatarCropModal.style.removeProperty("--crop-stage-radius");
+    avatarCropModal.style.removeProperty("--crop-frame-inset");
+    avatarCropModal.style.removeProperty("--crop-frame-radius");
+    avatarCropModal.style.removeProperty("--crop-preview-width");
+    avatarCropModal.style.removeProperty("--crop-preview-height");
+    avatarCropModal.style.removeProperty("--crop-preview-radius");
+    avatarCropState = null;
+    avatarCropDrag = null;
+    if (avatarCropImage) {
+      avatarCropImage.removeAttribute("src");
+      avatarCropImage.style.transform = "";
+    }
+    if (avatarCropTitle) avatarCropTitle.textContent = CONTROL_CROP_MODES.avatar.title;
+    if (avatarCropSubtitle) avatarCropSubtitle.textContent = CONTROL_CROP_MODES.avatar.subtitle;
+    if (avatarCropPreviewLabel) avatarCropPreviewLabel.textContent = CONTROL_CROP_MODES.avatar.previewLabel;
+    if (avatarCropConfirmBtn) avatarCropConfirmBtn.textContent = CONTROL_CROP_MODES.avatar.confirmLabel;
+    if (avatarCropRenderRaf) {
+      window.cancelAnimationFrame(avatarCropRenderRaf);
+      avatarCropRenderRaf = 0;
+    }
+    setAvatarCropStatus("");
+    return true;
+  }
+
+  function openAvatarCropModal(file, image, onConfirm, options = {}) {
+    if (
+      !avatarCropModal ||
+      !avatarCropViewport ||
+      !avatarCropImage ||
+      !avatarCropZoom ||
+      !avatarCropConfirmBtn
+    ) {
+      throw new Error("Avatar cropper is not available.");
+    }
+
+    const cropMode =
+      options.mode === "banner" ? CONTROL_CROP_MODES.banner : CONTROL_CROP_MODES.avatar;
+
+    avatarCropModal.hidden = false;
+    avatarCropModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("avatarCropOpen");
+    avatarCropModal.classList.toggle("avatarCropModal--banner", cropMode.kind === "banner");
+    avatarCropModal.style.setProperty("--crop-stage-width", `${cropMode.viewportWidth}px`);
+    avatarCropModal.style.setProperty("--crop-stage-aspect", String(cropMode.aspectRatio));
+    avatarCropModal.style.setProperty("--crop-stage-radius", `${cropMode.stageRadius}px`);
+    avatarCropModal.style.setProperty("--crop-frame-inset", `${cropMode.frameInset}px`);
+    avatarCropModal.style.setProperty("--crop-frame-radius", `${cropMode.frameRadius}px`);
+    avatarCropModal.style.setProperty("--crop-preview-width", `${cropMode.previewWidth}px`);
+    avatarCropModal.style.setProperty("--crop-preview-height", `${cropMode.previewHeight}px`);
+    avatarCropModal.style.setProperty("--crop-preview-radius", cropMode.previewRadius);
+    if (avatarCropTitle) avatarCropTitle.textContent = cropMode.title;
+    if (avatarCropSubtitle) avatarCropSubtitle.textContent = cropMode.subtitle;
+    if (avatarCropPreviewLabel) avatarCropPreviewLabel.textContent = cropMode.previewLabel;
+    if (avatarCropConfirmBtn) avatarCropConfirmBtn.textContent = cropMode.confirmLabel;
+    if (avatarCropPreviewCanvas) {
+      avatarCropPreviewCanvas.width = cropMode.previewWidth;
+      avatarCropPreviewCanvas.height = cropMode.previewHeight;
+    }
+
+    const viewportRect = getAvatarCropViewportRect(cropMode);
+    const minScale = Math.max(
+      viewportRect.width / image.naturalWidth,
+      viewportRect.height / image.naturalHeight,
+    );
+
+    avatarCropState = {
+      file,
+      image,
+      config: cropMode,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+      minScale,
+      maxScale: Math.max(minScale * 4, minScale + 1),
+      scale: minScale,
+      offsetX: 0,
+      offsetY: 0,
+      onConfirm,
+      busy: false,
+    };
+
+    avatarCropImage.src = image.src;
+    avatarCropZoom.value = "0";
+    setAvatarCropStatus("");
+    avatarCropConfirmBtn.disabled = false;
+
+    syncAvatarCropUi();
+    avatarCropConfirmBtn.focus();
+  }
+
+  async function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Could not read that image."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function loadImageElement(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Could not load that image."));
+      image.src = dataUrl;
+    });
+  }
+
+  function canvasToDataUrl(canvas) {
+    return canvas.toDataURL("image/png");
+  }
+
+  <%- include("../../common/upload_modal_client") %>
+
+  function getCommandPreviewAvailability(btn, mode = activeCommandPreviewMode) {
+    if (!btn) return false;
+    if (mode === "standard" && btn.hasAttribute("data-available-standard")) {
+      return btn.getAttribute("data-available-standard") === "1";
+    }
+    if (
+      mode === "whitelisted" &&
+      btn.hasAttribute("data-available-whitelisted")
+    ) {
+      return btn.getAttribute("data-available-whitelisted") === "1";
+    }
+    return true;
+  }
+
+  function setCommandPreviewEmptyState(mode, visibleCount) {
+    if (!commandPreviewEmpty) return;
+
+    const hasVisibleCommands = Number(visibleCount || 0) > 0;
+    commandPreviewEmpty.hidden = hasVisibleCommands;
+    if (hasVisibleCommands) return;
+
+    if (!commandPreviewEmptyTitle || !commandPreviewEmptyText) return;
+    if (mode === "standard") {
+      commandPreviewEmptyTitle.textContent = "Standard list is empty";
+      commandPreviewEmptyText.textContent =
+        "No commands are currently available to standard users.";
+      return;
+    }
+    if (mode === "whitelisted") {
+      commandPreviewEmptyTitle.textContent = "Whitelisted list is empty";
+      commandPreviewEmptyText.textContent =
+        "No commands are currently available to whitelisted users.";
+      return;
+    }
+
+    commandPreviewEmptyTitle.textContent = "Nothing enabled";
+    commandPreviewEmptyText.textContent =
+      "This user has disabled all commands.";
+  }
+
+  function applyCommandPreviewMode(nextMode) {
+    if (
+      !controlViewerIsOwner ||
+      !commandPreviewModeButtons.length ||
+      !commandPreviewList
+    ) {
+      return;
+    }
+
+    activeCommandPreviewMode =
+      nextMode === "standard" ? "standard" : "whitelisted";
+
+    if (commandPreviewTabs) {
+      commandPreviewTabs.setAttribute(
+        "data-active-mode",
+        activeCommandPreviewMode,
+      );
+    }
+
+    let visibleCount = 0;
+    commandPreviewList
+      .querySelectorAll("[data-command-preview-button='1']")
+      .forEach((btn) => {
+        const visible = getCommandPreviewAvailability(
+          btn,
+          activeCommandPreviewMode,
+        );
+        btn.hidden = !visible;
+        if (visible) visibleCount += 1;
+      });
+
+    commandPreviewModeButtons.forEach((btn) => {
+      const mode = String(btn.getAttribute("data-command-preview-mode") || "")
+        .trim();
+      const active = mode === activeCommandPreviewMode;
+      btn.setAttribute("data-active", active ? "true" : "false");
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    setCommandPreviewEmptyState(activeCommandPreviewMode, visibleCount);
+  }
+
+  function getResolvedCommandTemplateId(triggerEl) {
+    if (!triggerEl) return "";
+    if (activeCommandPreviewMode === "standard") {
+      return (
+        triggerEl.getAttribute("data-tpl-standard") ||
+        triggerEl.getAttribute("data-tpl") ||
+        ""
+      );
+    }
+    if (activeCommandPreviewMode === "whitelisted") {
+      return (
+        triggerEl.getAttribute("data-tpl-whitelisted") ||
+        triggerEl.getAttribute("data-tpl") ||
+        ""
+      );
+    }
+    return triggerEl.getAttribute("data-tpl") || "";
+  }
+
+  function getCommandPreviewRequestMode() {
+    if (!controlViewerIsOwner) return "";
+    return activeCommandPreviewMode === "standard" ||
+      activeCommandPreviewMode === "whitelisted"
+      ? activeCommandPreviewMode
+      : "";
+  }
+
+  function createSubliminalMessageRow() {
+    const row = document.createElement("div");
+    row.className = "subliminalMessageRow subliminalMessageRow--removable";
+
+    const textarea = document.createElement("textarea");
+    textarea.name = "messages";
+    textarea.maxLength = 2000;
+    textarea.placeholder = "Another message";
+    textarea.dataset.subliminalMessage = "1";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "subliminalMessageRemoveBtn";
+    removeBtn.dataset.subliminalRemove = "1";
+    removeBtn.setAttribute("aria-label", "Remove message");
+    removeBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm-1 10h12l1-12H5l1 12Z" fill="currentColor"></path>
+      </svg>
+    `;
+
+    row.appendChild(textarea);
+    row.appendChild(removeBtn);
+    return row;
+  }
+
+  function initSubliminalMessageForm(form) {
+    if (!form || form.dataset.subliminalInit === "1") return;
+    form.dataset.subliminalInit = "1";
+
+    const list = form.querySelector('[data-subliminal-message-list="1"]');
+    const addBtn = form.querySelector('[data-subliminal-add="1"]');
+    if (!list || !addBtn) return;
+
+    addBtn.addEventListener("click", () => {
+      const row = createSubliminalMessageRow();
+      list.appendChild(row);
+      row.querySelector("textarea")?.focus();
+    });
+
+    form.addEventListener("click", (e) => {
+      const removeBtn = e.target?.closest?.('[data-subliminal-remove="1"]');
+      if (!removeBtn) return;
+      e.preventDefault();
+      removeBtn.closest(".subliminalMessageRow")?.remove();
+    });
+  }
+
+  function showCmdModal(title, templateId) {
+    if (!cmdModal || !cmdModalBody || !cmdModalTitle) return;
+
+    const tpl = document.getElementById(templateId);
+    if (!tpl) return;
+
+    cmdModalTitle.textContent = title || "Command";
+    cmdModalBody.innerHTML = "";
+    cmdModalBody.appendChild(tpl.content.cloneNode(true));
+
+    cmdModal.style.display = "flex";
+    cmdModal.setAttribute("aria-hidden", "false");
+
+    const psForm = cmdModalBody.querySelector(
+      'form.cmdForm[data-cmd="play_sound"], form.cmdForm[data-cmd="play_sound_loop"]',
+    );
+    if (psForm) initPlaySoundForm(psForm);
+    const subliminalForm = cmdModalBody.querySelector(
+      'form.cmdForm[data-cmd="subliminal_message"]',
+    );
+    if (subliminalForm) initSubliminalMessageForm(subliminalForm);
+    const themeForm = cmdModalBody.querySelector('form[data-control-theme-form="1"]');
+    if (themeForm) initControlThemeForm(themeForm);
+    const reportForm = cmdModalBody.querySelector('form[data-control-report-form="1"]');
+    if (reportForm) initControlReportForm(reportForm);
+    initUploadPanels(cmdModalBody);
+
+    const first = cmdModalBody.querySelector("textarea, input:not(.uploadInput), select, button, [data-upload-dropzone]");
+    if (first && first.focus) first.focus();
+  }
+
+  function hideCmdModal() {
+    if (!cmdModal || !cmdModalBody) return;
+    closeAvatarCropModal();
+    const hadThemeForm = !!cmdModalBody.querySelector('form[data-control-theme-form="1"]');
+    if (hadThemeForm) applyControlTheme(activeControlTheme);
+    if (window.stopUploadAudioPreview) window.stopUploadAudioPreview();
+    cmdModalBody.innerHTML = "";
+    cmdModal.style.display = "none";
+    cmdModal.setAttribute("aria-hidden", "true");
+  }
+
+  function initControlReportForm(form) {
+    const statusEl = form.querySelector("[data-control-report-status='1']");
+    const submitBtn = form.querySelector('button[type="submit"]');
+    let busy = false;
+
+    function setStatus(text, isError) {
+      if (!statusEl) return;
+      statusEl.textContent = text || "";
+      statusEl.style.color = isError ? "rgba(251, 113, 133, 0.95)" : "";
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+
+      const formData = new FormData(form);
+      const reason = String(formData.get("reason") || "").trim();
+
+      if (!reason) {
+        setStatus("Choose a reason before sending.", true);
         return;
       }
-  
-      const params = new URLSearchParams(new FormData(form));
-  
-      clearFormFields(form);
-  
-      startCooldown();
-  
-      addLine("Sending " + cmd + "...", "send");
-  
-      let res, bodyText;
+
+      busy = true;
+      if (submitBtn) submitBtn.disabled = true;
+      setStatus("Sending...");
+
       try {
-        res = await fetch(action, {
+        const res = await fetch(form.action, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: new URLSearchParams(formData).toString(),
+          credentials: "include",
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.message) || ("HTTP " + res.status));
+        }
+
+        setStatus(data.message || "Report sent.");
+        const commandHistoryEventId = String(
+          form.dataset.commandHistoryEventId || "",
+        ).trim();
+        if (commandHistoryEventId) {
+          document.dispatchEvent(
+            new CustomEvent("commandHistoryReportSubmitted", {
+              detail: {
+                eventId: commandHistoryEventId,
+                message: data.message || "Report sent.",
+              },
+            }),
+          );
+        }
+        const submittedForm = form;
+        window.setTimeout(() => {
+          if (document.body.contains(submittedForm)) {
+            hideCmdModal();
+          }
+        }, 700);
+      } catch (err) {
+        setStatus(
+          (err && err.message) || "Could not send that report.",
+          true,
+        );
+      } finally {
+        busy = false;
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  function initControlThemeForm(form) {
+    const statusEl = form.querySelector("#controlThemeStatus");
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const radios = Array.from(form.querySelectorAll('input[name="theme"]'));
+    const displayNameInput = form.querySelector('input[name="displayName"]');
+    const aboutMeInput = form.querySelector('textarea[name="aboutMe"]');
+    const aboutMeCountEl = form.querySelector("#controlThemeAboutMeCount");
+    const avatarPreview = form.querySelector("#controlThemeAvatarPreview");
+    const avatarInput = form.querySelector("#controlThemeAvatarInput");
+    const avatarUploadBtn = form.querySelector("#controlAvatarUploadBtn");
+    const avatarDeleteBtn = form.querySelector("#controlAvatarDeleteBtn");
+    const bannerPreview = form.querySelector("#controlThemeBannerPreview");
+    const bannerInput = form.querySelector("#controlThemeBannerInput");
+    const bannerUploadBtn = form.querySelector("#controlBannerUploadBtn");
+    const bannerDeleteBtn = form.querySelector("#controlBannerDeleteBtn");
+    const backgroundPreview = form.querySelector("#controlThemeBackgroundPreview");
+    const backgroundInput = form.querySelector("#controlThemeBackgroundInput");
+    const backgroundUploadBtn = form.querySelector("#controlBackgroundUploadBtn");
+    const backgroundDeleteBtn = form.querySelector("#controlBackgroundDeleteBtn");
+    let saveBusy = false;
+    let avatarBusy = false;
+    let bannerBusy = false;
+    let backgroundBusy = false;
+
+    function setStatus(text) {
+      if (statusEl) statusEl.textContent = text || "";
+    }
+
+    function selectedTheme() {
+      const checked = radios.find((radio) => radio.checked);
+      return checked ? checked.value : activeControlTheme;
+    }
+
+    function selectedDisplayName() {
+      return displayNameInput ? String(displayNameInput.value || "").trim() : "";
+    }
+
+    function selectedAboutMe() {
+      return aboutMeInput ? String(aboutMeInput.value || "") : "";
+    }
+
+    function syncAboutMeCount() {
+      if (!aboutMeInput) return;
+
+      const maxLength = Number(aboutMeInput.getAttribute("maxlength") || 500) || 500;
+      if (aboutMeInput.value.length > maxLength) {
+        aboutMeInput.value = aboutMeInput.value.slice(0, maxLength);
+      }
+
+      if (aboutMeCountEl) {
+        aboutMeCountEl.textContent = `${aboutMeInput.value.length}/${maxLength}`;
+      }
+    }
+
+    function syncBusyState() {
+      const disabled = saveBusy || avatarBusy || bannerBusy || backgroundBusy;
+      if (submitBtn) submitBtn.disabled = disabled;
+      if (avatarUploadBtn) avatarUploadBtn.disabled = disabled;
+      if (avatarDeleteBtn) avatarDeleteBtn.disabled = disabled;
+      if (avatarInput) avatarInput.disabled = disabled;
+      if (bannerUploadBtn) bannerUploadBtn.disabled = disabled;
+      if (bannerDeleteBtn) bannerDeleteBtn.disabled = disabled;
+      if (bannerInput) bannerInput.disabled = disabled;
+      if (backgroundUploadBtn) backgroundUploadBtn.disabled = disabled;
+      if (backgroundDeleteBtn) backgroundDeleteBtn.disabled = disabled;
+      if (backgroundInput) backgroundInput.disabled = disabled;
+    }
+
+    function renderAvatarControls() {
+      if (avatarPreview) {
+        avatarPreview.src = buildControlAvatarUrl(128, activeControlAvatarVersion);
+      }
+      if (avatarDeleteBtn) {
+        avatarDeleteBtn.hidden = !activeControlHasCustomAvatar;
+      }
+    }
+
+    function renderBannerControls() {
+      if (bannerPreview) {
+        bannerPreview.style.backgroundImage = activeControlHasCustomBanner
+          ? "url('" + buildControlBannerUrl(1200, activeControlBannerVersion) + "')"
+          : "";
+      }
+      if (bannerDeleteBtn) {
+        bannerDeleteBtn.hidden = !activeControlHasCustomBanner;
+      }
+    }
+
+    function renderBackgroundControls() {
+      if (backgroundPreview) {
+        backgroundPreview.style.backgroundImage = activeControlHasCustomBackground
+          ? "url('" + buildControlBackgroundUrl(1200, activeControlBackgroundVersion) + "')"
+          : "";
+      }
+      if (backgroundDeleteBtn) {
+        backgroundDeleteBtn.hidden = !activeControlHasCustomBackground;
+      }
+    }
+
+    function getAvatarFileExt(file) {
+      const name = String(file?.name || "").trim().toLowerCase();
+      const dot = name.lastIndexOf(".");
+      return dot >= 0 ? name.slice(dot + 1) : "";
+    }
+
+    async function uploadAvatarData(dataUrl, options = {}) {
+      const filename = String(options.filename || "avatar-crop.png").trim() || "avatar-crop.png";
+      const mime = String(options.mime || "image/png").trim() || "image/png";
+
+      const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/avatar", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          filename,
+          mime,
+          data: dataUrl
+        }),
+        credentials: "include"
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+      }
+
+      activeControlAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+      activeControlHasCustomAvatar = !!data.hasCustomAvatar;
+      applyControlAvatar(activeControlAvatarVersion);
+      renderAvatarControls();
+    }
+
+    async function uploadBannerData(dataUrl, options = {}) {
+      const filename = String(options.filename || "banner-crop.png").trim() || "banner-crop.png";
+      const mime = String(options.mime || "image/png").trim() || "image/png";
+
+      const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/banner", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          filename,
+          mime,
+          data: dataUrl
+        }),
+        credentials: "include"
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+      }
+
+      activeControlBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+      activeControlHasCustomBanner = !!data.hasCustomBanner;
+      applyControlBanner(activeControlBannerVersion);
+      renderBannerControls();
+    }
+
+    async function uploadBackgroundData(dataUrl, options = {}) {
+      const filename = String(options.filename || "background-upload.png").trim() || "background-upload.png";
+      const mime = String(options.mime || "image/png").trim() || "image/png";
+
+      const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/background", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          filename,
+          mime,
+          data: dataUrl
+        }),
+        credentials: "include"
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+      }
+
+      activeControlBackgroundVersion = Number(data.updatedAt || Date.now()) || Date.now();
+      activeControlHasCustomBackground = !!data.hasCustomBackground;
+      applyControlBackground(activeControlBackgroundVersion);
+      renderBackgroundControls();
+    }
+
+    const current = radios.find((radio) => radio.value === activeControlTheme);
+    if (current) current.checked = true;
+    if (displayNameInput) displayNameInput.value = activeControlDisplayName;
+    if (aboutMeInput) aboutMeInput.value = activeControlAboutMe;
+    syncAboutMeCount();
+    applyControlTheme(activeControlTheme);
+    applyControlDisplayName(activeControlDisplayName);
+    applyControlAboutMe(activeControlAboutMe);
+    applyControlAvatar(activeControlAvatarVersion);
+    applyControlBanner(activeControlBannerVersion);
+    applyControlBackground(activeControlBackgroundVersion);
+    renderAvatarControls();
+    renderBannerControls();
+    renderBackgroundControls();
+    syncBusyState();
+
+    radios.forEach((radio) => {
+      radio.addEventListener("change", () => {
+        applyControlTheme(selectedTheme());
+        setStatus("");
+      });
+    });
+
+    aboutMeInput?.addEventListener("input", () => {
+      syncAboutMeCount();
+      setStatus("");
+    });
+
+    avatarUploadBtn?.addEventListener("click", () => {
+      if (avatarBusy) return;
+      avatarInput?.click();
+    });
+
+    avatarInput?.addEventListener("change", async () => {
+      const file = avatarInput.files && avatarInput.files[0];
+      if (!file) return;
+
+      try {
+        const fileType = String(file.type || "").toLowerCase();
+        const fileExt = getAvatarFileExt(file);
+        const isGif = fileType === "image/gif" || fileExt === "gif";
+        const isSupportedStatic =
+          /^image\/(png|jpeg|webp)$/.test(fileType) ||
+          /^(png|jpg|jpeg|webp)$/.test(fileExt);
+
+        if (!isGif && !isSupportedStatic) {
+          throw new Error("Use a PNG, JPG, WEBP, or GIF image.");
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+
+        if (isGif) {
+          avatarBusy = true;
+          syncBusyState();
+          setStatus("Uploading avatar...");
+
+          try {
+            await uploadAvatarData(dataUrl, {
+              filename: file.name || "avatar.gif",
+              mime: fileType || "image/gif",
+            });
+            setStatus("Avatar updated.");
+          } finally {
+            avatarBusy = false;
+            syncBusyState();
+          }
+          return;
+        }
+
+        const image = await loadImageElement(dataUrl);
+
+        openAvatarCropModal(file, image, async () => {
+          if (!avatarCropState) return;
+
+          avatarBusy = true;
+          avatarCropState.busy = true;
+          syncBusyState();
+          avatarCropConfirmBtn.disabled = true;
+          setStatus("Uploading avatar...");
+          setAvatarCropStatus("Saving...");
+
+          try {
+            const outputCanvas = document.createElement("canvas");
+            outputCanvas.width = avatarCropState.config.outputWidth;
+            outputCanvas.height = avatarCropState.config.outputHeight;
+
+            const ctx = outputCanvas.getContext("2d");
+            if (!ctx) {
+              throw new Error("Could not prepare that crop.");
+            }
+
+            const cropRect = getAvatarCropSourceRect();
+            if (!cropRect) {
+              throw new Error("Could not prepare that crop.");
+            }
+
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(
+              avatarCropState.image,
+              cropRect.sx,
+              cropRect.sy,
+              cropRect.sourceWidth,
+              cropRect.sourceHeight,
+              0,
+              0,
+              outputCanvas.width,
+              outputCanvas.height,
+            );
+
+            await uploadAvatarData(canvasToDataUrl(outputCanvas), {
+              filename: "avatar-crop.png",
+              mime: "image/png",
+            });
+            setStatus("Avatar updated.");
+            closeAvatarCropModal(true);
+          } catch (err) {
+            const message = err && err.message ? err.message : "Could not update avatar.";
+            setStatus(message);
+            setAvatarCropStatus(message);
+          } finally {
+            avatarBusy = false;
+            if (avatarCropState) avatarCropState.busy = false;
+            syncBusyState();
+            if (avatarCropConfirmBtn) {
+              avatarCropConfirmBtn.disabled = false;
+            }
+          }
+        });
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not update avatar.");
+      } finally {
+        if (avatarInput) avatarInput.value = "";
+      }
+    });
+
+    avatarDeleteBtn?.addEventListener("click", async () => {
+      if (avatarBusy || !activeControlHasCustomAvatar) return;
+      if (!window.confirm("Remove your custom avatar?")) return;
+
+      avatarBusy = true;
+      syncBusyState();
+      setStatus("Removing avatar...");
+
+      try {
+        const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/avatar/delete", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        activeControlAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+        activeControlHasCustomAvatar = !!data.hasCustomAvatar;
+        applyControlAvatar(activeControlAvatarVersion);
+        renderAvatarControls();
+        setStatus("Custom avatar removed.");
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not remove avatar.");
+      } finally {
+        avatarBusy = false;
+        syncBusyState();
+      }
+    });
+
+    bannerUploadBtn?.addEventListener("click", () => {
+      if (bannerBusy) return;
+      bannerInput?.click();
+    });
+
+    bannerInput?.addEventListener("change", async () => {
+      const file = bannerInput.files && bannerInput.files[0];
+      if (!file) return;
+
+      try {
+        const fileType = String(file.type || "").toLowerCase();
+        const fileExt = getAvatarFileExt(file);
+        const isGif = fileType === "image/gif" || fileExt === "gif";
+        const isSupportedStatic =
+          /^image\/(png|jpeg|webp)$/.test(fileType) ||
+          /^(png|jpg|jpeg|webp)$/.test(fileExt);
+
+        if (!isGif && !isSupportedStatic) {
+          throw new Error("Use a PNG, JPG, WEBP, or GIF image.");
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+
+        if (isGif) {
+          bannerBusy = true;
+          syncBusyState();
+          setStatus("Uploading banner...");
+
+          try {
+            await uploadBannerData(dataUrl, {
+              filename: file.name || "banner.gif",
+              mime: fileType || "image/gif",
+            });
+            setStatus("Banner updated.");
+          } finally {
+            bannerBusy = false;
+            syncBusyState();
+          }
+          return;
+        }
+
+        const image = await loadImageElement(dataUrl);
+
+        openAvatarCropModal(file, image, async () => {
+          if (!avatarCropState) return;
+
+          bannerBusy = true;
+          avatarCropState.busy = true;
+          syncBusyState();
+          avatarCropConfirmBtn.disabled = true;
+          setStatus("Uploading banner...");
+          setAvatarCropStatus("Saving...");
+
+          try {
+            const outputCanvas = document.createElement("canvas");
+            outputCanvas.width = avatarCropState.config.outputWidth;
+            outputCanvas.height = avatarCropState.config.outputHeight;
+
+            const ctx = outputCanvas.getContext("2d");
+            if (!ctx) {
+              throw new Error("Could not prepare that crop.");
+            }
+
+            const cropRect = getAvatarCropSourceRect();
+            if (!cropRect) {
+              throw new Error("Could not prepare that crop.");
+            }
+
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(
+              avatarCropState.image,
+              cropRect.sx,
+              cropRect.sy,
+              cropRect.sourceWidth,
+              cropRect.sourceHeight,
+              0,
+              0,
+              outputCanvas.width,
+              outputCanvas.height,
+            );
+
+            await uploadBannerData(canvasToDataUrl(outputCanvas), {
+              filename: "banner-crop.png",
+              mime: "image/png",
+            });
+            setStatus("Banner updated.");
+            closeAvatarCropModal(true);
+          } catch (err) {
+            const message = err && err.message ? err.message : "Could not update banner.";
+            setStatus(message);
+            setAvatarCropStatus(message);
+          } finally {
+            bannerBusy = false;
+            if (avatarCropState) avatarCropState.busy = false;
+            syncBusyState();
+            if (avatarCropConfirmBtn) {
+              avatarCropConfirmBtn.disabled = false;
+            }
+          }
+        }, { mode: "banner" });
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not update banner.");
+      } finally {
+        if (bannerInput) bannerInput.value = "";
+      }
+    });
+
+    bannerDeleteBtn?.addEventListener("click", async () => {
+      if (bannerBusy || !activeControlHasCustomBanner) return;
+      if (!window.confirm("Remove your custom banner?")) return;
+
+      bannerBusy = true;
+      syncBusyState();
+      setStatus("Removing banner...");
+
+      try {
+        const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/banner/delete", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        activeControlBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+        activeControlHasCustomBanner = !!data.hasCustomBanner;
+        applyControlBanner(activeControlBannerVersion);
+        renderBannerControls();
+        setStatus("Custom banner removed.");
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not remove banner.");
+      } finally {
+        bannerBusy = false;
+        syncBusyState();
+      }
+    });
+
+    backgroundUploadBtn?.addEventListener("click", () => {
+      if (backgroundBusy) return;
+      backgroundInput?.click();
+    });
+
+    backgroundInput?.addEventListener("change", async () => {
+      const file = backgroundInput.files && backgroundInput.files[0];
+      if (!file) return;
+
+      try {
+        const fileType = String(file.type || "").toLowerCase();
+        const fileExt = getAvatarFileExt(file);
+        const isSupported =
+          /^image\/(png|jpeg|webp|gif)$/.test(fileType) ||
+          /^(png|jpg|jpeg|webp|gif)$/.test(fileExt);
+
+        if (!isSupported) {
+          throw new Error("Use a PNG, JPG, WEBP, or GIF image.");
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+        backgroundBusy = true;
+        syncBusyState();
+        setStatus("Uploading background...");
+
+        try {
+          await uploadBackgroundData(dataUrl, {
+            filename: file.name || "background.png",
+            mime: fileType || "image/png",
+          });
+          setStatus("Background updated.");
+        } finally {
+          backgroundBusy = false;
+          syncBusyState();
+        }
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not update background.");
+      } finally {
+        if (backgroundInput) backgroundInput.value = "";
+      }
+    });
+
+    backgroundDeleteBtn?.addEventListener("click", async () => {
+      if (backgroundBusy || !activeControlHasCustomBackground) return;
+      if (!window.confirm("Remove your custom background?")) return;
+
+      backgroundBusy = true;
+      syncBusyState();
+      setStatus("Removing background...");
+
+      try {
+        const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/background/delete", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        activeControlBackgroundVersion = Number(data.updatedAt || Date.now()) || Date.now();
+        activeControlHasCustomBackground = !!data.hasCustomBackground;
+        applyControlBackground(activeControlBackgroundVersion);
+        renderBackgroundControls();
+        setStatus("Custom background removed.");
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Could not remove background.");
+      } finally {
+        backgroundBusy = false;
+        syncBusyState();
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const theme = selectedTheme();
+      if (!theme) return;
+
+        setStatus("Saving...");
+      saveBusy = true;
+      syncBusyState();
+
+      try {
+        const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/theme", {
           method: "POST",
           headers: {
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
           },
-          body: params.toString(),
+          body: new URLSearchParams({
+            theme,
+            displayName: selectedDisplayName(),
+            aboutMe: selectedAboutMe()
+          }).toString(),
           credentials: "include"
         });
-      } catch (e) {
-        addLine("Network error: " + (e && e.message ? e.message : String(e)), "error");
-        return;
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        activeControlTheme = data.theme || theme;
+        activeControlDisplayName = String(data.displayName || "").trim();
+        activeControlAboutMe = String(data.aboutMe || "");
+        applyControlTheme(activeControlTheme);
+        applyControlDisplayName(activeControlDisplayName);
+        applyControlAboutMe(activeControlAboutMe);
+        setStatus("Changes saved.");
+        setTimeout(() => {
+          hideCmdModal();
+        }, 180);
+      } catch (err) {
+        applyControlTheme(activeControlTheme);
+        applyControlDisplayName(activeControlDisplayName);
+        applyControlAboutMe(activeControlAboutMe);
+        setStatus("Could not save changes.");
+      } finally {
+        saveBusy = false;
+        syncBusyState();
       }
-  
-      let data = null;
-      const ct = (res.headers.get("content-type") || "");
-      try {
-        if (ct.includes("application/json")) data = await res.json();
-        else bodyText = await res.text();
-      } catch (e) {
-        bodyText = bodyText || "(failed to parse response)";
-      }
-  
-      if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
-        const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
-        nextAllowedAt = Date.now() + Math.max(500, retryMs);
-        startCooldown();
-        addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
-        return;
-      }
-  
-      if (!res.ok) {
-        if (data && data.message) addLine(data.message, "error");
-        else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
-        return;
-      }
-  
-      if (data) {
-        addLine(data.message || ("OK (sent=" + (data.sent ?? "?") + ")"), "ok");
-      } else {
-        addLine(bodyText || "OK", "ok");
-      }
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const close = e.target && e.target.closest && e.target.closest('[data-cmd-modal-close="1"]');
+    if (close) {
+      e.preventDefault();
+      hideCmdModal();
     }
-  
-    document.querySelectorAll(".cmdForm").forEach((form) => {
-      form.addEventListener("submit", (e) => {
-        e.preventDefault();
-        postForm(form);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (closeAvatarCropModal()) {
+      e.preventDefault();
+      return;
+    }
+    hideCmdModal();
+  });
+
+  function sanitizeWriteForMeMessage(value, maxLength = 4000) {
+    const limit = Math.max(0, Number(maxLength) || 4000);
+    return String(value || "")
+      .replace(/[^\x20-\x7E]/g, "")
+      .slice(0, limit);
+  }
+
+  function getWriteForMeTextarea(target) {
+    if (!target || typeof target.matches !== "function") return null;
+    if (!target.matches('textarea[data-write-for-me-message="1"]')) return null;
+    return target;
+  }
+
+  function sanitizeWriteForMeTextarea(textarea) {
+    if (!textarea) return "";
+
+    const maxLength = Number(textarea.getAttribute("maxlength") || 4000) || 4000;
+    const sanitized = sanitizeWriteForMeMessage(textarea.value, maxLength);
+
+    if (sanitized !== textarea.value) {
+      const caret = typeof textarea.selectionStart === "number"
+        ? Math.min(textarea.selectionStart, sanitized.length)
+        : sanitized.length;
+      textarea.value = sanitized;
+      try {
+        textarea.setSelectionRange(caret, caret);
+      } catch {}
+    }
+
+    return sanitized;
+  }
+
+  function insertWriteForMeText(textarea, text) {
+    if (!textarea) return;
+
+    const maxLength = Number(textarea.getAttribute("maxlength") || 4000) || 4000;
+    const start = typeof textarea.selectionStart === "number" ? textarea.selectionStart : textarea.value.length;
+    const end = typeof textarea.selectionEnd === "number" ? textarea.selectionEnd : textarea.value.length;
+    const remaining = Math.max(0, maxLength - (textarea.value.length - (end - start)));
+    const sanitized = sanitizeWriteForMeMessage(text, remaining);
+
+    if (!sanitized) return;
+
+    if (typeof textarea.setRangeText === "function") {
+      textarea.setRangeText(sanitized, start, end, "end");
+      return;
+    }
+
+    const nextValue = textarea.value.slice(0, start) + sanitized + textarea.value.slice(end);
+    textarea.value = nextValue.slice(0, maxLength);
+  }
+
+  function validateWriteForMeForm(form) {
+    if (!form || form.dataset.cmd !== "write_for_me") return true;
+
+    const textarea = form.querySelector('textarea[data-write-for-me-message="1"]');
+    if (!textarea) return true;
+
+    const original = String(textarea.value || "");
+    const sanitized = sanitizeWriteForMeTextarea(textarea);
+    if (sanitized.trim()) return true;
+
+    addLine(
+      original.trim()
+        ? "Message must be a single line with standard keyboard characters only."
+        : "Missing message",
+      "error"
+    );
+    textarea.focus();
+    return false;
+  }
+
+  function validateSubliminalMessageForm(form) {
+    if (!form || form.dataset.cmd !== "subliminal_message") return true;
+
+    const textareas = Array.from(
+      form.querySelectorAll('textarea[data-subliminal-message="1"]'),
+    );
+    if (!textareas.length) return true;
+
+    let hasMessage = false;
+    for (const textarea of textareas) {
+      const value = String(textarea.value || "").trim();
+      textarea.value = value;
+      if (value) hasMessage = true;
+    }
+
+    if (hasMessage) return true;
+
+    addLine("Add at least one message.", "error");
+    textareas[0]?.focus();
+    return false;
+  }
+
+  document.addEventListener("keydown", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener("paste", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+
+    const pasted = e.clipboardData?.getData("text") || "";
+    const sanitized = sanitizeWriteForMeMessage(pasted);
+    if (sanitized === pasted) return;
+
+    e.preventDefault();
+    insertWriteForMeText(textarea, pasted);
+  });
+
+  document.addEventListener("input", (e) => {
+    const textarea = getWriteForMeTextarea(e.target);
+    if (!textarea) return;
+    sanitizeWriteForMeTextarea(textarea);
+  });
+
+  document.addEventListener("click", (e) => {
+    const close = e.target && e.target.closest && e.target.closest("[data-avatar-crop-close='1']");
+    if (!close) return;
+    e.preventDefault();
+    closeAvatarCropModal();
+  });
+
+  avatarCropZoom?.addEventListener("input", () => {
+    if (!avatarCropState) return;
+    const percent = clamp(Number(avatarCropZoom.value || 0), 0, 100);
+    avatarCropState.scale =
+      avatarCropState.minScale +
+      (avatarCropState.maxScale - avatarCropState.minScale) * (percent / 100);
+    syncAvatarCropUi();
+  });
+
+  avatarCropViewport?.addEventListener("pointerdown", (e) => {
+    if (!avatarCropState || avatarCropState.busy) return;
+    if (typeof e.button === "number" && e.button !== 0) return;
+
+    e.preventDefault();
+    avatarCropDrag = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: avatarCropState.offsetX,
+      originY: avatarCropState.offsetY,
+    };
+    avatarCropViewport.setPointerCapture?.(e.pointerId);
+  });
+
+  avatarCropViewport?.addEventListener("pointermove", (e) => {
+    if (!avatarCropState || !avatarCropDrag || avatarCropDrag.pointerId !== e.pointerId) {
+      return;
+    }
+
+    avatarCropState.offsetX = avatarCropDrag.originX + (e.clientX - avatarCropDrag.startX);
+    avatarCropState.offsetY = avatarCropDrag.originY + (e.clientY - avatarCropDrag.startY);
+    syncAvatarCropUi();
+  });
+
+  function endAvatarCropDrag(e) {
+    if (!avatarCropDrag || avatarCropDrag.pointerId !== e.pointerId) return;
+    avatarCropViewport?.releasePointerCapture?.(e.pointerId);
+    avatarCropDrag = null;
+  }
+
+  avatarCropViewport?.addEventListener("pointerup", endAvatarCropDrag);
+  avatarCropViewport?.addEventListener("pointercancel", endAvatarCropDrag);
+
+  avatarCropViewport?.addEventListener("wheel", (e) => {
+    if (!avatarCropState || !avatarCropZoom) return;
+    e.preventDefault();
+
+    const current = Number(avatarCropZoom.value || 0);
+    const delta = e.deltaY < 0 ? 6 : -6;
+    const next = clamp(current + delta, 0, 100);
+    avatarCropZoom.value = String(next);
+    avatarCropZoom.dispatchEvent(new Event("input", { bubbles: true }));
+  }, { passive: false });
+
+  avatarCropConfirmBtn?.addEventListener("click", async () => {
+    if (!avatarCropState || avatarCropState.busy || typeof avatarCropState.onConfirm !== "function") {
+      return;
+    }
+    await avatarCropState.onConfirm();
+  });
+
+  if (controlViewerIsOwner && commandPreviewModeButtons.length) {
+    commandPreviewModeButtons.forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const nextMode = String(
+          btn.getAttribute("data-command-preview-mode") || "",
+        ).trim();
+        if (!nextMode || nextMode === activeCommandPreviewMode) return;
+        applyCommandPreviewMode(nextMode);
       });
     });
-  
-    (function() {
-      const pill = document.getElementById("statusPill");
-      const txt = document.getElementById("statusText");
-      if (!pill || !txt) return;
-  
-      function setOnline(isOn) {
-        pill.classList.toggle("statusPill--on", !!isOn);
-        pill.classList.toggle("statusPill--off", !isOn);
-        txt.textContent = isOn ? "Online" : "Offline";
-      }
-  
-      async function tick() {
-        try {
-          const res = await fetch("/api/presence/" + encodeURIComponent(pairCode), {
-            headers: {
-              "Accept": "application/json"
-            },
-            credentials: "include"
-          });
-          const data = await res.json().catch(() => null);
-          if (!res.ok || !data || !data.ok) return;
-  
-          setOnline(!!data.online);
-        } catch (e) {}
-      }
-  
-      tick();
-      setInterval(tick, 3000);
-    })();
+    applyCommandPreviewMode(activeCommandPreviewMode);
+  }
 
-    (function(){
-      const favTab = document.getElementById("favTab");
-      const disTab = document.getElementById("disTab");
-      const aboutTab = document.getElementById("aboutTab");
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest && e.target.closest(".cmdBtn");
+    if (!btn) return;
 
-      const favBox = document.getElementById("favBox");
-      const disBox = document.getElementById("disBox");
-      const aboutBox = document.getElementById("aboutBox");
+    const cmd = btn.getAttribute("data-cmd") || "command";
+    const tpl = getResolvedCommandTemplateId(btn);
+    const title = btn.textContent || cmd;
 
-      function set(which){
-        favTab.setAttribute("data-active", which==="fav" ? "true":"false");
-        disTab.setAttribute("data-active", which==="dis" ? "true":"false");
-        aboutTab.setAttribute("data-active", which==="about" ? "true":"false");
+    e.preventDefault();
+    if (!tpl) return;
+    showCmdModal(title.trim(), tpl);
+  });
 
-        favBox.style.display = which==="fav" ? "" : "none";
-        disBox.style.display = which==="dis" ? "" : "none";
-        aboutBox.style.display = which==="about" ? "" : "none";
-      }
+  controlThemeEditBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showCmdModal("Edit Control Link", "tpl_control_theme");
+  });
 
-      favTab.addEventListener("click", ()=>set("fav"));
-      disTab.addEventListener("click", ()=>set("dis"));
-      aboutTab.addEventListener("click", ()=>set("about"));
-      set("fav");
-    })();
+  controlReportBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    showCmdModal("Report Control Link", "tpl_control_report");
+  });
 
-    (function(){
-      const viewerIsOwner = <%= JSON.stringify(!!viewerIsOwner) %>;
-      const pairCode = <%- JSON.stringify(pairCode) %>;
-      const ownerAvatar = "<%= discordAvatarUrl(ownerUser || { discord_id: ownerId, avatar: null }, 64) %>";
+  document.addEventListener("click", async (e) => {
+    const starBtn =
+      e.target &&
+      e.target.closest &&
+      e.target.closest("[data-top-favorite-key]");
+    if (!starBtn || !topFavoriteList || topFavoriteBusy) return;
 
-      let messages = <%- JSON.stringify(boardMsgs || []) %>;
-      let latestCreatedAt = messages.length ? Number(messages[0].created_at || 0) : 0;
+    e.preventDefault();
 
-      const listEl = document.getElementById("boardList");
-      const form = document.getElementById("boardForm");
-      const input = document.getElementById("boardInput");
-      const statusEl = document.getElementById("boardStatus");
+    const itemKey = String(starBtn.getAttribute("data-top-favorite-key") || "").trim();
+    if (!itemKey) return;
 
-      function setStatus(t){ if (statusEl) statusEl.textContent = t || ""; }
+    const enabled = starBtn.getAttribute("data-enabled") !== "1";
+    if (enabled && getActiveTopFavoriteCount() >= topFavoritesLimit) {
+      setTopFavoriteStatus("", false);
+      window.alert(topFavoritesLimitMessage);
+      return;
+    }
 
-      function relTime(ms){
-        const s = Math.max(0, Math.floor((Date.now() - Number(ms || 0)) / 1000));
-        if (s < 60) return s + "s ago";
-        const m = Math.floor(s / 60);
-        if (m < 60) return m + "m ago";
-        const h = Math.floor(m / 60);
-        if (h < 24) return h + "h ago";
-        const d = Math.floor(h / 24);
-        return d + " day" + (d === 1 ? "" : "s") + " ago";
+    setTopFavoriteBusyState(true);
+    setTopFavoriteStatus(enabled ? "Saving..." : "Removing...");
+
+    try {
+      const res = await fetch(
+        "/api/device/" + encodeURIComponent(pairCode) + "/top-favorite",
+        {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            itemKey,
+            enabled
+          }),
+          credentials: "include"
+        },
+      );
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        if (data && data.code === "TOP_FAVORITES_LIMIT") {
+          throw new Error(topFavoritesLimitMessage);
+        }
+        throw new Error(
+          (data && (data.message || data.code)) ||
+            "Could not update top favorites.",
+        );
       }
 
-      function render(){
-        if (!listEl) return;
+      applyTopFavoriteState(data.topFavoriteKeys, data.orderedFavoriteKeys);
+      setTopFavoriteStatus("");
+    } catch (err) {
+      const message =
+        err && err.message ? err.message : "Could not update top favorites.";
+      if (message === topFavoritesLimitMessage) {
+        setTopFavoriteStatus("", false);
+        window.alert(topFavoritesLimitMessage);
+        return;
+      }
+      setTopFavoriteStatus(
+        message,
+        true,
+      );
+    } finally {
+      setTopFavoriteBusyState(false);
+    }
+  });
 
-        listEl.innerHTML = "";
+  function ensureImageModal() {
+    let modal = document.getElementById("imgModal");
+    if (modal) return modal;
 
-        if (!messages || !messages.length){
-          const empty = document.createElement("div");
-          empty.className = "muted";
-          empty.textContent = "No messages yet.";
-          listEl.appendChild(empty);
+    modal = document.createElement("div");
+    modal.id = "imgModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.background = "rgba(0,0,0,0.72)";
+    modal.style.zIndex = "9999";
+    modal.style.padding = "18px";
+
+    modal.innerHTML = `
+      <div id="imgModalCard" style="
+        width: min(1100px, 96vw);
+        height: min(820px, 92vh);
+        background: rgba(18,18,22,0.98);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+        display:flex;
+        flex-direction:column;
+        overflow:hidden;
+      ">
+        <div style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          padding:12px 12px;
+          border-bottom:1px solid rgba(255,255,255,0.10);
+          gap:10px;
+        ">
+          <div id="imgModalTitle" class="muted" style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <a id="imgModalDownload" href="#" download="screenshot.webp"
+              style="color:#fff; text-decoration:none; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.18);">
+              Download
+            </a>
+            <button id="imgModalClose" type="button" style="
+              color:#fff; background:transparent; border:1px solid rgba(255,255,255,0.18);
+              border-radius:10px; padding:8px 10px; cursor:pointer;
+            ">Close</button>
+          </div>
+        </div>
+
+        <div style="flex:1; overflow:auto; padding:12px;">
+          <img id="imgModalImg" alt="Screenshot" style="
+            display:block;
+            max-width:100%;
+            height:auto;
+            margin:0 auto;
+            border-radius:12px;
+            background:#000;
+          "/>
+        </div>
+      </div>
+    `;
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) hideImageModal();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideImageModal();
+    });
+
+    modal.querySelector("#imgModalClose").addEventListener("click", hideImageModal);
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showImageModal({ src, title, filename }) {
+    const modal = ensureImageModal();
+    const img = modal.querySelector("#imgModalImg");
+    const titleEl = modal.querySelector("#imgModalTitle");
+    const dl = modal.querySelector("#imgModalDownload");
+
+    img.src = src;
+    titleEl.textContent = title || "Screenshot";
+
+    dl.href = src;
+
+    dl.setAttribute("download", filename || "screenshot.webp");
+
+    modal.style.display = "flex";
+  }
+
+  function hideImageModal() {
+    const modal = document.getElementById("imgModal");
+    if (!modal) return;
+
+    const img = modal.querySelector("#imgModalImg");
+    if (img) img.src = "";
+
+    modal.style.display = "none";
+  }
+
+  function safeStringify(x) {
+    try {
+      return JSON.stringify(x);
+    } catch {
+      try {
+        return JSON.stringify(x, Object.getOwnPropertyNames(x));
+      } catch {
+        return String(x);
+      }
+    }
+  }
+
+  clearBtn.addEventListener("click", () => {
+    respBox.innerHTML = "";
+    addLine("Cleared.", "info");
+  });
+
+  const COOLDOWN_APPLIES = <%- inlineScriptJson(!!cooldownApplies) %>;
+  const COOLDOWN_MS = 3000;
+
+  const overlay = document.getElementById("cooldownOverlay");
+  const overlaySeconds = document.getElementById("cooldownSeconds");
+
+  let nextAllowedAt = 0;
+  let countdownTimer = null;
+
+  function showOverlay(msLeft) {
+    if (!overlay) return;
+    const s = Math.max(0, Math.ceil(msLeft / 1000));
+    overlaySeconds.textContent = String(s);
+    overlay.setAttribute("data-show", "true");
+    overlay.setAttribute("aria-hidden", "false");
+  }
+
+  function hideOverlay() {
+    if (!overlay) return;
+    overlay.setAttribute("data-show", "false");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  function setButtonsDisabled(disabled) {
+    document.querySelectorAll(".cmdForm button[type=submit]").forEach(btn => {
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.65" : "";
+      btn.style.cursor = disabled ? "not-allowed" : "";
+    });
+  }
+
+  const HEAVY_COOLDOWN_MS = 8000;
+
+  let heavyUntil = 0;
+  let heavyTimer = null;
+
+  function setHeavyButtonsDisabled(disabled) {
+    document.querySelectorAll('[data-heavy="1"]').forEach((btn) => {
+      btn.disabled = !!disabled;
+      btn.style.opacity = disabled ? "0.65" : "";
+      btn.style.cursor = disabled ? "not-allowed" : "";
+    });
+  }
+
+  function startHeavyCooldown() {
+    const now = Date.now();
+    heavyUntil = Math.max(heavyUntil, now + HEAVY_COOLDOWN_MS);
+
+    setHeavyButtonsDisabled(true);
+
+    if (heavyTimer) clearInterval(heavyTimer);
+    heavyTimer = setInterval(() => {
+      const left = heavyUntil - Date.now();
+      if (left <= 0) {
+        clearInterval(heavyTimer);
+        heavyTimer = null;
+        setHeavyButtonsDisabled(false);
+
+        return;
+      }
+
+    }, 120);
+  }
+
+  function isHeavyCoolingDown() {
+    return Date.now() < heavyUntil;
+  }
+
+  function startCooldown() {
+    if (!COOLDOWN_APPLIES) return;
+
+    const now = Date.now();
+    nextAllowedAt = Math.max(nextAllowedAt, now + COOLDOWN_MS);
+
+    setButtonsDisabled(true);
+    showOverlay(nextAllowedAt - now);
+
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      const left = nextAllowedAt - Date.now();
+      if (left <= 0) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        hideOverlay();
+        setButtonsDisabled(false);
+        return;
+      }
+      showOverlay(left);
+    }, 120);
+  }
+
+  function isCoolingDown() {
+    return COOLDOWN_APPLIES && Date.now() < nextAllowedAt;
+  }
+
+  function clearFormFields(form) {
+    form.querySelectorAll("input[type=text], input[type=url], input:not([type]), textarea").forEach(el => {
+      el.value = "";
+    });
+  }
+
+  const RESP_ENDPOINT = "/api/device/" + encodeURIComponent(pairCode) + "/responses";
+
+  let baselineSeen = false;
+  let lastSeenId = null;
+  let lastSeenCreatedAt = 0;
+
+  let pendingScreenshot = null;
+  let pendingWebcam = null;
+
+  function normalizeResponseItem(it) {
+    const commandId =
+      it?.commandId ??
+      it?.command_id ??
+      it?.id ??
+      it?.cmdId ??
+      it?.command?.commandId ??
+      null;
+
+    const createdAt =
+      Number(it?.created_at ?? it?.createdAt ?? it?.ts ?? it?.time ?? 0) || 0;
+
+    const details = it?.details ?? it?.payload ?? it?.data ?? null;
+
+    const kind =
+      it?.kind ??
+      it?.type ??
+      it?.response_type ??
+      it?.responseType ??
+      details?.kind ??
+      details?.type ??
+      null;
+
+    const mime =
+      it?.mime ??
+      it?.content_type ??
+      it?.contentType ??
+      details?.mime ??
+      details?.content_type ??
+      null;
+
+    const webpB64 =
+      details?.webp_b64 ??
+      details?.webpB64 ??
+      it?.webp_b64 ??
+      it?.webpB64 ??
+      null;
+
+    const url =
+      it?.url ??
+      it?.imageUrl ??
+      it?.image_url ??
+      details?.url ??
+      details?.imageUrl ??
+      null;
+
+    const width = it?.width ?? details?.width ?? null;
+    const height = it?.height ?? details?.height ?? null;
+    const bytes = it?.bytes ?? details?.bytes ?? null;
+
+    return { raw: it, commandId, createdAt, details, kind, mime, webpB64, url, width, height, bytes };
+  }
+
+  function isNewerThanBaseline(n) {
+    if (n.commandId && lastSeenId && String(n.commandId) !== String(lastSeenId)) return true;
+    if (n.createdAt && n.createdAt > lastSeenCreatedAt) return true;
+    return false;
+  }
+
+  function markSeen(n) {
+    if (!n) return;
+    if (n.commandId) lastSeenId = String(n.commandId);
+    if (n.createdAt) lastSeenCreatedAt = Math.max(lastSeenCreatedAt, Number(n.createdAt) || 0);
+  }
+
+  function addImagePreviewUrl(url) {
+    const wrap = document.createElement("div");
+    wrap.className = "respRow";
+
+    const time = document.createElement("div");
+    time.className = "respBubble respTime";
+    time.textContent = new Date().toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    });
+
+    const img = document.createElement("img");
+
+    img.src = url;
+    img.className = "respBubble respMsg";
+    img.alt = "Screenshot";
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "10px";
+    img.style.display = "block";
+    img.style.cursor = "zoom-in";
+
+    img.addEventListener("click", () => {
+      showImageModal({
+        src: url,
+        title: "Image",
+        filename: "image.webp"
+      });
+    });
+
+    wrap.appendChild(time);
+    wrap.appendChild(img);
+
+    respBox.prepend(wrap);
+  }
+
+  async function fetchResponsesDebug() {
+    const started = performance.now();
+    const res = await fetch(RESP_ENDPOINT, {
+      headers: { "Accept": "application/json" },
+      credentials: "include"
+    });
+
+    const ct = res.headers.get("content-type") || "";
+    let data = null;
+    let bodyText = null;
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else bodyText = await res.text();
+    } catch (e) {
+      bodyText = bodyText || "(failed to parse response)";
+    }
+
+    const ms = Math.round(performance.now() - started);
+
+    console.log("[resp poll] status", res.status, res.statusText, "ms", ms, "ct", ct);
+    console.log("[resp poll] raw data", data ?? bodyText);
+
+    if (!res.ok) {
+      throw new Error("responses_http_" + res.status);
+    }
+    if (!data) {
+      throw new Error("responses_not_json");
+    }
+
+    const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.responses) ? data.responses : []);
+    console.log("[resp poll] items len", items.length);
+
+    if (items.length) {
+      const sample = items[0];
+      console.log("[resp poll] first item keys", sample ? Object.keys(sample) : null);
+      const n0 = normalizeResponseItem(sample);
+      console.log("[resp poll] first item normalized", {
+        commandId: n0.commandId,
+        createdAt: n0.createdAt,
+        kind: n0.kind,
+        mime: n0.mime,
+        hasWebpB64: !!n0.webpB64,
+        url: n0.url,
+        detailsKeys: n0.details ? Object.keys(n0.details) : null
+      });
+    }
+
+    return items;
+  }
+
+  function isWebpImageResponse(n, wantKind) {
+    const k = (n.kind ? String(n.kind).toLowerCase() : "");
+    const m = (n.mime ? String(n.mime).toLowerCase() : "");
+
+    const kindOk = wantKind ? k.includes(String(wantKind).toLowerCase()) : false;
+
+    return kindOk || m.includes("image/webp") || !!n.webpB64;
+  }
+
+  let pollTimer = null;
+
+  function stopPoll() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function startPoll({ intervalMs = 1000 } = {}) {
+    stopPoll();
+    pollTimer = setInterval(async () => {
+      try {
+        const items = await fetchResponsesDebug();
+
+        if (!baselineSeen) {
+          if (items.length) {
+            const newest = normalizeResponseItem(items[0]);
+            markSeen(newest);
+          }
+          baselineSeen = true;
+          console.log("[resp poll] baseline set", { lastSeenId, lastSeenCreatedAt });
           return;
         }
 
-        for (const msg of messages){
-          const row = document.createElement("div");
-          row.className = "boardRow";
-
-          const av = document.createElement("img");
-          av.className = "boardAvatar";
-          av.src = ownerAvatar;
-          av.alt = "";
-
-          const body = document.createElement("div");
-          body.className = "boardBody";
-
-          const bubble = document.createElement("div");
-          bubble.className = "boardBubble";
-          bubble.textContent = String(msg.body || "");
-
-          const meta = document.createElement("div");
-          meta.className = "boardMeta";
-          meta.textContent = relTime(msg.created_at);
-
-          body.appendChild(bubble);
-          body.appendChild(meta);
-
-          row.appendChild(av);
-          row.appendChild(body);
-
-          listEl.appendChild(row);
-        }
-      }
-
-      async function refresh(){
-        try{
-          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
-            headers: { "Accept":"application/json" },
-            credentials: "include"
-          });
-          const data = await res.json().catch(()=>null);
-          if (!res.ok || !data || !data.ok) {
-            console.warn("[board] refresh not ok", res.status, data);
+        if (pendingScreenshot) {
+          const now = Date.now();
+          if (now > pendingScreenshot.timeoutAt) {
+            addLine("Timed out waiting for screenshot response.", "error");
+            console.warn("[resp poll] screenshot timeout", pendingScreenshot);
+            pendingScreenshot = null;
             return;
           }
 
-          const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
-          const nextLatest = Number(
-            data.latest_created_at ||
-            (nextMsgs[0] && nextMsgs[0].created_at) ||
-            0
-          );
+          const normalized = items.map(normalizeResponseItem);
 
-          if (nextLatest && nextLatest === latestCreatedAt) return;
+          const candidates = normalized.filter(n => isWebpImageResponse(n, "screenshot"));
 
-          messages = nextMsgs;
-          latestCreatedAt = nextLatest;
-          render();
-        }catch(e){
-          console.warn("[board] refresh error", e);
+          console.log("[resp poll] screenshot candidates", candidates.map(c => ({
+            commandId: c.commandId,
+            createdAt: c.createdAt,
+            kind: c.kind,
+            mime: c.mime,
+            hasWebpB64: !!c.webpB64,
+            url: c.url
+          })));
+
+          let match = null;
+
+          if (pendingScreenshot.commandIdGuess) {
+            match = candidates.find(c => String(c.commandId) === String(pendingScreenshot.commandIdGuess)) || null;
+          }
+          if (!match) {
+            match = candidates.find(c => isNewerThanBaseline(c)) || null;
+          }
+
+          if (match) {
+            if (match.url) {
+              const bust = String(match.url) + (String(match.url).includes("?") ? "&" : "?") + "t=" + encodeURIComponent(String(match.createdAt || Date.now()));
+              addImagePreviewUrl(bust);
+            } else {
+              addLine("Found screenshot-like response but it had no webp_b64 or url.", "error");
+              console.warn("[resp poll] match had no payload", match.raw);
+            }
+
+            markSeen(match);
+            pendingScreenshot = null;
+            return;
+          }
         }
+
+        if (pendingWebcam) {
+          const now = Date.now();
+          if (now > pendingWebcam.timeoutAt) {
+            addLine("Timed out waiting for webcam capture response.", "error");
+            console.warn("[resp poll] webcam timeout", pendingWebcam);
+            pendingWebcam = null;
+            return;
+          }
+
+          const normalized = items.map(normalizeResponseItem);
+
+          const candidates = normalized.filter(n => isWebpImageResponse(n, "webcam"));
+
+          console.log("[resp poll] webcam candidates", candidates.map(c => ({
+            commandId: c.commandId,
+            createdAt: c.createdAt,
+            kind: c.kind,
+            mime: c.mime,
+            hasWebpB64: !!c.webpB64,
+            url: c.url
+          })));
+
+          let match = null;
+
+          if (pendingWebcam.commandIdGuess) {
+            match = candidates.find(c => String(c.commandId) === String(pendingWebcam.commandIdGuess)) || null;
+          }
+          if (!match) {
+            match = candidates.find(c => isNewerThanBaseline(c)) || null;
+          }
+
+          if (match) {
+            if (match.url) {
+              const bust =
+                String(match.url) +
+                (String(match.url).includes("?") ? "&" : "?") +
+                "t=" +
+                encodeURIComponent(String(match.createdAt || Date.now()));
+              addImagePreviewUrl(bust);
+            } else {
+              addLine("Found webcam-like response but it had no webp_b64 or url.", "error");
+              console.warn("[resp poll] webcam match had no payload", match.raw);
+            }
+
+            markSeen(match);
+            pendingWebcam = null;
+            return;
+          }
+        }
+
+        const normalized = items.map(normalizeResponseItem);
+        const newest = normalized[0];
+        if (newest && isNewerThanBaseline(newest)) {
+          addLine("New response arrived: kind=" + (newest.kind || "?") + " mime=" + (newest.mime || "?"), "info");
+          console.log("[resp poll] rendering debug new item", newest);
+          markSeen(newest);
+        }
+      } catch (e) {
+        console.warn("[resp poll] error", e);
+      }
+    }, intervalMs);
+  }
+
+  startPoll({ intervalMs: 1000 });
+
+  async function postForm(form) {
+    const action = form.getAttribute("action");
+    const cmd = form.dataset.cmd || "command";
+
+    if (isCoolingDown()) {
+      startCooldown();
+      addLine("Please wait for cooldown.", "cooldown");
+      return;
+    }
+
+    const params = new URLSearchParams(new FormData(form));
+    const previewMode = getCommandPreviewRequestMode();
+    if (previewMode) {
+      params.set("preview_mode", previewMode);
+    }
+    clearFormFields(form);
+
+    startCooldown();
+    addLine("Sending " + cmd + "...", "send");
+
+    console.log("[cmd] sending", { cmd, action, params: params.toString() });
+
+    let res, bodyText;
+    try {
+      res = await fetch(action, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: params.toString(),
+        credentials: "include"
+      });
+    } catch (e) {
+      addLine("Network error: " + (e && e.message ? e.message : String(e)), "error");
+      console.warn("[cmd] network error", e);
+      return;
+    }
+
+    let data = null;
+    const ct = (res.headers.get("content-type") || "");
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else bodyText = await res.text();
+    } catch (e) {
+      bodyText = bodyText || "(failed to parse response)";
+    }
+
+    console.log("[cmd] response", {
+      cmd,
+      status: res.status,
+      statusText: res.statusText,
+      contentType: ct,
+      data,
+      bodyText
+    });
+
+    if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
+      const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
+      nextAllowedAt = Date.now() + Math.max(500, retryMs);
+      startCooldown();
+      addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
+      return;
+    }
+
+    if (!res.ok) {
+      if (data && data.message) addLine(data.message, "error");
+      else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
+      return;
+    }
+
+    if (data) {
+      addLine(data.message || ("OK (sent=" + (data.sent ?? "?") + ")"), "ok");
+    } else {
+      addLine(bodyText || "OK", "ok");
+    }
+
+    hideCmdModal();
+
+    if (cmd === "screenshot") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+
+      pendingScreenshot = {
+        startedAt: Date.now(),
+        timeoutAt: Date.now() + 45000,
+        commandIdGuess
+      };
+
+      addLine(
+        "Waiting for screenshot response..." +
+          (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""),
+        "info"
+      );
+
+      console.log("[resp poll] pendingScreenshot set", pendingScreenshot);
+    }
+
+    if (cmd === "webcam_capture") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+
+      pendingWebcam = {
+        startedAt: Date.now(),
+        timeoutAt: Date.now() + 45000,
+        commandIdGuess
+      };
+
+      addLine(
+        "Waiting for webcam capture response..." +
+          (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""),
+        "info"
+      );
+
+      console.log("[resp poll] pendingWebcam set", pendingWebcam);
+    }
+  }
+
+  async function postInstant(action, cmd) {
+    if (!action) return;
+
+    if (isCoolingDown()) {
+      startCooldown();
+      addLine("Please wait for cooldown.", "cooldown");
+      return;
+    }
+
+    startCooldown();
+    try { btn.disabled = true; } catch {}
+    addLine("Sending " + cmd + "...", "send");
+    const bodyParams = new URLSearchParams();
+    const previewMode = getCommandPreviewRequestMode();
+    if (previewMode) {
+      bodyParams.set("preview_mode", previewMode);
+    }
+
+    let res, bodyText;
+    try {
+      res = await fetch(action, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: bodyParams.toString(),
+        credentials: "include"
+      });
+    } catch (e) {
+      addLine("Network error: " + (e && e.message ? e.message : String(e)), "error");
+      return;
+    }
+
+    let data = null;
+    const ct = (res.headers.get("content-type") || "");
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else bodyText = await res.text();
+    } catch (e) {
+      bodyText = bodyText || "(failed to parse response)";
+    }
+
+    if (res.status === 429 && data && (data.code === "WEB_COOLDOWN" || data.code === "COOLDOWN")) {
+      const retryMs = Number(data.retry_after_ms || data.retryAfterMs || COOLDOWN_MS);
+      nextAllowedAt = Date.now() + Math.max(500, retryMs);
+      startCooldown();
+      addLine("Cooldown: wait " + Math.ceil(retryMs / 1000) + "s", "cooldown");
+      return;
+    }
+
+    if (!res.ok) {
+      if (data && data.message) addLine(data.message, "error");
+      else addLine("HTTP " + res.status + " " + res.statusText + " — " + (bodyText || ""), "error");
+      return;
+    }
+
+    addLine((data && (data.message || "OK")) || bodyText || "OK", "ok");
+
+    if (cmd === "screenshot") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingScreenshot = {
+        startedAt: Date.now(),
+        timeoutAt: Date.now() + 45000,
+        commandIdGuess
+      };
+      addLine(
+        "Waiting for screenshot response..." +
+          (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""),
+        "info"
+      );
+    }
+
+    if (cmd === "webcam_capture") {
+      const commandIdGuess = data?.commandId || data?.id || data?.command_id || null;
+      pendingWebcam = {
+        startedAt: Date.now(),
+        timeoutAt: Date.now() + 45000,
+        commandIdGuess
+      };
+      addLine(
+        "Waiting for webcam capture response..." +
+          (commandIdGuess ? (" (commandId=" + commandIdGuess + ")") : ""),
+        "info"
+      );
+    }
+  }
+
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    if (!form || !form.classList || !form.classList.contains("cmdForm")) return;
+    e.preventDefault();
+    if (!validateWriteForMeForm(form)) return;
+    if (!validateSubliminalMessageForm(form)) return;
+    postForm(form);
+  });
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-instant-cmd]");
+    if (!btn) return;
+
+    e.preventDefault();
+
+    const cmd = String(btn.dataset.instantCmd || "");
+    const action = String(btn.dataset.action || "");
+    const isHeavy = btn.dataset.heavy === "1";
+
+    if (!cmd || !action) return;
+
+    if (isHeavy && isHeavyCoolingDown()) {
+      addLine("Please wait for heavy command cooldown.", "cooldown");
+      return;
+    }
+
+    if (isHeavy) startHeavyCooldown();
+
+    await postInstant(action, cmd);
+  });
+
+  clearBtn.addEventListener("click", () => {
+    pendingScreenshot = null;
+  });
+
+  (function() {
+    const pill = document.getElementById("statusPill");
+    const txt = document.getElementById("statusText");
+    const liveOnlyButtons = Array.from(
+      document.querySelectorAll("[data-live-only='1']")
+    );
+    if (!pill || !txt) return;
+
+    function setLiveOnlyButtonsDisabled(disabled) {
+      liveOnlyButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        if (disabled) {
+          button.disabled = true;
+          button.setAttribute("aria-disabled", "true");
+          button.setAttribute("title", "Only available while this user is online.");
+          button.dataset.awayDisabled = "1";
+          return;
+        }
+        button.disabled = false;
+        button.removeAttribute("aria-disabled");
+        if (button.dataset.awayDisabled === "1") {
+          button.removeAttribute("title");
+          delete button.dataset.awayDisabled;
+        }
+      });
+    }
+
+    function setPresenceStatus(status) {
+      const value = String(status || "").trim().toLowerCase();
+      pill.classList.remove("statusPill--on", "statusPill--away", "statusPill--off");
+      if (value === "online") {
+        pill.classList.add("statusPill--on");
+        txt.textContent = "Online";
+        setLiveOnlyButtonsDisabled(false);
+        return;
+      }
+      if (value === "away") {
+        pill.classList.add("statusPill--away");
+        txt.textContent = "Away";
+        setLiveOnlyButtonsDisabled(true);
+        return;
+      }
+      pill.classList.add("statusPill--off");
+      txt.textContent = "Offline";
+      setLiveOnlyButtonsDisabled(false);
+    }
+
+    async function tick() {
+      try {
+        const res = await fetch("/api/presence/" + encodeURIComponent(pairCode), {
+          headers: { "Accept": "application/json" },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) return;
+
+        setPresenceStatus(data.status || (data.online ? "online" : "offline"));
+      } catch (e) {}
+    }
+
+    setPresenceStatus(
+      pill.getAttribute("data-presence-status") || "offline"
+    );
+    tick();
+    setInterval(tick, 3000);
+  })();
+
+  (function(){
+    const favTab = document.getElementById("favTab");
+    const disTab = document.getElementById("disTab");
+
+    const favBox = document.getElementById("favBox");
+    const disBox = document.getElementById("disBox");
+
+    if (!favTab || !disTab || !favBox || !disBox) return;
+
+    function set(which){
+      favTab.setAttribute("data-active", which==="fav" ? "true":"false");
+      disTab.setAttribute("data-active", which==="dis" ? "true":"false");
+
+      favBox.style.display = which==="fav" ? "" : "none";
+      disBox.style.display = which==="dis" ? "" : "none";
+    }
+
+    favTab.addEventListener("click", ()=>set("fav"));
+    disTab.addEventListener("click", ()=>set("dis"));
+    set("fav");
+  })();
+
+  function syncDockPanelOpenState() {
+    if (!document.body) return;
+    const anyOpen = !!document.querySelector(
+      '[data-control-dock-panel="1"][data-open="true"]',
+    );
+    document.body.classList.toggle("boardPanelOpen", anyOpen);
+  }
+
+  (function() {
+    const notificationBadgeSourceKey = "notifications";
+
+    async function refreshNotificationBadge() {
+      try {
+        const res = await fetch("/notifications/summary", {
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) return;
+
+        window.PlayCtrlTabBadge?.setSourceUnread(
+          notificationBadgeSourceKey,
+          Number(data.unreadCount || 0) > 0,
+        );
+      } catch {}
+    }
+
+    refreshNotificationBadge();
+    window.setInterval(refreshNotificationBadge, 15000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        refreshNotificationBadge();
+      }
+    });
+    window.addEventListener("pagehide", () => {
+      window.PlayCtrlTabBadge?.clearSource(notificationBadgeSourceKey);
+    });
+  })();
+
+  (function(){
+    const viewerIsOwner = <%- inlineScriptJson(!!viewerIsOwner) %>;
+    const pairCode = <%- inlineScriptJson(pairCode) %>;
+
+    let messages = <%- inlineScriptJson(boardMsgs || []) %>;
+    let latestCreatedAt = messages.length ? Number(messages[0].created_at || 0) : 0;
+
+    const toggleBtn = document.getElementById("boardToggle");
+    const panelShell = document.getElementById("boardPanelShell");
+    const panel = document.getElementById("boardPanel");
+    const closeBtn = document.getElementById("boardPanelClose");
+    const backdropBtn = document.getElementById("boardPanelBackdrop");
+    const unreadBadge = document.getElementById("boardUnreadBadge");
+    const listEl = document.getElementById("boardList");
+    const form = document.getElementById("boardForm");
+    const input = document.getElementById("boardInput");
+    const statusEl = document.getElementById("boardStatus");
+    const seenStorageKey = "board:lastSeen:" + pairCode;
+    const boardBadgeSourceKey = "control-board:" + pairCode;
+
+    let boardOpen = false;
+    let lastSeenAt = 0;
+
+    try {
+      lastSeenAt = Number(localStorage.getItem(seenStorageKey) || 0) || 0;
+    } catch {}
+
+    function setStatus(t){ if (statusEl) statusEl.textContent = t || ""; }
+
+    function relTime(ms){
+      const s = Math.max(0, Math.floor((Date.now() - Number(ms || 0)) / 1000));
+      if (s < 60) return s + "s ago";
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + "m ago";
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + "h ago";
+      const d = Math.floor(h / 24);
+      return d + " day" + (d === 1 ? "" : "s") + " ago";
+    }
+
+    function persistSeen(tsValue){
+      const next = Number(tsValue || 0) || 0;
+      if (!next) return;
+
+      lastSeenAt = Math.max(lastSeenAt, next);
+      try {
+        localStorage.setItem(seenStorageKey, String(lastSeenAt));
+      } catch {}
+    }
+
+    function unreadCount(){
+      return messages.filter((msg) => Number(msg.created_at || 0) > lastSeenAt).length;
+    }
+
+    function renderUnreadBadge(){
+      const count = boardOpen ? 0 : unreadCount();
+      const hasUnread = count > 0;
+      window.PlayCtrlTabBadge?.setSourceUnread(boardBadgeSourceKey, hasUnread);
+
+      if (!toggleBtn || !unreadBadge) return;
+
+      const label = hasUnread
+        ? "Open message board, " + count + " unread"
+        : "Open message board";
+
+      toggleBtn.dataset.hasUnread = hasUnread ? "true" : "false";
+      toggleBtn.setAttribute("aria-label", label);
+      unreadBadge.hidden = !hasUnread;
+      unreadBadge.textContent = count > 9 ? "9+" : String(count);
+    }
+
+    function markBoardSeen(){
+      if (latestCreatedAt) persistSeen(latestCreatedAt);
+      renderUnreadBadge();
+    }
+
+    function scrollBoardToBottom(){
+      if (!listEl) return;
+
+      requestAnimationFrame(() => {
+        listEl.scrollTop = listEl.scrollHeight;
+      });
+    }
+
+    function setBoardOpen(nextOpen){
+      if (!panelShell || !toggleBtn) return;
+
+      boardOpen = !!nextOpen;
+      panelShell.dataset.open = boardOpen ? "true" : "false";
+      panelShell.setAttribute("aria-hidden", boardOpen ? "false" : "true");
+      toggleBtn.setAttribute("aria-expanded", boardOpen ? "true" : "false");
+      syncDockPanelOpenState();
+
+      if (boardOpen) {
+        document.dispatchEvent(
+          new CustomEvent("controlDockPanelOpened", {
+            detail: { panel: "board" },
+          }),
+        );
+        markBoardSeen();
+        setStatus("");
+        if (viewerIsOwner && input && input.focus) input.focus();
+        else if (panel && panel.focus) panel.focus();
+        refresh({ forceRender: true });
+      } else if (toggleBtn.focus) {
+        toggleBtn.focus();
       }
 
-      if (viewerIsOwner && form && input){
-        form.addEventListener("submit", async (e) => {
-          e.preventDefault();
-          const body = (input.value || "").trim();
-          if (!body) return;
+      renderUnreadBadge();
+    }
 
-          input.value = "";
-          setStatus("Posting...");
+    function render({ scrollToBottom = false } = {}){
+      if (!listEl) return;
 
-          try{
-            const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
-              method: "POST",
-              headers: {
-                "Accept":"application/json",
-                "X-Requested-With":"XMLHttpRequest",
-                "Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"
-              },
-              body: new URLSearchParams({ body }).toString(),
-              credentials: "include"
-            });
+      listEl.innerHTML = "";
 
-            const data = await res.json().catch(()=>null);
-            if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+      if (!messages || !messages.length){
+        const empty = document.createElement("div");
+        empty.className = "boardEmpty";
+        empty.textContent = "No messages yet.";
+        listEl.appendChild(empty);
+        if (scrollToBottom) scrollBoardToBottom();
+        return;
+      }
 
-            const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
-            messages = nextMsgs;
-            latestCreatedAt = Number((nextMsgs[0] && nextMsgs[0].created_at) || latestCreatedAt || 0);
+      const ordered = [...messages].sort((a, b) => {
+        return Number(a.created_at || 0) - Number(b.created_at || 0);
+      });
 
-            render();
-            setStatus("Posted.");
-            setTimeout(()=>setStatus(""), 900);
-          }catch(err){
-            setStatus("Failed to post.");
-          }
+      for (const msg of ordered){
+        const row = document.createElement("div");
+        row.className = "boardRow";
+
+        const av = document.createElement("img");
+        av.className = "boardAvatar";
+        av.src = ownerAvatar;
+        av.alt = "";
+
+        const body = document.createElement("div");
+        body.className = "boardBody";
+
+        const bubble = document.createElement("div");
+        bubble.className = "boardBubble";
+        bubble.textContent = String(msg.body || "");
+
+        const meta = document.createElement("div");
+        meta.className = "boardMeta";
+        meta.textContent = relTime(msg.created_at);
+
+        body.appendChild(bubble);
+        body.appendChild(meta);
+
+        row.appendChild(av);
+        row.appendChild(body);
+
+        listEl.appendChild(row);
+      }
+
+      if (scrollToBottom) scrollBoardToBottom();
+    }
+
+    async function refresh({ forceRender = false } = {}){
+      try{
+        const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
+          headers: { "Accept":"application/json" },
+          credentials: "include"
+        });
+        const data = await res.json().catch(()=>null);
+        if (!res.ok || !data || !data.ok) {
+          console.warn("[board] refresh not ok", res.status, data);
+          return;
+        }
+
+        const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
+        const nextLatest = Number(
+          data.latest_created_at ||
+          (nextMsgs[0] && nextMsgs[0].created_at) ||
+          0
+        );
+
+        const changed =
+          nextLatest !== latestCreatedAt ||
+          nextMsgs.length !== messages.length;
+
+        if (!changed && !forceRender) {
+          if (boardOpen) markBoardSeen();
+          return;
+        }
+
+        messages = nextMsgs;
+        latestCreatedAt = nextLatest;
+        render({ scrollToBottom: boardOpen || forceRender });
+
+        if (boardOpen) markBoardSeen();
+        else renderUnreadBadge();
+      }catch(e){
+        console.warn("[board] refresh error", e);
+      }
+    }
+
+    if (panel && !panel.hasAttribute("tabindex")) {
+      panel.setAttribute("tabindex", "-1");
+    }
+
+    toggleBtn?.addEventListener("click", () => setBoardOpen(!boardOpen));
+    closeBtn?.addEventListener("click", () => setBoardOpen(false));
+    backdropBtn?.addEventListener("click", () => setBoardOpen(false));
+    document.addEventListener("controlDockPanelOpened", (e) => {
+      if (e?.detail?.panel !== "board" && boardOpen) {
+        setBoardOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && boardOpen) {
+        e.preventDefault();
+        setBoardOpen(false);
+      }
+    });
+
+    window.addEventListener("storage", (e) => {
+      if (e.key !== seenStorageKey) return;
+      lastSeenAt = Number(e.newValue || 0) || 0;
+      renderUnreadBadge();
+    });
+
+    window.addEventListener("pagehide", () => {
+      window.PlayCtrlTabBadge?.clearSource(boardBadgeSourceKey);
+    });
+
+    if (viewerIsOwner && form && input){
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const body = (input.value || "").trim();
+        if (!body) return;
+
+        input.value = "";
+        setStatus("Posting...");
+
+        try{
+          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/board", {
+            method: "POST",
+            headers: {
+              "Accept":"application/json",
+              "X-Requested-With":"XMLHttpRequest",
+              "Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"
+            },
+            body: new URLSearchParams({ body }).toString(),
+            credentials: "include"
+          });
+
+          const data = await res.json().catch(()=>null);
+          if (!res.ok || !data || !data.ok) throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+
+          const nextMsgs = Array.isArray(data.messages) ? data.messages : [];
+          messages = nextMsgs;
+          latestCreatedAt = Number((nextMsgs[0] && nextMsgs[0].created_at) || latestCreatedAt || 0);
+
+          render({ scrollToBottom: true });
+          markBoardSeen();
+          setStatus("Posted.");
+          setTimeout(()=>setStatus(""), 900);
+        }catch(err){
+          setStatus("Failed to post.");
+        }
+      });
+    }
+
+    render({ scrollToBottom: true });
+    renderUnreadBadge();
+
+    refresh({ forceRender: true });
+    setInterval(refresh, 2500);
+    setInterval(() => {
+      render();
+      if (boardOpen) markBoardSeen();
+      else renderUnreadBadge();
+    }, 15000);
+  })();
+
+  (function() {
+    const viewerIsOwner = <%- inlineScriptJson(!!viewerIsOwner) %>;
+    const pairCode = <%- inlineScriptJson(pairCode) %>;
+    const toggleBtn = document.getElementById("commandHistoryToggle");
+    const panelShell = document.getElementById("commandHistoryPanelShell");
+    const panel = document.getElementById("commandHistoryPanel");
+    const closeBtn = document.getElementById("commandHistoryPanelClose");
+    const backdropBtn = document.getElementById("commandHistoryPanelBackdrop");
+    const listEl = document.getElementById("commandHistoryList");
+
+    let panelOpen = false;
+    let isLoading = false;
+    const blockedEventIds = new Set();
+    const reportedEventIds = new Set();
+    const likedEventIds = new Set();
+    const blockingEventIds = new Set();
+    const likingEventIds = new Set();
+    const actionStatusByEventId = new Map();
+
+    if (!viewerIsOwner || !toggleBtn || !panelShell || !panel || !listEl) {
+      return;
+    }
+
+    function formatLocalDateTime(value) {
+      const ts = Number(value || 0);
+      if (!Number.isFinite(ts) || ts <= 0) return "";
+
+      try {
+        return new Date(ts).toLocaleString([], {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+      } catch {
+        return new Date(ts).toLocaleString();
+      }
+    }
+
+    function sortHistoryItems(items) {
+      return (Array.isArray(items) ? items.slice() : []).sort((a, b) => {
+        const at = Number(a?.createdAt || 0);
+        const bt = Number(b?.createdAt || 0);
+        if (at !== bt) return at - bt;
+        return String(a?.id || "").localeCompare(String(b?.id || ""));
+      });
+    }
+
+    function scrollHistoryToBottom() {
+      window.requestAnimationFrame(() => {
+        listEl.scrollTop = listEl.scrollHeight;
+      });
+    }
+
+    function createHistoryField(
+      label,
+      value,
+      { isMono = false, preserveWhitespace = false, url = "" } = {},
+    ) {
+      const field = document.createElement("div");
+      field.className = "commandHistoryField";
+
+      const labelEl = document.createElement("div");
+      labelEl.className = "commandHistoryFieldLabel";
+      labelEl.textContent = label;
+
+      const valueEl = url
+        ? document.createElement("a")
+        : document.createElement("div");
+      valueEl.className =
+        "commandHistoryValue" +
+        (isMono ? " commandHistoryValue--mono" : "") +
+        (preserveWhitespace ? " commandHistoryValue--prewrap" : "");
+
+      if (valueEl instanceof HTMLAnchorElement) {
+        valueEl.classList.add("commandHistoryLink");
+        valueEl.href = url;
+        valueEl.target = "_blank";
+        valueEl.rel = "noopener noreferrer nofollow";
+      }
+
+      valueEl.textContent = String(value || "");
+      field.appendChild(labelEl);
+      field.appendChild(valueEl);
+      return field;
+    }
+
+    function formatHistoryGroupValue(item) {
+      const groupKey = String(item?.groupKey || "").trim();
+      const groupLabel = String(item?.groupLabel || "").trim();
+      if (groupLabel && groupKey && groupLabel !== groupKey) {
+        return `${groupLabel} (${groupKey})`;
+      }
+      return groupLabel || groupKey || "";
+    }
+
+    function applyHistoryActionState(card, eventId) {
+      if (!card || !eventId) return;
+
+      const likeBtn = card.querySelector('[data-command-history-action="like"]');
+      const blockBtn = card.querySelector('[data-command-history-action="block"]');
+      const reportBtn = card.querySelector('[data-command-history-action="report"]');
+      const statusEl = card.querySelector('[data-command-history-status="1"]');
+      const status = actionStatusByEventId.get(eventId) || null;
+
+      if (likeBtn) {
+        const canLike = likeBtn.dataset.canLike === "1";
+        likeBtn.disabled =
+          !canLike || likedEventIds.has(eventId) || likingEventIds.has(eventId);
+        likeBtn.textContent = likedEventIds.has(eventId)
+          ? "Liked"
+          : likingEventIds.has(eventId)
+            ? "Liking..."
+            : "Like";
+        likeBtn.dataset.liked = likedEventIds.has(eventId) ? "1" : "0";
+      }
+
+      if (blockBtn) {
+        blockBtn.disabled =
+          blockedEventIds.has(eventId) || blockingEventIds.has(eventId);
+        blockBtn.textContent = blockedEventIds.has(eventId)
+          ? "Blocked"
+          : blockingEventIds.has(eventId)
+            ? "Blocking..."
+            : "Block";
+      }
+
+      if (reportBtn) {
+        reportBtn.disabled = reportedEventIds.has(eventId);
+        reportBtn.textContent = reportedEventIds.has(eventId)
+          ? "Reported"
+          : "Report";
+      }
+
+      if (statusEl) {
+        statusEl.textContent = status?.text || "";
+        statusEl.dataset.error = status?.isError ? "true" : "false";
+      }
+    }
+
+    function renderHistoryItems(items) {
+      listEl.innerHTML = "";
+
+      const rows = sortHistoryItems(items);
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "boardEmpty";
+        empty.textContent = "No received commands yet.";
+        listEl.appendChild(empty);
+        return;
+      }
+
+      rows.forEach((item) => {
+        const eventId = String(item?.id || "").trim();
+        if (eventId && item?.liked) {
+          likedEventIds.add(eventId);
+        }
+        const card = document.createElement("article");
+        card.className = "commandHistoryItem";
+        if (eventId) {
+          card.dataset.commandHistoryItemId = eventId;
+        }
+
+        const top = document.createElement("div");
+        top.className = "commandHistoryItemTop";
+
+        const typeEl = document.createElement("div");
+        typeEl.className = "commandHistoryType";
+        typeEl.textContent = String(item?.typeLabel || item?.type || "Command");
+
+        const timeEl = document.createElement("time");
+        timeEl.className = "commandHistoryTime";
+        timeEl.dateTime = String(item?.createdIso || "");
+        timeEl.textContent = formatLocalDateTime(item?.createdAt);
+
+        top.appendChild(typeEl);
+        top.appendChild(timeEl);
+
+        const fields = document.createElement("div");
+        fields.className = "commandHistoryFields";
+        fields.appendChild(
+          createHistoryField(
+            "Command ID",
+            String(item?.commandId || "Not logged"),
+            { isMono: true },
+          ),
+        );
+
+        const groupValue = formatHistoryGroupValue(item);
+        if (groupValue) {
+          fields.appendChild(
+            createHistoryField("Group", groupValue, {
+              isMono: !String(item?.groupLabel || "").trim(),
+            }),
+          );
+        }
+
+        const messages = Array.isArray(item?.messages)
+          ? item.messages.filter((value) => String(value || "").trim())
+          : [];
+        if (messages.length > 1) {
+          fields.appendChild(
+            createHistoryField("Messages", messages.join("\n"), {
+              preserveWhitespace: true,
+            }),
+          );
+        } else if (item?.message) {
+          fields.appendChild(
+            createHistoryField("Message", String(item.message || "")),
+          );
+        }
+
+        if (item?.url) {
+          fields.appendChild(
+            createHistoryField("URL", String(item.url || ""), {
+              url: String(item.url || ""),
+            }),
+          );
+        }
+
+        card.appendChild(top);
+        card.appendChild(fields);
+
+        const actions = document.createElement("div");
+        actions.className = "commandHistoryActions";
+
+        const likeBtn = document.createElement("button");
+        likeBtn.type = "button";
+        likeBtn.className = "commandHistoryActionBtn commandHistoryActionBtn--like";
+        likeBtn.dataset.commandHistoryAction = "like";
+        likeBtn.dataset.eventId = eventId;
+        likeBtn.dataset.canLike = item?.canLike ? "1" : "0";
+        likeBtn.textContent = "Like";
+
+        const blockBtn = document.createElement("button");
+        blockBtn.type = "button";
+        blockBtn.className = "commandHistoryActionBtn commandHistoryActionBtn--block";
+        blockBtn.dataset.commandHistoryAction = "block";
+        blockBtn.dataset.eventId = eventId;
+        blockBtn.textContent = "Block";
+
+        const reportBtn = document.createElement("button");
+        reportBtn.type = "button";
+        reportBtn.className = "commandHistoryActionBtn commandHistoryActionBtn--report";
+        reportBtn.dataset.commandHistoryAction = "report";
+        reportBtn.dataset.eventId = eventId;
+        reportBtn.textContent = "Report";
+
+        if (!eventId) {
+          likeBtn.disabled = true;
+          blockBtn.disabled = true;
+          reportBtn.disabled = true;
+        }
+
+        actions.appendChild(likeBtn);
+        actions.appendChild(blockBtn);
+        actions.appendChild(reportBtn);
+        card.appendChild(actions);
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "commandHistoryActionStatus";
+        statusEl.dataset.commandHistoryStatus = "1";
+        statusEl.setAttribute("aria-live", "polite");
+        card.appendChild(statusEl);
+
+        applyHistoryActionState(card, eventId);
+        listEl.appendChild(card);
+      });
+    }
+
+    async function refreshHistory({ scrollToBottom = false } = {}) {
+      if (isLoading) return;
+      isLoading = true;
+
+      listEl.innerHTML = "";
+      const loading = document.createElement("div");
+      loading.className = "boardEmpty";
+      loading.textContent = "Loading command history...";
+      listEl.appendChild(loading);
+
+      try {
+        const res = await fetch(
+          "/api/device/" + encodeURIComponent(pairCode) + "/command-history",
+          {
+            headers: { "Accept": "application/json" },
+            credentials: "include",
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+        }
+
+        renderHistoryItems(data.items);
+        if (scrollToBottom) {
+          scrollHistoryToBottom();
+        }
+      } catch (err) {
+        listEl.innerHTML = "";
+        const empty = document.createElement("div");
+        empty.className = "boardEmpty";
+        empty.textContent = "Could not load command history.";
+        listEl.appendChild(empty);
+      } finally {
+        isLoading = false;
+      }
+    }
+
+    async function likeCommandHistoryEvent(eventId) {
+      const safeEventId = String(eventId || "").trim();
+      if (
+        !safeEventId ||
+        likedEventIds.has(safeEventId) ||
+        likingEventIds.has(safeEventId)
+      ) {
+        return;
+      }
+
+      const card = listEl.querySelector(
+        '[data-command-history-item-id="' + safeEventId + '"]',
+      );
+      likingEventIds.add(safeEventId);
+      actionStatusByEventId.set(safeEventId, {
+        text: "Liking command...",
+        isError: false,
+      });
+      applyHistoryActionState(card, safeEventId);
+
+      try {
+        const res = await fetch(
+          "/api/device/" +
+            encodeURIComponent(pairCode) +
+            "/command-history/" +
+            encodeURIComponent(safeEventId) +
+            "/like",
+          {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "include",
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.message) || ("HTTP " + res.status));
+        }
+
+        likingEventIds.delete(safeEventId);
+        likedEventIds.add(safeEventId);
+        actionStatusByEventId.set(safeEventId, {
+          text: data.message || "Command liked.",
+          isError: false,
+        });
+      } catch (err) {
+        likingEventIds.delete(safeEventId);
+        actionStatusByEventId.set(safeEventId, {
+          text: (err && err.message) || "Could not like that command.",
+          isError: true,
         });
       }
 
-      render();
+      applyHistoryActionState(card, safeEventId);
+    }
 
-      refresh();
-      setInterval(refresh, 2500);
-      setInterval(render, 15000);
-    })();
+    async function blockSenderForHistoryEvent(eventId) {
+      const safeEventId = String(eventId || "").trim();
+      if (!safeEventId || blockingEventIds.has(safeEventId)) return;
+
+      const confirmed = window.confirm(
+        "Block this sender from sending you future commands? You still will not be shown who they are.",
+      );
+      if (!confirmed) return;
+
+      const card = listEl.querySelector(
+        '[data-command-history-item-id="' + safeEventId + '"]',
+      );
+      blockingEventIds.add(safeEventId);
+      actionStatusByEventId.set(safeEventId, {
+        text: "Blocking sender...",
+        isError: false,
+      });
+      applyHistoryActionState(card, safeEventId);
+
+      try {
+        const res = await fetch(
+          "/api/device/" +
+            encodeURIComponent(pairCode) +
+            "/command-history/" +
+            encodeURIComponent(safeEventId) +
+            "/block",
+          {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "include",
+          },
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.message) || ("HTTP " + res.status));
+        }
+
+        blockingEventIds.delete(safeEventId);
+        blockedEventIds.add(safeEventId);
+        actionStatusByEventId.set(safeEventId, {
+          text: data.message || "Future commands from this sender will be blocked.",
+          isError: false,
+        });
+      } catch (err) {
+        blockingEventIds.delete(safeEventId);
+        actionStatusByEventId.set(safeEventId, {
+          text: (err && err.message) || "Could not block that sender.",
+          isError: true,
+        });
+      }
+
+      applyHistoryActionState(card, safeEventId);
+    }
+
+    function openCommandHistoryReportModal(eventId) {
+      const safeEventId = String(eventId || "").trim();
+      if (!safeEventId || reportedEventIds.has(safeEventId)) return;
+
+      showCmdModal("Report Sender", "tpl_command_history_report");
+      const form = cmdModalBody?.querySelector(
+        "form[data-command-history-report-form='1']",
+      );
+      if (!form) return;
+
+      form.action =
+        "/api/device/" +
+        encodeURIComponent(pairCode) +
+        "/command-history/" +
+        encodeURIComponent(safeEventId) +
+        "/report";
+      form.dataset.commandHistoryEventId = safeEventId;
+    }
+
+    function setPanelOpen(nextOpen) {
+      panelOpen = !!nextOpen;
+      panelShell.dataset.open = panelOpen ? "true" : "false";
+      panelShell.setAttribute("aria-hidden", panelOpen ? "false" : "true");
+      toggleBtn.setAttribute("aria-expanded", panelOpen ? "true" : "false");
+      syncDockPanelOpenState();
+
+      if (panelOpen) {
+        document.dispatchEvent(
+          new CustomEvent("controlDockPanelOpened", {
+            detail: { panel: "history" },
+          }),
+        );
+        refreshHistory({ scrollToBottom: true });
+        if (panel && panel.focus) panel.focus();
+      } else if (toggleBtn.focus) {
+        toggleBtn.focus();
+      }
+    }
+
+    if (panel && !panel.hasAttribute("tabindex")) {
+      panel.setAttribute("tabindex", "-1");
+    }
+
+    toggleBtn.addEventListener("click", () => setPanelOpen(!panelOpen));
+    closeBtn?.addEventListener("click", () => setPanelOpen(false));
+    backdropBtn?.addEventListener("click", () => setPanelOpen(false));
+    listEl.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-command-history-action]");
+      if (!btn) return;
+
+      event.preventDefault();
+
+      const action = String(btn.dataset.commandHistoryAction || "").trim();
+      const eventId = String(btn.dataset.eventId || "").trim();
+      if (!eventId) return;
+
+      if (action === "like") {
+        likeCommandHistoryEvent(eventId);
+        return;
+      }
+
+      if (action === "block") {
+        blockSenderForHistoryEvent(eventId);
+        return;
+      }
+
+      if (action === "report") {
+        openCommandHistoryReportModal(eventId);
+      }
+    });
+    document.addEventListener("controlDockPanelOpened", (e) => {
+      if (e?.detail?.panel !== "history" && panelOpen) {
+        setPanelOpen(false);
+      }
+    });
+    document.addEventListener("commandHistoryReportSubmitted", (event) => {
+      const eventId = String(event?.detail?.eventId || "").trim();
+      if (!eventId) return;
+
+      reportedEventIds.add(eventId);
+      actionStatusByEventId.set(eventId, {
+        text: String(event?.detail?.message || "Report sent."),
+        isError: false,
+      });
+
+      const card = listEl.querySelector(
+        '[data-command-history-item-id="' + eventId + '"]',
+      );
+      applyHistoryActionState(card, eventId);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && panelOpen) {
+        e.preventDefault();
+        setPanelOpen(false);
+      }
+    });
+  })();
 
   async function toggleFav(btn) {
     const id = btn.dataset.discordId;
@@ -391,5 +3692,155 @@
     e.preventDefault();
     toggleFav(btn);
   });
+
+  const BINAURAL_TONE_OPTION = "__binaural_tone__";
+
+  function initPlaySoundForm(form) {
+    const urlEnabled = form.dataset.psUrlEnabled === "1";
+
+    const select = form.querySelector(".psSelect");
+    const urlInput = form.querySelector(".psUrlInput");
+    const baseHzInput = form.querySelector(".psBaseHzInput");
+    const beatHzInput = form.querySelector(".psBeatHzInput");
+    const toneSettings = form.querySelector(".psToneSettings");
+
+    const hidKind = form.querySelector('input[type="hidden"][name="kind"]');
+    const hidName = form.querySelector('input[type="hidden"][name="name"]');
+    const hidUrl  = form.querySelector('input[type="hidden"][name="url"]');
+
+    function syncLoopSoundFields() {
+      if (form.dataset.cmd !== "play_sound_loop" || !toneSettings) return;
+      const hasUrl = urlEnabled && String(urlInput?.value || "").trim();
+      const toneSelected = !hasUrl && select?.value === BINAURAL_TONE_OPTION;
+      toneSettings.hidden = !toneSelected;
+      toneSettings.style.display = toneSelected ? "" : "none";
+      toneSettings.setAttribute("aria-hidden", toneSelected ? "false" : "true");
+    }
+
+    select?.addEventListener("change", () => {
+      if (select.value && urlInput) urlInput.value = "";
+      syncLoopSoundFields();
+    });
+    urlInput?.addEventListener("input", () => {
+      if (String(urlInput.value || "").trim() && select) select.value = "";
+      syncLoopSoundFields();
+    });
+    syncLoopSoundFields();
+
+    form.addEventListener("submit", (e) => {
+      const selected = String(select?.value || "").trim();
+      const typedUrl = urlEnabled ? String(urlInput?.value || "").trim() : "";
+
+      if (urlEnabled && typedUrl) {
+        hidKind.value = "url";
+        hidUrl.value = typedUrl;
+        hidName.value = "";
+        return;
+      }
+
+      if (selected === BINAURAL_TONE_OPTION) {
+        const baseHz = Number(baseHzInput?.value);
+        const beatHz = Number(beatHzInput?.value);
+        if (Number.isFinite(baseHz) && baseHz > 0 && Number.isFinite(beatHz) && beatHz > 0) {
+          hidKind.value = "tone";
+          hidName.value = "";
+          hidUrl.value = "";
+          return;
+        }
+        e.preventDefault();
+        addLine("Enter positive base and beat frequencies.", "error");
+        return;
+      }
+
+      if (selected) {
+        hidKind.value = "builtin";
+        hidName.value = selected;
+        hidUrl.value = "";
+        return;
+      }
+
+      e.preventDefault();
+      addLine(
+        form.dataset.cmd === "play_sound_loop"
+          ? "Select a loop sound, or enter a URL."
+          : "Pick a built-in sound, or enter a URL.",
+        "error",
+      );
+    });
+  }
+
+  (function () {
+    function normalize(s) {
+      return String(s || "").trim();
+    }
+
+    document.addEventListener(
+      "submit",
+      (e) => {
+        const form = e.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if (form.dataset.cmd !== "play_sound" && form.dataset.cmd !== "play_sound_loop") return;
+
+        if (!form.classList.contains("cmdFormPlaySound")) return;
+
+        const sel = form.querySelector(".psSelect");
+        const urlInput = form.querySelector(".psUrlInput");
+        const baseHzInput = form.querySelector(".psBaseHzInput");
+        const beatHzInput = form.querySelector(".psBeatHzInput");
+
+        const selectedName = normalize(sel && "value" in sel ? sel.value : "");
+        const url = normalize(urlInput && "value" in urlInput ? urlInput.value : "");
+
+        const kindEl = form.querySelector('input[name="kind"]');
+        const nameEl = form.querySelector('input[name="name"]');
+        const urlEl = form.querySelector('input[name="url"]');
+
+        const urlEnabled = form.dataset.psUrlEnabled === "1";
+
+        if (urlEnabled && url) {
+          if (kindEl) kindEl.value = "url";
+          if (urlEl) urlEl.value = url;
+          if (nameEl) nameEl.value = "";
+        } else if (selectedName === BINAURAL_TONE_OPTION) {
+          if (kindEl) kindEl.value = "tone";
+          if (nameEl) nameEl.value = "";
+          if (urlEl) urlEl.value = "";
+        } else if (selectedName) {
+          if (kindEl) kindEl.value = "builtin";
+          if (nameEl) nameEl.value = selectedName;
+          if (urlEl) urlEl.value = "";
+        }
+
+        const finalKind = kindEl ? kindEl.value : "builtin";
+        const finalName = nameEl ? normalize(nameEl.value) : "";
+        const finalUrl = urlEl ? normalize(urlEl.value) : "";
+        const finalBaseHz = Number(baseHzInput?.value);
+        const finalBeatHz = Number(beatHzInput?.value);
+
+        if (
+          finalKind === "tone" &&
+          (!Number.isFinite(finalBaseHz) || finalBaseHz <= 0 ||
+            !Number.isFinite(finalBeatHz) || finalBeatHz <= 0)
+        ) {
+          e.preventDefault();
+          addLine("Enter positive base and beat frequencies.", "error");
+          return;
+        }
+
+        if (finalKind === "builtin" && !finalName) {
+          e.preventDefault();
+          addLine("Pick a built-in sound (or enter a URL).", "error");
+          return;
+        }
+
+        if (finalKind === "url" && !finalUrl) {
+          e.preventDefault();
+          addLine("Enter a sound URL.", "error");
+          return;
+        }
+      },
+      true
+    );
+  })();
 </script>
 <% } %>

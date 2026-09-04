@@ -1,0 +1,220 @@
+<template id="tpl_control_theme">
+  <form
+    id="controlThemeForm"
+    class="controlThemeForm"
+    data-control-theme-form="1"
+  >
+    <div class="muted controlThemeIntro">
+      Customize how your control link looks.
+    </div>
+
+    <div class="controlAvatarSection">
+      <div class="controlAvatarPreviewWrap">
+        <img
+          id="controlThemeAvatarPreview"
+          class="controlAvatarPreview"
+          src="<%= siteAvatarUrl(ownerUser || { discord_id: ownerId }, 128) %><%= controlLinkAvatarVersion ? `&v=${encodeURIComponent(controlLinkAvatarVersion)}` : "" %>"
+          alt=""
+        />
+
+        <button
+          id="controlAvatarDeleteBtn"
+          class="controlAvatarDeleteBtn"
+          type="button"
+          title="Remove custom avatar"
+          aria-label="Remove custom avatar"
+          <% if (!controlLinkHasCustomAvatar) { %>hidden<% } %>
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="controlAvatarMeta">
+        <div class="muted cmdFieldLabel controlAvatarLabel">
+          Set avatar
+        </div>
+        <div class="muted controlThemeHint controlThemeHint--left">
+          Upload PNG, JPG, WEBP, or GIF up to 4 MB.
+        </div>
+
+        <input
+          id="controlThemeAvatarInput"
+          class="controlAvatarInput"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+        />
+
+        <button
+          id="controlAvatarUploadBtn"
+          class="controlAvatarUploadBtn"
+          type="button"
+        >
+          Choose Image
+        </button>
+      </div>
+    </div>
+
+    <div class="controlBannerSection">
+      <div class="controlBannerPreviewWrap">
+        <div
+          id="controlThemeBannerPreview"
+          class="controlBannerPreview"
+          <% if (controlLinkHasCustomBanner) { %>
+            style="background-image:url('<%= siteBannerUrl(ownerUser || { discord_id: ownerId }, 1200) %><%= controlLinkBannerVersion ? `&v=${encodeURIComponent(controlLinkBannerVersion)}` : "" %>')"
+          <% } %>
+        ></div>
+
+        <button
+          id="controlBannerDeleteBtn"
+          class="controlAvatarDeleteBtn controlBannerDeleteBtn"
+          type="button"
+          title="Remove custom banner"
+          aria-label="Remove custom banner"
+          <% if (!controlLinkHasCustomBanner) { %>hidden<% } %>
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="controlAvatarMeta">
+        <div class="muted cmdFieldLabel controlAvatarLabel">
+          Set banner
+        </div>
+        <div class="muted controlThemeHint controlThemeHint--left">
+          Upload PNG, JPG, WEBP, or GIF up to 8 MB.
+        </div>
+
+        <input
+          id="controlThemeBannerInput"
+          class="controlAvatarInput"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+        />
+
+        <button
+          id="controlBannerUploadBtn"
+          class="controlAvatarUploadBtn"
+          type="button"
+        >
+          Choose Image
+        </button>
+      </div>
+    </div>
+
+    <div class="controlBackgroundSection">
+      <div class="controlBackgroundPreviewWrap">
+        <div
+          id="controlThemeBackgroundPreview"
+          class="controlBackgroundPreview"
+          <% if (controlLinkHasCustomBackground) { %>
+            style="background-image:url('<%= siteBackgroundUrl(ownerUser || { discord_id: ownerId }, 1200) %><%= controlLinkBackgroundVersion ? `&v=${encodeURIComponent(controlLinkBackgroundVersion)}` : "" %>')"
+          <% } %>
+        ></div>
+
+        <button
+          id="controlBackgroundDeleteBtn"
+          class="controlAvatarDeleteBtn controlBackgroundDeleteBtn"
+          type="button"
+          title="Remove custom background"
+          aria-label="Remove custom background"
+          <% if (!controlLinkHasCustomBackground) { %>hidden<% } %>
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="controlAvatarMeta">
+        <div class="muted cmdFieldLabel controlAvatarLabel">
+          Set background
+        </div>
+        <div class="muted controlThemeHint controlThemeHint--left">
+          Upload PNG, JPG, WEBP, or GIF up to 12 MB.
+        </div>
+
+        <input
+          id="controlThemeBackgroundInput"
+          class="controlAvatarInput"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+        />
+
+        <button
+          id="controlBackgroundUploadBtn"
+          class="controlAvatarUploadBtn"
+          type="button"
+        >
+          Choose Image
+        </button>
+      </div>
+    </div>
+
+    <div class="cmdField">
+      <label class="muted cmdFieldLabel" for="controlThemeDisplayName">
+        Custom display name
+      </label>
+      <input
+        id="controlThemeDisplayName"
+        name="displayName"
+        maxlength="40"
+        placeholder="<%= ownerUser?.global_name || ownerUser?.username || ownerId %>"
+        value="<%= controlLinkCustomName || "" %>"
+      />
+      <div class="muted controlThemeHint">
+        Leave blank to use your normal Discord name.
+      </div>
+    </div>
+
+    <div class="cmdField">
+      <label class="muted cmdFieldLabel" for="controlThemeAboutMe">
+        About me
+      </label>
+      <textarea
+        id="controlThemeAboutMe"
+        class="controlThemeAboutMeInput"
+        name="aboutMe"
+        maxlength="500"
+        placeholder="Tell people a little about yourself..."
+      ><%= aboutMe || "" %></textarea>
+      <div class="controlThemeTextareaMeta">
+        <div class="muted controlThemeHint controlThemeHint--left">
+          Markdown: *italics* #bold# -strikethrough- _underline_
+        </div>
+        <div
+          id="controlThemeAboutMeCount"
+          class="muted controlThemeCounter"
+          aria-live="polite"
+        >0/500</div>
+      </div>
+    </div>
+
+    <div class="controlThemePicker" role="radiogroup" aria-label="Control link theme">
+      <% for (const theme of controlLinkThemeOptions) { %>
+        <label
+          class="controlThemeSwatch controlThemeSwatch--<%= theme.key %>"
+          title="<%= theme.label %>"
+        >
+          <input
+            type="radio"
+            name="theme"
+            value="<%= theme.key %>"
+            aria-label="<%= theme.label %>"
+            <%= controlLinkTheme === theme.key ? "checked" : "" %>
+          />
+          <span class="controlThemeDot"></span>
+        </label>
+      <% } %>
+    </div>
+
+    <div class="controlThemeActions">
+      <button type="submit">Save Changes</button>
+    </div>
+
+    <div class="muted controlThemeStatus" id="controlThemeStatus"></div>
+  </form>
+</template>

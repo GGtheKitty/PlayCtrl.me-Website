@@ -3,13 +3,20 @@
   <head>
     <%- include("head", { title, meta }) %>
   </head>
-  <body>
+  <body
+    class="<%= typeof layoutBodyClass !== 'undefined' ? layoutBodyClass : '' %>"
+    <% if (typeof layoutBodyDataControlTheme !== 'undefined' && layoutBodyDataControlTheme) { %>data-control-theme="<%= layoutBodyDataControlTheme %>"<% } %>
+  >
+    <div id="toastRegion" class="toastRegion" aria-live="polite" aria-atomic="false"></div>
+
     <div class="wrap">
       <%- include("topbar", { user, isAdmin, displayName, avatarUrl }) %>
 
       <main class="content">
         <%- body %>
       </main>
+
+      <%- include("footer") %>
     </div>
 
     <% if (user) { %>
@@ -19,8 +26,11 @@
         displayName, 
         avatarUrl 
       }) %>
+    <% } else { %>
+      <%- include("visitor_gate") %>
     <% } %>
 
+    <%- include("favicon_badge_client") %>
     <%- include("scripts", { user }) %>
   </body>
 </html>

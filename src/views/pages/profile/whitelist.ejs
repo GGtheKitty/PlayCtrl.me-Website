@@ -1,47 +1,110 @@
-  <div class="cardBd">
+<div class="card whitelistCard">
+  <div class="cardHd whitelistCardHd">
+    <div>
+      <div>Whitelist</div>
+      <div class="muted whitelistCardSubhead">
+        Choose exactly who can send commands to your control page.
+      </div>
+    </div>
 
-    <div class="switchRow">
-      <div>
-        <div class="switchLabel">Enable Whitelist</div>
-        <div class="switchHint">Only approved Discord IDs can send commands to your control page.</div>
+    <div class="whitelistCountBadge">
+      <span id="wlCountValue"><%= Array.isArray(wlList) ? wlList.length : 0 %></span> allowed
+    </div>
+  </div>
+
+  <div class="cardBd">
+    <div class="whitelistHero">
+      <div class="whitelistHeroCopy">
+        <div class="whitelistHeroTitle" id="whitelistHeroTitle"><%= isWhitelistOn ? "Whitelist is on" : "Whitelist is off" %></div>
       </div>
 
-      <label class="switch" title="Toggle Whitelist">
-        <input id="whitelistToggle" type="checkbox" ${isWhitelistOn ? "checked" : "" } />
+      <label class="switch whitelistHeroToggle" title="Toggle Whitelist">
+        <input id="whitelistToggle" type="checkbox" <%= isWhitelistOn ? "checked" : "" %> />
         <span class="slider"></span>
       </label>
     </div>
 
-    <div class="wlAddRow">
-      <input id="wlInput" placeholder="Discord ID to allow (numbers only)" />
-      <button id="wlAddBtn" type="button">Add</button>
+    <div class="whitelistInfoStrip">
+      <% if (isWhitelistOn) { %>
+        Discover is turned off while whitelist mode is enabled.
+      <% } else { %>
+        Turn this on whenever you want commands to come from trusted people only.
+      <% } %>
     </div>
 
-    <div class="wlList" id="wlList">
-      <% if (wlList && wlList.length) { %>
-      <% for (const x of wlList) { 
-                 const name = x.global_name || x.username || x.allowed_id;
-                 const avi = discordAvatarUrl(
-                   { discord_id: x.allowed_id, avatar: x.avatar },
-                   64
-                 );
-            %>
-      <div class="wlRow" data-id="<%= x.allowed_id %>">
-        <div class="wlLeft">
-          <img class="wlAvi" src="<%= avi %>" alt="" />
-          <div style="min-width:0;">
-            <div class="wlName"><%= name %></div>
-            <div class="wlId"><%= x.allowed_id %></div>
+    <div class="whitelistSection">
+      <div class="whitelistSectionHd">
+        <div>
+          <div class="whitelistSectionTitle">Add by username</div>
+          <div class="muted whitelistSectionHint">
+            Search by username, @username, display name, or Discord ID.
           </div>
         </div>
-        <button class="wlRm" type="button" data-remove="<%= x.allowed_id %>">
-          Remove
-        </button>
       </div>
-      <% } %>
-      <% } else { %>
-      <div class="muted">No whitelisted users yet.</div>
-      <% } %>
+
+      <div class="wlSearchRow">
+        <input
+          id="wlSearchInput"
+          class="wlSearchInput"
+          type="text"
+          placeholder="Search username, display name, or ID"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="wlSearchBtn" class="wlSearchBtn" type="button">Search</button>
+      </div>
+
+      <div id="wlSearchResults" class="wlResults">
+        <div class="wlEmptyState">
+          Type to begin searching for users.
+        </div>
+      </div>
     </div>
-    <div id="wlStatus" class="muted" style="margin-top:10px;"></div>
+
+    <div class="whitelistSection whitelistSection--allowed">
+      <div class="whitelistSectionHd">
+        <div>
+          <div class="whitelistSectionTitle">Allowed users</div>
+        </div>
+      </div>
+
+      <div class="wlList" id="wlList">
+        <% if (wlList && wlList.length) { %>
+          <% for (const x of wlList) { %>
+            <% const displayName = x.global_name || x.username || x.allowed_id; %>
+            <% const username = x.username ? "@" + x.username : ""; %>
+            <% const avi = siteAvatarUrl({ discord_id: x.allowed_id }, 64); %>
+            <div
+              class="wlRow"
+              data-id="<%= x.allowed_id %>"
+              data-display-name="<%= displayName %>"
+              data-username="<%= x.username || "" %>"
+              data-avatar-url="<%= avi %>"
+            >
+              <div class="wlLeft">
+                <img class="wlAvi" src="<%= avi %>" alt="" />
+                <div class="wlText">
+                  <div class="wlName"><%= displayName %></div>
+                  <% if (username) { %>
+                    <div class="wlHandle"><%= username %></div>
+                  <% } %>
+                  <div class="wlId"><%= x.allowed_id %></div>
+                </div>
+              </div>
+
+              <button class="wlRm" type="button" data-remove="<%= x.allowed_id %>">
+                Remove
+              </button>
+            </div>
+          <% } %>
+        <% } else { %>
+          <div class="wlEmptyState" id="wlListEmptyState">
+            No whitelisted users yet.
+          </div>
+        <% } %>
+      </div>
+    </div>
+
+    <div id="wlStatus" class="muted whitelistStatus"></div>
   </div>
+</div>

@@ -1,0 +1,192 @@
+    <section class="landingHero">
+      <div class="landingHeroCopy">
+        <div class="landingEyebrow">Consensual remote play for adults 18+</div>
+        <h1>Let trusted people interact with your PC from anywhere.</h1>
+        <p class="landingLead">
+          Pair the PlayCtrl.me client, choose the commands you want to allow,
+          and share a personal control page with friends or the community.
+        </p>
+        <div class="landingHeroActions">
+          <a class="landingPrimaryBtn" href="/auth/discord">Continue with Discord</a>
+          <a class="landingSecondaryBtn" href="/discover">Browse Discover</a>
+        </div>
+        <div class="landingDiscordTrust">
+          <div class="landingDiscordTrustTitle">
+            <span><%- include("../common/icons/home_action_icon", { icon: "discord" }) %></span>
+            <strong>Why Discord login?</strong>
+          </div>
+          <p>
+            PlayCtrl.me uses Discord so we never handle or store your password.
+            When you connect, Discord shows the exact account details being shared.
+          </p>
+          <div class="landingDiscordData">
+            <span>Display name</span>
+            <span>Username</span>
+            <span>Discord ID</span>
+            <span>Profile picture</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sendFlow" aria-label="Selecting Send delivers an image popup to the paired computer">
+        <div class="sendFlowSource">
+          <div class="sendFlowWindowBar">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="sendFlowForm">
+            <div class="sendFlowLabel">Image popup</div>
+            <div class="sendFlowField">surprise.png</div>
+            <div class="sendFlowButton">Send</div>
+            <img class="sendFlowCursor" src="/icons/home-send-cursor.svg" alt="" aria-hidden="true" />
+          </div>
+        </div>
+
+        <div class="sendFlowArrow" aria-hidden="true">
+          <span class="sendFlowPulse"></span>
+          <img src="/icons/home-send-arrow.svg" alt="" />
+        </div>
+
+        <div class="sendFlowDesktop">
+          <div class="sendFlowWallpaper"></div>
+          <div class="sendFlowPopup">
+            <img src="/icons/home-send-popup-image.png" alt="Example image popup" />
+          </div>
+          <div class="sendFlowTaskbar"></div>
+        </div>
+
+        <div class="sendFlowCaption">You choose which commands appear on your page.</div>
+      </div>
+    </section>
+
+    <section class="landingActivity" aria-label="Live community activity">
+      <div class="landingActivityItem">
+        <span class="landingLiveDot"></span>
+        <strong><%= Number(onlineUserCount || 0).toLocaleString() %></strong>
+        <span>users online now</span>
+      </div>
+      <a href="#community-snapshot">See community activity <span>→</span></a>
+    </section>
+
+    <section class="landingSection landingHow">
+      <div class="landingSectionHead">
+        <div class="landingKicker">Simple setup</div>
+        <h2>From sign-in to shared control in four steps</h2>
+        <p>You set the boundaries first. PlayCtrl.me handles the connection.</p>
+      </div>
+
+      <div class="landingSteps">
+        <article class="landingStep">
+          <span>01</span>
+          <div class="landingStepIcon"><%- include("../common/icons/home_action_icon", { icon: "discord" }) %></div>
+          <h3>Sign in</h3>
+          <p>Use Discord to create your PlayCtrl.me identity.</p>
+        </article>
+        <article class="landingStep">
+          <span>02</span>
+          <div class="landingStepIcon"><%- include("../common/icons/home_action_icon", { icon: "device" }) %></div>
+          <h3>Pair your PC</h3>
+          <p>Connect the client from your profile.</p>
+        </article>
+        <article class="landingStep">
+          <span>03</span>
+          <div class="landingStepIcon"><%- include("../common/icons/home_action_icon", { icon: "check" }) %></div>
+          <h3>Choose access</h3>
+          <p>Enable only the commands and permissions you want.</p>
+        </article>
+        <article class="landingStep">
+          <span>04</span>
+          <div class="landingStepIcon"><%- include("../common/icons/home_action_icon", { icon: "external" }) %></div>
+          <h3>Share your link</h3>
+          <p>Invite friends or appear in Discover when you are ready.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="landingSection">
+      <div class="landingSectionHead">
+        <div class="landingKicker">What you can do</div>
+        <h2>Playful interactions, with your controls attached</h2>
+      </div>
+
+      <div class="landingFeatureGrid">
+        <article class="landingFeature landingFeature--wide">
+          <div class="landingFeatureGlyph"><%- include("../common/icons/home_action_icon", { icon: "spark" }) %></div>
+          <h3>Send commands to your PC</h3>
+          <p>Commands for messages, image and fullscreen popups, sound effects, wallpapers, links, and more.</p>
+          <div class="landingCommandChips">
+            <span>Message</span><span>Image</span><span>Sound</span><span>Wallpaper</span>
+          </div>
+        </article>
+        <article class="landingFeature">
+          <div class="landingFeatureGlyph"><%- include("../common/icons/home_action_icon", { icon: "discover" }) %></div>
+          <h3>Make it yours</h3>
+          <p>Build a personal control page with your profile, About Me, theme, banner, and background.</p>
+        </article>
+        <article class="landingFeature">
+          <div class="landingFeatureGlyph"><%- include("../common/icons/home_action_icon", { icon: "groups" }) %></div>
+          <h3>Find your people</h3>
+          <p>Browse opted-in users, save favorites, and participate in groups or community groups.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="landingSafety">
+      <div>
+        <div class="landingKicker">Owner control</div>
+        <h2>Your PC, your permissions.</h2>
+        <p>
+          Choose standard and whitelisted access, manage paired devices, review recent
+          activity, and report misuse. You choose what others can do with your PC.
+        </p>
+      </div>
+      <div class="landingSafetyList">
+        <div><span><%- include("../common/icons/home_action_icon", { icon: "check" }) %></span> Command-level permissions</div>
+        <div><span><%- include("../common/icons/home_action_icon", { icon: "check" }) %></span> Standard and whitelisted access</div>
+        <div><span><%- include("../common/icons/home_action_icon", { icon: "check" }) %></span> Paired-device management</div>
+        <div><span><%- include("../common/icons/home_action_icon", { icon: "check" }) %></span> History and reporting tools</div>
+      </div>
+    </section>
+
+    <section class="landingSection" id="community-snapshot">
+      <div class="landingSectionHead landingSectionHead--row">
+        <div>
+          <div class="landingKicker">Community snapshot</div>
+          <h2>See what the community is up to</h2>
+        </div>
+        <a class="landingTextLink" href="/discover">Browse Discover →</a>
+      </div>
+
+      <div class="landingLeaderboardGrid">
+        <% [
+          { title: "Top today", items: topSendersToday || [], suffix: "sent" },
+          { title: "Top all time", items: topSendersAllTime || [], suffix: "total" },
+        ].forEach((board) => { %>
+          <article class="landingLeaderboard">
+            <div class="landingLeaderboardHead"><%= board.title %></div>
+            <ol>
+              <% board.items.slice(0, 3).forEach((item, index) => { %>
+                <li>
+                  <span class="landingRank">#<%= index + 1 %></span>
+                  <img src="<%= item.avatarUrl %>" alt="" />
+                  <span class="landingLeaderName"><%= item.displayName %></span>
+                  <strong><%= Number(item.commandsSent || 0).toLocaleString() %> <small><%= board.suffix %></small></strong>
+                </li>
+              <% }) %>
+              <% if (!board.items.length) { %>
+                <li class="landingLeaderboardEmpty">No activity to show yet.</li>
+              <% } %>
+            </ol>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <%- include("../common/home_support_preview") %>
+
+    <section class="landingFinalCta">
+      <div>
+        <div class="landingKicker">Ready when you are</div>
+        <h2>Connect your PC and start sharing.</h2>
+      </div>
+      <a class="landingPrimaryBtn" href="/auth/discord">Continue with Discord</a>
+    </section>

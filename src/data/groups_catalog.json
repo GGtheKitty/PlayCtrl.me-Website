@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "key": "hypnosis",
+      "label": "Hypnosis",
+      "icon": "/groups/hypnosis.png",
+      "enabled": true
+    },
+    {
+      "key": "furry",
+      "label": "Furry",
+      "icon": "/groups/furry.png",
+      "enabled": true
+    },
+    {
+      "key": "latex",
+      "label": "Latex",
+      "icon": "/groups/latex.png",
+      "enabled": true
+    },
+    {
+      "key": "gay",
+      "label": "Gay",
+      "icon": "/groups/gay.jpg",
+      "enabled": true
+    },
+    {
+      "key": "lesbian",
+      "label": "Lesbian",
+      "icon": "/groups/lesbian.jpg",
+      "enabled": true
+    },
+    {
+      "key": "Bimbo",
+      "label": "Bimbo",
+      "icon": "/groups/bimbo.png",
+      "enabled": true
+    },
+    {
+      "key": "Drone",
+      "label": "Drone",
+      "icon": "/groups/drone.png",
+      "enabled": true
+    },
+    {
+      "key": "bbc",
+      "label": "BBC",
+      "icon": "/groups/bbc.png",
+      "enabled": true
+    },
+    {
+      "key": "gooner",
+      "label": "Gooner",
+      "icon": "/groups/gooner.jpg",
+      "enabled": true
+    },
+    {
+      "key": "petplay",
+      "label": "Petplay",
+      "icon": "/groups/petplay.png",
+      "enabled": true
+    },
+    {
+      "key": "chastity",
+      "label": "Chastity",
+      "icon": "/groups/chastity.png",
+      "enabled": true
+    },
+    {
+      "key": "censored",
+      "label": "Censored",
+      "icon": "/groups/censored.png",
+      "enabled": true
+    },
+    {
+      "key": "feet",
+      "label": "Feet",
+      "icon": "/groups/feet.png",
+      "enabled": true
+    },
+    {
+      "key": "bondage",
+      "label": "Bondage",
+      "icon": "/groups/bondage.png",
+      "enabled": true
+    },
+    {
+      "key": "art",
+      "label": "Art",
+      "icon": "/groups/art.png",
+      "enabled": true
+    },
+    {
+      "key": "irl",
+      "label": "IRL",
+      "icon": "/groups/irl.png",
+      "enabled": true
+    }
+  ]
+}

@@ -7,22 +7,32 @@
       return String(v || "").trim();
     }
 
-    function setDot(card, online) {
+    function normalizeStatus(status) {
+      const value = String(status || "").trim().toLowerCase();
+      if (value === "online" || value === "away") return value;
+      return "offline";
+    }
+
+    function setDot(card, statusValue) {
+      const status = normalizeStatus(statusValue);
       const dot = card.querySelector(".statusDot");
       if (!dot) return;
 
-      dot.classList.remove("statusDot--online", "statusDot--offline");
-      dot.classList.add(online ? "statusDot--online" : "statusDot--offline");
-      dot.title = online ? "Online" : "Offline";
+      card.dataset.status = status;
+      card.dataset.online = status === "online" ? "1" : "0";
+      dot.classList.remove("statusDot--online", "statusDot--away", "statusDot--offline");
+      dot.classList.add("statusDot--" + status);
+      dot.title = status === "online" ? "Online" : status === "away" ? "Away" : "Offline";
     }
 
     function resortCards() {
       const cards = Array.from(grid.querySelectorAll(".uCard[data-pair]"));
+      const statusRank = { online: 0, away: 1, offline: 2 };
 
       cards.sort((a, b) => {
-        const ao = a.dataset.online === "1";
-        const bo = b.dataset.online === "1";
-        if (ao !== bo) return ao ? -1 : 1;
+        const ar = statusRank[normalizeStatus(a.dataset.status)] ?? 9;
+        const br = statusRank[normalizeStatus(b.dataset.status)] ?? 9;
+        if (ar !== br) return ar - br;
 
         const at = Number(a.getAttribute("data-fav-ts") || a.getAttribute("data-favorited-at") || 0);
         const bt = Number(b.getAttribute("data-fav-ts") || b.getAttribute("data-favorited-at") || 0);
@@ -53,13 +63,12 @@
           const code = normPair(card.getAttribute("data-pair"));
 
           const st = data.map[code];
-          const online = !!(st && st.online);
+          const status = normalizeStatus(st?.status || (st?.online ? "online" : "offline"));
 
-          const prev = card.dataset.online === "1";
-          if (prev !== online) changed = true;
+          const prev = normalizeStatus(card.dataset.status);
+          if (prev !== status) changed = true;
 
-          card.dataset.online = online ? "1" : "0";
-          setDot(card, online);
+          setDot(card, status);
 
           card.style.display = "";
         }
@@ -72,9 +81,10 @@
 
 
     Array.from(grid.querySelectorAll(".uCard[data-pair]")).forEach(card => {
-      const initialOnline = (card.getAttribute("data-online") === "1");
-      card.dataset.online = initialOnline ? "1" : "0";
-      setDot(card, initialOnline);
+      const initialStatus =
+        card.getAttribute("data-status") ||
+        (card.getAttribute("data-online") === "1" ? "online" : "offline");
+      setDot(card, initialStatus);
     });
 
     resortCards();

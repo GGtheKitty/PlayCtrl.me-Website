@@ -1,0 +1,299 @@
+.adminQueueSubhead {
+    margin: 6px 0 0;
+    max-width: 720px;
+}
+
+.adminQueueHeaderActions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.adminQueueToolbar {
+    align-items: center;
+}
+
+.adminQueueToolbar input {
+    flex: 1 1 340px;
+}
+
+.adminQueueEmergencyBtn[disabled],
+.adminQueueEmergencyBtn[aria-disabled="true"] {
+    opacity: .5;
+    pointer-events: none;
+}
+
+.adminQueueSwitchRow {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.adminQueueStats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.adminQueuePager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+}
+
+.adminQueuePager--bottom {
+    margin-top: 14px;
+    padding-bottom: 10px;
+}
+
+.adminQueuePagerSummary {
+    flex: 1 1 260px;
+    text-align: center;
+}
+
+.adminQueuePagerBtn[aria-disabled="true"] {
+    opacity: .55;
+    pointer-events: none;
+}
+
+.adminQueueList {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.adminQueueGroup {
+    margin-top: 0;
+}
+
+.adminQueueGroupHd {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 0;
+}
+
+.adminQueueIdentity {
+    min-width: 0;
+}
+
+.adminQueueGroup[data-open="true"] .adminQueueGroupHd {
+    margin-bottom: 12px;
+}
+
+.adminQueueGroupToggle {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.adminQueueGroupChevron {
+    width: 10px;
+    height: 10px;
+    margin-top: 17px;
+    flex: 0 0 auto;
+    border-right: 2px solid rgba(255, 255, 255, .78);
+    border-bottom: 2px solid rgba(255, 255, 255, .78);
+    transform: rotate(-45deg);
+    transition: transform .16s ease;
+}
+
+.adminQueueGroup[data-open="true"] .adminQueueGroupChevron {
+    transform: rotate(45deg);
+}
+
+.adminQueueGroupBody:not([hidden]) {
+    display: block;
+}
+
+.adminQueueGroupBody[hidden] {
+    display: none;
+}
+
+.adminQueueAvatarPlaceholder {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(255, 255, 255, .06);
+    color: rgba(255, 255, 255, .88);
+    font-weight: 900;
+}
+
+.adminQueueItems {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.adminQueueItem {
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .18);
+    padding: 12px;
+}
+
+.adminQueueItemTop {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.adminQueueItemText {
+    min-width: 0;
+}
+
+.adminQueueItemTitle {
+    font-size: 14px;
+    font-weight: 950;
+}
+
+.adminQueueTimestamp {
+    margin-top: 8px;
+}
+
+.adminQueueSummary {
+    margin-top: 10px;
+    color: rgba(255, 255, 255, .88);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.adminQueueLinkRow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.adminQueuePreviewStrip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.adminQueuePreview {
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .03);
+}
+
+.adminQueuePreviewMedia {
+    position: relative;
+    background: rgba(0, 0, 0, .24);
+}
+
+.adminQueuePreviewMedia img,
+.adminQueuePreviewMedia video,
+.adminQueuePreviewMedia audio {
+    display: block;
+    width: 100%;
+}
+
+.adminQueuePreviewMedia img,
+.adminQueuePreviewMedia video {
+    max-height: 240px;
+    object-fit: cover;
+}
+
+.adminQueuePreview--audio .adminQueuePreviewMedia {
+    padding: 14px;
+}
+
+.adminQueuePreviewMeta {
+    padding: 10px 12px 12px;
+}
+
+.adminQueuePreviewName {
+    font-weight: 800;
+    color: rgba(255, 255, 255, .92);
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.adminQueuePreviewType {
+    margin-top: 4px;
+}
+
+.adminQueuePayload {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+}
+
+.adminQueuePayload summary {
+    cursor: pointer;
+    font-weight: 900;
+    color: var(--muted);
+}
+
+.adminQueuePayload pre {
+    margin: 10px 0 0;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(0, 0, 0, .26);
+    color: rgba(255, 255, 255, .90);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.adminQueueEmpty {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px dashed rgba(255, 255, 255, .16);
+    background: rgba(255, 255, 255, .03);
+    color: var(--muted);
+}
+
+@media (max-width: 720px) {
+    .adminQueueGroupHd,
+    .adminQueueItemTop {
+        flex-direction: column;
+    }
+
+    .adminQueueGroupToggle {
+        width: 100%;
+    }
+
+    .adminQueuePager {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .adminQueuePagerSummary {
+        text-align: left;
+    }
+
+    .adminQueueHeaderActions,
+    .adminQueueToolbar,
+    .adminQueueSwitchRow {
+        width: 100%;
+    }
+}

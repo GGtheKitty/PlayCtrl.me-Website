@@ -1,0 +1,490 @@
+.panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, .03);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+
+.panelHd {
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.panelHd h1 {
+    margin: 0;
+    font-size: 16px;
+    letter-spacing: .3px;
+}
+
+.muted {
+    color: var(--muted);
+    font-size: 12px;
+    opacity: .85;
+    margin: 6px 0 0;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: rgba(255, 255, 255, .04);
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.btn:hover {
+    border-color: rgba(167, 139, 250, .55);
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
+.btn--danger {
+    border-color: rgba(239, 68, 68, .35);
+    background: rgba(239, 68, 68, .12);
+}
+
+.adminGroupFlash {
+    margin: 0 14px 14px;
+    padding: 10px 12px;
+    border: 1px solid rgba(74, 222, 128, .35);
+    border-radius: 12px;
+    background: rgba(74, 222, 128, .09);
+    color: rgba(220, 252, 231, .95);
+    font-weight: 850;
+}
+
+.adminGroupSection {
+    margin-top: 18px;
+}
+
+.adminGroupsRoot {
+    transition: opacity .12s ease;
+}
+
+.adminGroupsRoot.isLoading {
+    opacity: .62;
+    pointer-events: none;
+}
+
+.adminGroupsToolbar {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    margin-bottom: 18px;
+}
+
+.adminGroupsSearch {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+}
+
+.adminGroupsSearch input {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, .18);
+    color: var(--text);
+    font: inherit;
+}
+
+.adminGroupsStats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(84px, 1fr));
+    gap: 8px;
+}
+
+.statTile {
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .035);
+}
+
+.statValue,
+.statLabel {
+    display: block;
+}
+
+.statValue {
+    font-size: 18px;
+    font-weight: 950;
+}
+
+.statLabel {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
+.sectionHead {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.sectionHead h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.pagerSummary,
+.pagerPage {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 850;
+}
+
+.pagerBtn {
+    padding: 8px 10px;
+    min-height: 36px;
+}
+
+.isDisabled {
+    opacity: .45;
+    pointer-events: none;
+}
+
+.groupList,
+.communityAdminList {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+}
+
+.gCard {
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(0, 0, 0, .20));
+    overflow: hidden;
+}
+
+.gCard[open] {
+    grid-column: 1 / -1;
+}
+
+.gSummary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px;
+    cursor: pointer;
+}
+
+.gSummary::-webkit-details-marker {
+    display: none;
+}
+
+.gLeft {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.gIcon {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, .10);
+    flex: 0 0 auto;
+}
+
+.gText {
+    min-width: 0;
+}
+
+.gTitle {
+    font-size: 15px;
+    font-weight: 950;
+}
+
+.communityOwnerLine {
+    margin-top: 7px;
+}
+
+.gMeta {
+    margin-top: 6px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    background: rgba(0, 0, 0, .18);
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.pill .k {
+    opacity: .6;
+}
+
+.pill .v {
+    opacity: .95;
+}
+
+.pill--public {
+    border-color: rgba(74, 222, 128, .28);
+    background: rgba(34, 197, 94, .10);
+}
+
+.pill--private {
+    border-color: rgba(251, 191, 36, .28);
+    background: rgba(245, 158, 11, .10);
+}
+
+.expandHint {
+    font-size: 12px;
+    font-weight: 900;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.gCard[open] .expandHint {
+    color: var(--text);
+}
+
+.gCard[open] .expandHint::after {
+    content: " ▲";
+}
+
+.gCard:not([open]) .expandHint::after {
+    content: " ▼";
+}
+
+.gBody {
+    padding: 0 14px 14px;
+    display: grid;
+    gap: 10px;
+}
+
+.communityAdminBody {
+    padding: 0 14px 14px;
+    display: grid;
+    gap: 12px;
+}
+
+.communityBannerPreview {
+    min-height: 120px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background-position: center;
+    background-size: cover;
+}
+
+.adminGroupNote {
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, .16);
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+.moderationGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+
+.moderationPanel {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, .09);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .14);
+}
+
+.moderationPanel--wide {
+    grid-column: 1 / -1;
+}
+
+.moderationPanel h3 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    color: var(--muted);
+    letter-spacing: .06em;
+}
+
+.actionStack,
+.compactList,
+.chatList {
+    display: grid;
+    gap: 8px;
+}
+
+.actionStack form,
+.actionStack .btn {
+    width: 100%;
+}
+
+.actionStack button,
+.actionStack a {
+    width: 100%;
+}
+
+.uRow {
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .18);
+    padding: 10px 12px;
+}
+
+.uRow--compact {
+    padding: 8px 10px;
+}
+
+.uMain {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.uAv {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    flex: 0 0 auto;
+}
+
+.uName {
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.uMeta {
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.mono {
+    font-family: var(--mono);
+}
+
+.dot {
+    opacity: .45;
+}
+
+.empty {
+    padding: 18px 16px;
+    border: 1px dashed rgba(255, 255, 255, .14);
+    border-radius: 14px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, .02);
+}
+
+.chatItem {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, .10);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .18);
+}
+
+.chatMeta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.chatBody {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.45;
+}
+
+.commandItem {
+    border-color: rgba(56, 189, 248, .22);
+    background: rgba(14, 116, 144, .10);
+}
+
+.commandType {
+    font-size: 13px;
+    font-weight: 950;
+    text-transform: capitalize;
+}
+
+@media (max-width: 640px) {
+    .adminGroupsToolbar,
+    .sectionHead {
+        grid-template-columns: 1fr;
+        display: grid;
+    }
+
+    .adminGroupsSearch {
+        flex-wrap: wrap;
+    }
+
+    .adminGroupsSearch input {
+        flex-basis: 100%;
+    }
+
+    .adminGroupsStats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panelHd,
+    .gSummary {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .moderationGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .expandHint {
+        white-space: normal;
+    }
+}

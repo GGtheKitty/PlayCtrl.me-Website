@@ -1,0 +1,370 @@
+<script>
+  (() => {
+    const grid = document.getElementById("uploadAdminGrid");
+    const empty = document.getElementById("uploadAdminEmpty");
+    const statCount = document.getElementById("uploadStatCount");
+    const statBytes = document.getElementById("uploadStatBytes");
+    const controlGrid = document.getElementById("controlLinkAssetGrid");
+    const controlEmpty = document.getElementById("controlLinkAssetEmpty");
+    const controlUserCount = document.getElementById("controlLinkAssetUserCount");
+    const controlAssetCount = document.getElementById("controlLinkAssetCount");
+    const controlAssetBytes = document.getElementById("controlLinkAssetBytes");
+    const modal = document.getElementById("uploadPreviewModal");
+    const modalTitle = document.getElementById("uploadPreviewTitle");
+    const modalImage = document.getElementById("uploadPreviewImage");
+    const modalVideo = document.getElementById("uploadPreviewVideo");
+
+    const hasUploadSection = !!(grid && empty);
+    const hasControlSection = !!(controlGrid && controlEmpty);
+
+    if ((!hasUploadSection && !hasControlSection) || !modal || !modalTitle || !modalImage || !modalVideo) return;
+
+    let totalCount = Number(<%- inlineScriptJson(Number(uploadStats?.count || 0)) %>) || 0;
+    let totalBytes = Number(<%- inlineScriptJson(Number(uploadStats?.totalBytes || 0)) %>) || 0;
+    let activeAudio = null;
+    let activeAudioButton = null;
+    let activeAudioCard = null;
+    let activePreviewItemId = "";
+
+    function formatBytes(bytes) {
+      const n = Number(bytes || 0);
+      if (!Number.isFinite(n) || n <= 0) return "0B";
+      if (n >= 1024 * 1024 * 1024) {
+        return (n / (1024 * 1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 * 1024 ? 0 : 1) + "GB";
+      }
+      if (n >= 1024 * 1024) {
+        return (n / (1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 ? 0 : 1) + "MB";
+      }
+      if (n >= 1024) {
+        return (n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1) + "KB";
+      }
+      return Math.round(n) + "B";
+    }
+
+    function setAudioButtonState(button, playing) {
+      if (!button) return;
+      button.textContent = playing ? "Stop" : "Play";
+      button.classList.toggle("is-playing", !!playing);
+      button.setAttribute("aria-pressed", playing ? "true" : "false");
+    }
+
+    function stopAudioPreview() {
+      if (activeAudio) {
+        try {
+          activeAudio.pause();
+          activeAudio.currentTime = 0;
+        } catch {}
+      }
+
+      if (activeAudioCard) {
+        activeAudioCard.classList.remove("is-audio-playing");
+      }
+
+      setAudioButtonState(activeAudioButton, false);
+      activeAudio = null;
+      activeAudioButton = null;
+      activeAudioCard = null;
+    }
+
+    async function toggleAudioPreview(card, button, url) {
+      if (
+        activeAudio &&
+        activeAudioButton === button
+      ) {
+        stopAudioPreview();
+        return;
+      }
+
+      stopAudioPreview();
+
+      const audio = new Audio(url);
+      audio.preload = "metadata";
+
+      activeAudio = audio;
+      activeAudioButton = button;
+      activeAudioCard = card;
+
+      card.classList.add("is-audio-playing");
+      setAudioButtonState(button, true);
+
+      audio.addEventListener("ended", () => {
+        if (activeAudio !== audio) return;
+        stopAudioPreview();
+      });
+
+      audio.addEventListener("error", () => {
+        if (activeAudio !== audio) return;
+        stopAudioPreview();
+        window.alert("Could not preview this audio file.");
+      });
+
+      try {
+        await audio.play();
+      } catch {
+        stopAudioPreview();
+        window.alert("Could not preview this audio file.");
+      }
+    }
+
+    function closePreviewModal() {
+      activePreviewItemId = "";
+      modal.hidden = true;
+      modalImage.hidden = true;
+      modalImage.src = "";
+      modalVideo.pause();
+      modalVideo.hidden = true;
+      modalVideo.removeAttribute("src");
+      modalVideo.load();
+    }
+
+    function openPreviewModalFromValues({ kind, url, name, id }) {
+      const previewKind = String(kind || "").trim();
+      const previewUrl = String(url || "").trim();
+      const previewName = String(name || "Preview").trim();
+      activePreviewItemId = String(id || "").trim();
+      if (!previewUrl || (previewKind !== "image" && previewKind !== "video")) return;
+
+      modalTitle.textContent = previewName || "Preview";
+      modal.hidden = false;
+
+      if (previewKind === "video") {
+        modalImage.hidden = true;
+        modalImage.src = "";
+        modalVideo.src = previewUrl;
+        modalVideo.hidden = false;
+        modalVideo.load();
+        modalVideo.play().catch(() => {});
+        return;
+      }
+
+      modalVideo.pause();
+      modalVideo.hidden = true;
+      modalVideo.removeAttribute("src");
+      modalVideo.load();
+      modalImage.src = previewUrl;
+      modalImage.alt = previewName || "Preview";
+      modalImage.hidden = false;
+    }
+
+    function openPreviewModal(card) {
+      openPreviewModalFromValues({
+        kind: card?.dataset?.uploadKind,
+        url: card?.dataset?.uploadUrl,
+        name: card?.dataset?.uploadName,
+        id: card?.dataset?.uploadId,
+      });
+    }
+
+    function openPreviewModalFromTrigger(trigger) {
+      openPreviewModalFromValues({
+        kind: trigger?.dataset?.previewKind,
+        url: trigger?.dataset?.previewUrl,
+        name: trigger?.dataset?.previewName,
+        id: trigger?.dataset?.previewId,
+      });
+    }
+
+    function syncStats() {
+      if (!grid || !empty) return;
+      if (statCount) statCount.textContent = totalCount.toLocaleString();
+      if (statBytes) statBytes.textContent = formatBytes(totalBytes);
+      const hasCards = !!grid.querySelector("[data-upload-card]");
+      empty.hidden = hasCards;
+    }
+
+    function syncControlAssetStats() {
+      if (!controlGrid || !controlEmpty) return;
+
+      const userCards = Array.from(
+        controlGrid.querySelectorAll("[data-control-user-card]"),
+      );
+      const assetTiles = Array.from(
+        controlGrid.querySelectorAll("[data-control-asset-tile]"),
+      );
+      const total = assetTiles.reduce((sum, tile) => {
+        return sum + Number(tile.dataset.controlAssetBytes || 0);
+      }, 0);
+
+      if (controlUserCount) {
+        controlUserCount.textContent = userCards.length.toLocaleString();
+      }
+      if (controlAssetCount) {
+        controlAssetCount.textContent = assetTiles.length.toLocaleString();
+      }
+      if (controlAssetBytes) {
+        controlAssetBytes.textContent = formatBytes(total);
+      }
+
+      controlEmpty.hidden = assetTiles.length > 0;
+    }
+
+    async function deleteUpload(card) {
+      const id = String(card?.dataset?.uploadId || "").trim();
+      const name = String(card?.dataset?.uploadName || "this upload").trim();
+      if (!id) return;
+
+      const confirmed = window.confirm(`Delete "${name}"? This cannot be undone.`);
+      if (!confirmed) return;
+
+      const deleteBtn = card.querySelector("[data-delete-upload]");
+      if (deleteBtn) deleteBtn.disabled = true;
+
+      try {
+        const res = await fetch("/admin/uploads/delete", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+          body: JSON.stringify({ id }),
+        });
+
+        const payload = await res.json().catch(() => null);
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.message || "Could not delete this upload.");
+        }
+
+        if (activeAudioCard === card) {
+          stopAudioPreview();
+        }
+        if (activePreviewItemId === id) {
+          closePreviewModal();
+        }
+
+        const bytes = Number(card.dataset.uploadBytes || 0);
+        totalCount = Math.max(0, totalCount - 1);
+        totalBytes = Math.max(0, totalBytes - bytes);
+        card.remove();
+        syncStats();
+      } catch (err) {
+        window.alert(err?.message || "Could not delete this upload.");
+        if (deleteBtn) deleteBtn.disabled = false;
+      }
+    }
+
+    async function deleteControlAsset(tile) {
+      const discordId = String(tile?.dataset?.controlUserId || "").trim();
+      const assetKind = String(tile?.dataset?.controlAssetKind || "").trim();
+      const name = String(
+        tile?.dataset?.controlAssetName || "this control link asset",
+      ).trim();
+      if (!discordId || !assetKind) return;
+
+      const confirmed = window.confirm(`Delete "${name}"? This cannot be undone.`);
+      if (!confirmed) return;
+
+      const deleteBtn = tile.querySelector("[data-delete-control-asset]");
+      if (deleteBtn) deleteBtn.disabled = true;
+
+      try {
+        const res = await fetch("/admin/uploads/control-link/delete", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+          body: JSON.stringify({ discordId, assetKind }),
+        });
+
+        const payload = await res.json().catch(() => null);
+        if (!res.ok || !payload?.ok) {
+          throw new Error(
+            payload?.message || "Could not delete this control link asset.",
+          );
+        }
+
+        if (activePreviewItemId === String(tile.dataset.previewId || "").trim()) {
+          closePreviewModal();
+        }
+
+        const userCard = tile.closest("[data-control-user-card]");
+        if (assetKind === "avatar" && userCard) {
+          const avatar = userCard.querySelector(".controlAssetUserAvatar");
+          if (avatar) {
+            avatar.src =
+              "/avatars/" +
+              encodeURIComponent(discordId) +
+              "?size=64&v=" +
+              encodeURIComponent(String(Date.now()));
+          }
+        }
+        tile.remove();
+
+        if (userCard && !userCard.querySelector("[data-control-asset-tile]")) {
+          userCard.remove();
+        }
+
+        syncControlAssetStats();
+      } catch (err) {
+        window.alert(err?.message || "Could not delete this control link asset.");
+        if (deleteBtn) deleteBtn.disabled = false;
+      }
+    }
+
+    if (grid) {
+      grid.addEventListener("click", (event) => {
+        const deleteBtn = event.target.closest("[data-delete-upload]");
+        if (deleteBtn) {
+          const card = deleteBtn.closest("[data-upload-card]");
+          if (card) {
+            deleteUpload(card);
+          }
+          return;
+        }
+
+        const audioBtn = event.target.closest("[data-audio-toggle]");
+        if (audioBtn) {
+          const card = audioBtn.closest("[data-upload-card]");
+          const url = String(card?.dataset?.uploadUrl || "").trim();
+          if (card && url) {
+            toggleAudioPreview(card, audioBtn, url);
+          }
+          return;
+        }
+
+        const previewBtn = event.target.closest("[data-open-preview]");
+        if (previewBtn) {
+          const card = previewBtn.closest("[data-upload-card]");
+          if (card) openPreviewModal(card);
+        }
+      });
+    }
+
+    controlGrid?.addEventListener("click", (event) => {
+      const deleteBtn = event.target.closest("[data-delete-control-asset]");
+      if (deleteBtn) {
+        const tile = deleteBtn.closest("[data-control-asset-tile]");
+        if (tile) {
+          deleteControlAsset(tile);
+        }
+        return;
+      }
+
+      const previewBtn = event.target.closest("[data-open-control-asset-preview]");
+      if (previewBtn) {
+        openPreviewModalFromTrigger(previewBtn);
+      }
+    });
+
+    modal.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-close-preview]");
+      if (closeBtn || event.target === modal) {
+        closePreviewModal();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) {
+        closePreviewModal();
+      }
+    });
+
+    window.addEventListener("pagehide", stopAudioPreview);
+    syncStats();
+    syncControlAssetStats();
+  })();
+</script>

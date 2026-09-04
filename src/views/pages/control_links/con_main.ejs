@@ -1,37 +1,399 @@
 <!doctype html>
 <html lang="en">
 
+<%
+  function escapeControlAboutHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function trimControlAboutLink(rawUrl, closingMarker) {
+    let end = String(rawUrl || "").length;
+
+    while (end > 0) {
+      const ch = rawUrl[end - 1];
+      if (/[.,!?;:]/.test(ch)) {
+        end -= 1;
+        continue;
+      }
+
+      if (ch === ")") {
+        const body = rawUrl.slice(0, end - 1);
+        const openCount = (body.match(/\(/g) || []).length;
+        const closeCount = (body.match(/\)/g) || []).length;
+        if (closeCount >= openCount) {
+          end -= 1;
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    if (closingMarker && rawUrl[end - 1] === closingMarker) {
+      end -= 1;
+    }
+
+    return rawUrl.slice(0, Math.max(0, end));
+  }
+
+  function renderControlAboutLink(linkText) {
+    const href = /^https?:\/\//i.test(linkText)
+      ? linkText
+      : `https://${linkText}`;
+
+    return (
+      `<a href="${escapeControlAboutHtml(href)}" target="_blank" rel="noopener noreferrer nofollow">` +
+      `${escapeControlAboutHtml(linkText)}</a>`
+    );
+  }
+
+  function renderControlAboutMarkup(value) {
+    const source = String(value || "");
+    const markerTags = {
+      "*": "em",
+      "#": "strong",
+      "-": "s",
+      "_": "u",
+    };
+    const linkPattern = /^(https?:\/\/[^\s<]+|www\.[^\s<]+)/i;
+
+    function walk(startIndex, closingMarker) {
+      let html = "";
+      let index = startIndex;
+
+      while (index < source.length) {
+        const ch = source[index];
+
+        if (ch === "\\") {
+          const next = source[index + 1] || "";
+          if (next && (markerTags[next] || next === "\\")) {
+            html += escapeControlAboutHtml(next);
+            index += 2;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch);
+          index += 1;
+          continue;
+        }
+
+        const linkMatch = source.slice(index).match(linkPattern);
+        if (linkMatch && linkMatch[0]) {
+          const linkText = trimControlAboutLink(linkMatch[0], closingMarker);
+          if (linkText) {
+            html += renderControlAboutLink(linkText);
+            index += linkText.length;
+            continue;
+          }
+        }
+
+        if (closingMarker && ch === closingMarker) {
+          return { html, index: index + 1, closed: true };
+        }
+
+        if (markerTags[ch]) {
+          const nested = walk(index + 1, ch);
+
+          if (nested.closed && nested.html.trim()) {
+            const tag = markerTags[ch];
+            html += `<${tag}>${nested.html}</${tag}>`;
+            index = nested.index;
+            continue;
+          }
+
+          html += escapeControlAboutHtml(ch) + nested.html;
+          index = nested.index;
+          continue;
+        }
+
+        html += escapeControlAboutHtml(ch);
+        index += 1;
+      }
+
+      return { html, index, closed: false };
+    }
+
+    return walk(0, "").html;
+  }
+
+  const controlAboutRawText = String(aboutMe || "");
+  const controlAboutHasText = !!controlAboutRawText.trim();
+  const controlAboutMarkup = controlAboutHasText
+    ? renderControlAboutMarkup(controlAboutRawText)
+    : "";
+  const controlPresenceStatus = String(
+    presenceStatus || (anyOnline ? "online" : "offline"),
+  ).trim() || "offline";
+  const controlPresenceLabel =
+    controlPresenceStatus === "online"
+      ? "Online"
+      : controlPresenceStatus === "away"
+        ? "Away"
+        : "Offline";
+  const controlPresenceClass =
+    controlPresenceStatus === "online"
+      ? "statusPill--on"
+      : controlPresenceStatus === "away"
+        ? "statusPill--away"
+        : "statusPill--off";
+%>
+
 <head>
+  <%- include("../../common/favicon_links") %>
   <link rel="stylesheet" href="/css/control_link.css">
 </head>
 
 <body>
+  <div
+    id="controlPageRoot"
+    class="fullBleed controlPage"
+    data-control-theme="<%= controlLinkTheme %>"
+  >
+    <div
+      id="controlPageBackground"
+      class="controlPageBackground"
+      <% if (controlLinkShouldLoadCustomBackground) { %>
+        style="background-image:url('<%= siteBackgroundUrl(ownerUser || { discord_id: ownerId }, 1920) %><%= controlLinkBackgroundVersion ? `&v=${encodeURIComponent(controlLinkBackgroundVersion)}` : "" %>')"
+      <% } else { %>
+        hidden
+      <% } %>
+    ></div>
 
-  <%- include("../../common/commands_sent") %>
+    <div class="controlProfileWrap">
+      <div class="card controlProfileCard">
+        <div class="controlProfileBanner">
+          <div
+            id="controlBannerImage"
+            class="controlProfileBannerImage"
+            <% if (controlLinkHasCustomBanner) { %>
+              style="background-image:url('<%= siteBannerUrl(ownerUser || { discord_id: ownerId }, 1600) %><%= controlLinkBannerVersion ? `&v=${encodeURIComponent(controlLinkBannerVersion)}` : "" %>')"
+            <% } else { %>
+              hidden
+            <% } %>
+          ></div>
+          <div class="controlProfileBannerGlow"></div>
+        </div>
 
-  <div class="fullBleed">
+        <div class="controlProfileBody">
+          <div class="controlProfileAvatarWrap">
+            <img
+              id="controlAvatarImg"
+              class="controlProfileAvatar"
+              src="<%= siteAvatarUrl(ownerUser || { discord_id: ownerId }, 128) %><%= controlLinkAvatarVersion ? `&v=${encodeURIComponent(controlLinkAvatarVersion)}` : "" %>"
+              alt=""
+            />
+          </div>
+
+          <div class="controlProfileContent">
+            <div class="controlProfileIdentityRow">
+              <div class="controlProfileIdentity">
+                <div class="controlProfileNameRow">
+                  <span id="controlDisplayName" class="controlProfileDisplayName"><%= controlLinkDisplayName %></span>
+                </div>
+                <div class="controlProfileUsername muted">@<%= ownerUser?.username || "" %></div>
+                <% if ((controlLinkBadges || []).length) { %>
+                  <div class="controlProfileBadges" aria-label="Profile badges">
+                    <% for (const badge of controlLinkBadges) { %>
+                      <span
+                        class="controlProfileBadge controlProfileBadge--<%= badge.kind %><%= badge.tier ? ` controlProfileBadge--tier-${badge.tier}` : '' %><%= badge.label ? '' : ' controlProfileBadge--icon-only' %>"
+                        title="<%= badge.title %>"
+                        aria-label="<%= badge.ariaLabel %>"
+                      >
+                        <span class="controlProfileBadgeIcon controlProfileBadgeIcon--<%= badge.icon || 'trophy' %>" aria-hidden="true"></span>
+                        <% if (badge.label) { %>
+                          <span class="controlProfileBadgeLabel"><%= badge.label %></span>
+                        <% } %>
+                      </span>
+                    <% } %>
+                  </div>
+                <% } %>
+              </div>
+
+              <div class="controlProfileActionRow">
+                <% if (viewerIsOwner) { %>
+                  <button id="controlThemeEditBtn" class="controlEditBtn controlProfileActionBtn" type="button">
+                    Edit
+                  </button>
+                <% } else { %>
+                  <button class="favBtn controlProfileActionBtn <%= isFavorited ? 'isFav' : '' %>" data-discord-id="<%= ownerId %>" title="<%= isFavorited ? 'Click to remove from favorites' : 'Add to favorites' %>">
+                    <%= isFavorited ? 'Favorited' : 'Add to Favorites' %>
+                  </button>
+                  <% if (canReportControlLink) { %>
+                    <button
+                      id="controlReportBtn"
+                      class="controlReportBtn controlProfileActionBtn"
+                      type="button"
+                    >
+                      Report
+                    </button>
+                  <% } %>
+                <% } %>
+
+                <div
+                  id="statusPill"
+                  class="statusPill <%= controlPresenceClass %>"
+                  title="Live status"
+                  data-presence-status="<%= controlPresenceStatus %>"
+                >
+                  <span class="statusDot"></span>
+                  <span id="statusText"><%= controlPresenceLabel %></span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              id="controlAboutCard"
+              class="controlProfileAbout <%= controlAboutHasText ? '' : 'controlProfileAbout--empty' %>"
+            >
+              <div id="controlAboutText" class="controlProfileAboutText"><% if (controlAboutHasText) { %><%- controlAboutMarkup %><% } else { %>This user hasn't added an About Me yet.<% } %></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="controlGrid">
 
       <div class="areaControls">
+        <%
+          const previewToggleEnabled = !!commandPreviewToggleEnabled;
+          const previewDefaultMode = String(commandPreviewDefaultMode || "current").trim() || "current";
+          const standardPreview = commandPreviewStandard || {};
+          const whitelistedPreview = commandPreviewWhitelisted || {};
+          const currentCanSendSubliminalMessage =
+            typeof canSendSubliminalMessage === "undefined"
+              ? false
+              : !!canSendSubliminalMessage;
+
+          function previewModeAttr(modeName, standardAllowed, whitelistedAllowed, currentAllowed) {
+            if (!previewToggleEnabled) return currentAllowed ? "1" : "0";
+            return modeName === "standard"
+              ? (standardAllowed ? "1" : "0")
+              : (whitelistedAllowed ? "1" : "0");
+          }
+
+          function previewVisibleByDefault(standardAllowed, whitelistedAllowed, currentAllowed) {
+            if (!previewToggleEnabled) return !!currentAllowed;
+            return previewDefaultMode === "standard"
+              ? !!standardAllowed
+              : !!whitelistedAllowed;
+          }
+
+          const previewCanPopup = previewToggleEnabled
+            ? !!(standardPreview.canPopup || whitelistedPreview.canPopup)
+            : !!canPopup;
+          const previewCanSendSubliminalMessage = previewToggleEnabled
+            ? !!(
+                standardPreview.canSendSubliminalMessage ||
+                whitelistedPreview.canSendSubliminalMessage
+              )
+            : currentCanSendSubliminalMessage;
+          const previewCanImage = previewToggleEnabled
+            ? !!(standardPreview.canImage || whitelistedPreview.canImage)
+            : !!canImage;
+          const previewCanFullscreenPopup = previewToggleEnabled
+            ? !!(standardPreview.canFullscreenPopup || whitelistedPreview.canFullscreenPopup)
+            : !!canFullscreenPopup;
+          const previewCanSpiralOverlay = previewToggleEnabled
+            ? !!(standardPreview.canSpiralOverlay || whitelistedPreview.canSpiralOverlay)
+            : !!canSpiralOverlay;
+          const previewCanOpenUrl = previewToggleEnabled
+            ? !!(standardPreview.canOpenUrl || whitelistedPreview.canOpenUrl)
+            : !!canOpenUrl;
+          const previewCanSetWallpaper = previewToggleEnabled
+            ? !!(standardPreview.canSetWallpaper || whitelistedPreview.canSetWallpaper)
+            : !!canSetWallpaper;
+          const previewCanPlaySound = previewToggleEnabled
+            ? !!(standardPreview.canPlaySound || whitelistedPreview.canPlaySound)
+            : !!canPlaySound;
+          const previewCanPlaySoundLoop = previewToggleEnabled
+            ? !!(standardPreview.canPlaySoundLoop || whitelistedPreview.canPlaySoundLoop)
+            : !!canPlaySoundLoop;
+          const previewCanWriteForMe = previewToggleEnabled
+            ? !!(standardPreview.canWriteForMe || whitelistedPreview.canWriteForMe)
+            : !!canWriteForMe;
+          const previewCanScreenshot = previewToggleEnabled
+            ? !!(standardPreview.canScreenshot || whitelistedPreview.canScreenshot)
+            : !!canScreenshot;
+          const previewCanWebcamCapture = previewToggleEnabled
+            ? !!(standardPreview.canWebcamCapture || whitelistedPreview.canWebcamCapture)
+            : !!canWebcamCapture;
+
+          const standardCanSetWallpaperMedia = previewToggleEnabled
+            ? !!standardPreview.canSetWallpaperMedia
+            : !!canSetWallpaperMedia;
+          const whitelistedCanSetWallpaperMedia = previewToggleEnabled
+            ? !!whitelistedPreview.canSetWallpaperMedia
+            : !!canSetWallpaperMedia;
+          const standardWallpaperUploadContext = previewToggleEnabled
+            ? String(standardPreview.setWallpaperUploadContext || "set_wallpaper")
+            : String(setWallpaperUploadContext || "set_wallpaper");
+          const whitelistedWallpaperUploadContext = previewToggleEnabled
+            ? String(
+                whitelistedPreview.setWallpaperUploadContext ||
+                  standardWallpaperUploadContext ||
+                  "set_wallpaper",
+              )
+            : String(setWallpaperUploadContext || "set_wallpaper");
+          const standardCanPlaySoundUrl = previewToggleEnabled
+            ? !!standardPreview.canPlaySoundUrl
+            : !!canPlaySoundUrl;
+          const whitelistedCanPlaySoundUrl = previewToggleEnabled
+            ? !!whitelistedPreview.canPlaySoundUrl
+            : !!canPlaySoundUrl;
+          const standardCanPlaySoundLoopUrl = previewToggleEnabled
+            ? !!standardPreview.canPlaySoundLoopUrl
+            : !!canPlaySoundLoopUrl;
+          const whitelistedCanPlaySoundLoopUrl = previewToggleEnabled
+            ? !!whitelistedPreview.canPlaySoundLoopUrl
+            : !!canPlaySoundLoopUrl;
+
+          const previewDefaultHasCommands = previewToggleEnabled
+            ? previewDefaultMode === "standard"
+              ? !!standardPreview.anyCommandsEnabled
+              : !!whitelistedPreview.anyCommandsEnabled
+            : !!anyCommandsEnabled;
+        %>
         <div class="card gridCard">
           <div class="cardHd">
-            <div class="topRow">
-              <img class="deviceAvi" src="<%= discordAvatarUrl(ownerUser || { discord_id: ownerId, avatar: null }, 128) %>" alt="" />
-              <div class="name">
-                <%= (ownerUser?.global_name || ownerUser?.username || ownerId) %>
-                <div class="muted">@<%= ownerUser?.username || "" %></div>
+            <span>Commands</span>
+            <% if (previewToggleEnabled) { %>
+              <div class="commandPreviewHeader">
+                <div
+                  class="commandPreviewTabs"
+                  role="group"
+                  aria-label="Command preview mode"
+                  data-active-mode="<%= previewDefaultMode === "standard" ? "standard" : "whitelisted" %>"
+                >
+                  <span class="commandPreviewSlider" aria-hidden="true"></span>
+                  <button
+                    id="commandPreviewStandardBtn"
+                    class="commandPreviewTab"
+                    type="button"
+                    data-command-preview-mode="standard"
+                    data-active="<%= previewDefaultMode === "standard" ? "true" : "false" %>"
+                    aria-pressed="<%= previewDefaultMode === "standard" ? "true" : "false" %>"
+                  >
+                    Standard
+                  </button>
+                  <button
+                    id="commandPreviewWhitelistedBtn"
+                    class="commandPreviewTab commandPreviewTab--accent"
+                    type="button"
+                    data-command-preview-mode="whitelisted"
+                    data-active="<%= previewDefaultMode === "whitelisted" ? "true" : "false" %>"
+                    aria-pressed="<%= previewDefaultMode === "whitelisted" ? "true" : "false" %>"
+                  >
+                    Whitelisted
+                  </button>
+                </div>
               </div>
-            </div>
-
-            <button class="favBtn <%= isFavorited ? 'isFav' : '' %>" data-discord-id="<%= ownerId %>" title="<%= isFavorited ? 'Click to remove from favorites' : 'Add to favorites' %>">
-              <%= isFavorited ? 'Favorited' : 'Add to Favorites' %>
-            </button>
-
-            <div id="statusPill" class="statusPill <%=anyOnline ? " statusPill--on" : "statusPill--off" %>" title="Live status">
-              <span class="statusDot"></span>
-              <span id="statusText"><%= anyOnline ? "Online" : "Offline" %></span>
-            </div>
+            <% } %>
           </div>
 
 
@@ -49,105 +411,775 @@
                 </div>
               </div>
 
-              <div class="cmdGrid" id="cmdGrid">
-                <% if (canPopup) { %>
-                <%- include("../../functions/cmdCard", {
-                    title: "Send Message",
-                    body: `
-                    <form
-                        class="cmdForm"
-                        method="POST"
-                        action="/api/device/${encodeURIComponent(pairCode)}/popup"
-                        data-cmd="popup"
-                    >
-                        <textarea
-                        name="message"
-                        maxlength="2000"
-                        placeholder="Message"
-                        style="margin-top:8px;"
-                        ></textarea>
-                
-                        <div style="margin-top:10px;">
-                        <button type="submit">Send</button>
-                        </div>
-                    </form>
-                    `
-                }) %>
+              <div class="cmdList" id="cmdList">
+                <% if (previewCanPopup) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="popup"
+                    data-tpl="tpl_cmd_popup"
+                    data-tpl-standard="tpl_cmd_popup"
+                    data-tpl-whitelisted="tpl_cmd_popup"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canPopup, whitelistedPreview.canPopup, canPopup) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canPopup, whitelistedPreview.canPopup, canPopup) %>"
+                    <%= previewVisibleByDefault(standardPreview.canPopup, whitelistedPreview.canPopup, canPopup) ? "" : "hidden" %>
+                  >
+                    Send Message
+                  </button>
                 <% } %>
 
-
-                <% if (canOpenUrl) { %>
-                <%- include("../../functions/cmdCard", {
-                    title: "Open URL",
-                    body: `
-                        <form
-                        class="cmdForm"
-                        method="POST"
-                        action="/api/device/${encodeURIComponent(pairCode)}/open_url"
-                        data-cmd="open_url"
-                        >
-                        
-                        <input name="url" placeholder="https://example.com" />
-                
-                        <div style="margin-top:10px;">
-                            <button type="submit">Open</button>
-                        </div>
-                        </form>
-                    `
-                    }) %>
+                <% if (previewCanSendSubliminalMessage) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="subliminal_message"
+                    data-tpl="tpl_cmd_subliminal_message"
+                    data-tpl-standard="tpl_cmd_subliminal_message"
+                    data-tpl-whitelisted="tpl_cmd_subliminal_message"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canSendSubliminalMessage, whitelistedPreview.canSendSubliminalMessage, currentCanSendSubliminalMessage) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canSendSubliminalMessage, whitelistedPreview.canSendSubliminalMessage, currentCanSendSubliminalMessage) %>"
+                    <%= previewVisibleByDefault(standardPreview.canSendSubliminalMessage, whitelistedPreview.canSendSubliminalMessage, currentCanSendSubliminalMessage) ? "" : "hidden" %>
+                  >
+                    Send Subliminal Message
+                  </button>
                 <% } %>
 
-                <% if (canImage) { %>
-                <%- include("../../functions/cmdCard", {
-                    title: "Send Image Popup",
-                    body: `
-                    <form
-                        class="cmdForm"
-                        method="POST"
-                        action="/api/device/${encodeURIComponent(pairCode)}/image_popup"
-                        data-cmd="image_popup"
-                    >
-                    
-                        <input name="url" placeholder="https://example.com/image.png" />
-                
-                        <div style="margin-top:10px;">
-                        <button type="submit">Send</button>
-                        </div>
-                    </form>
-                    `
-                }) %>
+                <% if (previewCanImage) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="image_popup"
+                    data-tpl="tpl_cmd_image_popup"
+                    data-tpl-standard="tpl_cmd_image_popup"
+                    data-tpl-whitelisted="tpl_cmd_image_popup"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canImage, whitelistedPreview.canImage, canImage) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canImage, whitelistedPreview.canImage, canImage) %>"
+                    <%= previewVisibleByDefault(standardPreview.canImage, whitelistedPreview.canImage, canImage) ? "" : "hidden" %>
+                  >
+                    Send Image Popup
+                  </button>
                 <% } %>
 
-                <% if (canSetWallpaper) { %>
-                <%- include("../../functions/cmdCard", {
-                    title: "Set Wallpaper",
-                    body: `
-                    <form
-                        class="cmdForm"
-                        method="POST"
-                        action="/api/device/${encodeURIComponent(pairCode)}/set_wallpaper"
-                        data-cmd="set_wallpaper"
-                    >
-                    
-                        <input name="url" placeholder="https://example.com/wallpaper.png" />
-                        <div class="muted" style="margin-top:8px;">
-                        Only .png or .jpg/.jpeg
-                        </div>
-                
-                        <div style="margin-top:10px;">
-                        <button type="submit">Set</button>
-                        </div>
-                    </form>
-                    `
-                }) %>
+                <% if (previewCanFullscreenPopup) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="fullscreen_popup"
+                    data-tpl="tpl_cmd_fullscreen_popup"
+                    data-tpl-standard="tpl_cmd_fullscreen_popup"
+                    data-tpl-whitelisted="tpl_cmd_fullscreen_popup"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canFullscreenPopup, whitelistedPreview.canFullscreenPopup, canFullscreenPopup) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canFullscreenPopup, whitelistedPreview.canFullscreenPopup, canFullscreenPopup) %>"
+                    <%= previewVisibleByDefault(standardPreview.canFullscreenPopup, whitelistedPreview.canFullscreenPopup, canFullscreenPopup) ? "" : "hidden" %>
+                  >
+                    Send Fullscreen Popup
+                  </button>
                 <% } %>
+
+                <% if (previewCanSpiralOverlay) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="spiral_overlay"
+                    data-tpl="tpl_cmd_spiral_overlay"
+                    data-tpl-standard="tpl_cmd_spiral_overlay"
+                    data-tpl-whitelisted="tpl_cmd_spiral_overlay"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canSpiralOverlay, whitelistedPreview.canSpiralOverlay, canSpiralOverlay) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canSpiralOverlay, whitelistedPreview.canSpiralOverlay, canSpiralOverlay) %>"
+                    <%= previewVisibleByDefault(standardPreview.canSpiralOverlay, whitelistedPreview.canSpiralOverlay, canSpiralOverlay) ? "" : "hidden" %>
+                  >
+                    Spiral Overlay
+                  </button>
+                <% } %>
+
+                <% if (previewCanOpenUrl) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="open_url"
+                    data-tpl="tpl_cmd_open_url"
+                    data-tpl-standard="tpl_cmd_open_url"
+                    data-tpl-whitelisted="tpl_cmd_open_url"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canOpenUrl, whitelistedPreview.canOpenUrl, canOpenUrl) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canOpenUrl, whitelistedPreview.canOpenUrl, canOpenUrl) %>"
+                    <%= previewVisibleByDefault(standardPreview.canOpenUrl, whitelistedPreview.canOpenUrl, canOpenUrl) ? "" : "hidden" %>
+                  >
+                    Open URL
+                  </button>
+                <% } %>
+
+                <% if (previewCanSetWallpaper) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="set_wallpaper"
+                    data-tpl="<%= canSetWallpaperMedia ? "tpl_cmd_set_wallpaper_whitelisted" : "tpl_cmd_set_wallpaper_standard" %>"
+                    data-tpl-standard="tpl_cmd_set_wallpaper_standard"
+                    data-tpl-whitelisted="tpl_cmd_set_wallpaper_whitelisted"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canSetWallpaper, whitelistedPreview.canSetWallpaper, canSetWallpaper) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canSetWallpaper, whitelistedPreview.canSetWallpaper, canSetWallpaper) %>"
+                    <%= previewVisibleByDefault(standardPreview.canSetWallpaper, whitelistedPreview.canSetWallpaper, canSetWallpaper) ? "" : "hidden" %>
+                  >
+                    Set Wallpaper
+                  </button>
+                <% } %>
+
+                <% if (previewCanPlaySound) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="play_sound"
+                    data-tpl="<%= canPlaySoundUrl ? "tpl_cmd_play_sound_whitelisted" : "tpl_cmd_play_sound_standard" %>"
+                    data-tpl-standard="tpl_cmd_play_sound_standard"
+                    data-tpl-whitelisted="tpl_cmd_play_sound_whitelisted"
+                    data-ps-url-enabled="<%= canPlaySoundUrl ? '1' : '0' %>"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canPlaySound, whitelistedPreview.canPlaySound, canPlaySound) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canPlaySound, whitelistedPreview.canPlaySound, canPlaySound) %>"
+                    <%= previewVisibleByDefault(standardPreview.canPlaySound, whitelistedPreview.canPlaySound, canPlaySound) ? "" : "hidden" %>
+                  >
+                    Play Sound Effect
+                  </button>
+                <% } %>
+
+                <% if (previewCanPlaySoundLoop) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="play_sound_loop"
+                    data-tpl="<%= canPlaySoundLoopUrl ? "tpl_cmd_play_sound_loop_whitelisted" : "tpl_cmd_play_sound_loop_standard" %>"
+                    data-tpl-standard="tpl_cmd_play_sound_loop_standard"
+                    data-tpl-whitelisted="tpl_cmd_play_sound_loop_whitelisted"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canPlaySoundLoop, whitelistedPreview.canPlaySoundLoop, canPlaySoundLoop) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canPlaySoundLoop, whitelistedPreview.canPlaySoundLoop, canPlaySoundLoop) %>"
+                    <%= previewVisibleByDefault(standardPreview.canPlaySoundLoop, whitelistedPreview.canPlaySoundLoop, canPlaySoundLoop) ? "" : "hidden" %>
+                  >
+                    Play Sound Loop
+                  </button>
+                <% } %>
+
+                <% if (previewCanWriteForMe) { %>
+                  <button
+                    class="cmdBtn"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-cmd="write_for_me"
+                    data-tpl="tpl_cmd_write_for_me"
+                    data-tpl-standard="tpl_cmd_write_for_me"
+                    data-tpl-whitelisted="tpl_cmd_write_for_me"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canWriteForMe, whitelistedPreview.canWriteForMe, canWriteForMe) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canWriteForMe, whitelistedPreview.canWriteForMe, canWriteForMe) %>"
+                    <%= previewVisibleByDefault(standardPreview.canWriteForMe, whitelistedPreview.canWriteForMe, canWriteForMe) ? "" : "hidden" %>
+                  >
+                    Write For Me
+                  </button>
+                <% } %>
+
+                <% if (previewCanScreenshot) { %>
+                  <button
+                    class="cmdBtn cmdBtn--instant"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-instant-cmd="screenshot"
+                    data-live-only="1"
+                    data-heavy="1"
+                    data-action="/api/device/<%= encodeURIComponent(pairCode) %>/screenshot"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canScreenshot, whitelistedPreview.canScreenshot, canScreenshot) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canScreenshot, whitelistedPreview.canScreenshot, canScreenshot) %>"
+                    <%= previewVisibleByDefault(standardPreview.canScreenshot, whitelistedPreview.canScreenshot, canScreenshot) ? "" : "hidden" %>
+                    <% if (liveOnlyCommandsDisabled) { %>disabled aria-disabled="true" title="Only available while this user is online."<% } %>
+                  >
+                    Take Screenshot
+                  </button>
+                <% } %>
+
+                <% if (previewCanWebcamCapture) { %>
+                  <button
+                    class="cmdBtn cmdBtn--instant"
+                    type="button"
+                    data-command-preview-button="1"
+                    data-instant-cmd="webcam_capture"
+                    data-live-only="1"
+                    data-heavy="1"
+                    data-action="/api/device/<%= encodeURIComponent(pairCode) %>/webcam_capture"
+                    data-available-standard="<%= previewModeAttr("standard", standardPreview.canWebcamCapture, whitelistedPreview.canWebcamCapture, canWebcamCapture) %>"
+                    data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canWebcamCapture, whitelistedPreview.canWebcamCapture, canWebcamCapture) %>"
+                    <%= previewVisibleByDefault(standardPreview.canWebcamCapture, whitelistedPreview.canWebcamCapture, canWebcamCapture) ? "" : "hidden" %>
+                    <% if (liveOnlyCommandsDisabled) { %>disabled aria-disabled="true" title="Only available while this user is online."<% } %>
+                  >
+                    Webcam Capture
+                  </button>
+                <% } %>
+
               </div>
+
+              <div
+                id="commandPreviewEmpty"
+                class="emptyState commandPreviewEmpty"
+                <%= previewDefaultHasCommands ? "hidden" : "" %>
+              >
+                <div id="commandPreviewEmptyTitle" style="font-weight:900;">
+                  <%= previewToggleEnabled
+                    ? (previewDefaultMode === "standard"
+                        ? "Standard list is empty"
+                        : "Whitelisted list is empty")
+                    : "Nothing enabled" %>
+                </div>
+                <div id="commandPreviewEmptyText" class="muted" style="margin-top:6px;">
+                  <%= previewToggleEnabled
+                    ? "No commands are currently available in this preview."
+                    : "This user has disabled all commands." %>
+                </div>
+              </div>
+
+              <!-- ========= Command Templates (modal loads these) ========= -->
+              <template id="tpl_cmd_popup">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/popup"
+                  data-cmd="popup"
+                >
+                  <textarea
+                    name="message"
+                    maxlength="2000"
+                    placeholder="Message"
+                    style="margin-top:8px;"
+                  ></textarea>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_subliminal_message">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/subliminal_message"
+                  data-cmd="subliminal_message"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Messages</label>
+                    <div
+                      class="subliminalMessageList"
+                      data-subliminal-message-list="1"
+                    >
+                      <div class="subliminalMessageRow">
+                        <textarea
+                          name="messages"
+                          maxlength="2000"
+                          data-subliminal-message="1"
+                          placeholder="Message"
+                          style="margin-top:8px;"
+                        ></textarea>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    class="subliminalMessageAddBtn"
+                    type="button"
+                    data-subliminal-add="1"
+                  >
+                    + Add New Message
+                  </button>
+
+                  <div class="muted" style="margin-top:8px;">
+                    Blank extra rows are ignored.
+                  </div>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_open_url">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/open_url"
+                  data-cmd="open_url"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter URL here</label>
+                    <input name="url" placeholder="https://example.com" />
+                  </div>
+                  <div style="margin-top:10px;">
+                    <button type="submit">Open</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_image_popup">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/image_popup"
+                  data-cmd="image_popup"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter URL here</label>
+                    <input name="url" placeholder="https://example.com/image.png" />
+                  </div>
+                  <div class="muted cmdDivider">or</div>
+                  <%- include("../../common/upload_panel", {
+                    context: "image_popup",
+                    targetSelector: 'input[name="url"]',
+                  }) %>
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_fullscreen_popup">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/fullscreen_popup"
+                  data-cmd="fullscreen_popup"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter URL here</label>
+                    <input name="url" placeholder="https://example.com/image.png" />
+                  </div>
+                  <div class="muted cmdDivider">or</div>
+                  <%- include("../../common/upload_panel", {
+                    context: "image_popup",
+                    targetSelector: 'input[name="url"]',
+                  }) %>
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_spiral_overlay">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/spiral_overlay"
+                  data-cmd="spiral_overlay"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter swirl.3bu.dev URL</label>
+                    <input name="url" placeholder="https://swirl.3bu.dev/..." />
+                    <div class="muted cmdHint">Only swirl.3bu.dev links are supported here.</div>
+                  </div>
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_set_wallpaper_standard">
+                <%
+                  const standardWallpaperPlaceholder = standardCanSetWallpaperMedia
+                    ? "https://example.com/wallpaper.webm"
+                    : "https://example.com/wallpaper.png";
+                  const standardWallpaperHint = standardCanSetWallpaperMedia
+                    ? "Images, GIFs, and .webm/.ogg/.ogv videos on supported clients"
+                    : "Only .png or .jpg/.jpeg";
+                %>
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/set_wallpaper"
+                  data-cmd="set_wallpaper"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter URL here</label>
+                    <input name="url" placeholder="<%= standardWallpaperPlaceholder %>" />
+                    <div class="muted cmdHint"><%= standardWallpaperHint %></div>
+                  </div>
+                  <div class="muted cmdDivider">or</div>
+                  <%- include("../../common/upload_panel", {
+                    context: standardWallpaperUploadContext,
+                    targetSelector: 'input[name="url"]',
+                  }) %>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Set</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_set_wallpaper_whitelisted">
+                <%
+                  const whitelistedWallpaperPlaceholder = whitelistedCanSetWallpaperMedia
+                    ? "https://example.com/wallpaper.webm"
+                    : "https://example.com/wallpaper.png";
+                  const whitelistedWallpaperHint = whitelistedCanSetWallpaperMedia
+                    ? "Images, GIFs, and .webm/.ogg/.ogv videos on supported clients"
+                    : "Only .png or .jpg/.jpeg";
+                %>
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/set_wallpaper"
+                  data-cmd="set_wallpaper"
+                >
+                  <div class="cmdField">
+                    <label class="muted cmdFieldLabel">Enter URL here</label>
+                    <input name="url" placeholder="<%= whitelistedWallpaperPlaceholder %>" />
+                    <div class="muted cmdHint"><%= whitelistedWallpaperHint %></div>
+                  </div>
+                  <div class="muted cmdDivider">or</div>
+                  <%- include("../../common/upload_panel", {
+                    context: whitelistedWallpaperUploadContext,
+                    targetSelector: 'input[name="url"]',
+                  }) %>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Set</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_screenshot">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/screenshot"
+                  data-cmd="screenshot"
+                  data-heavy="1"
+                >
+                  <div class="muted" style="margin-top:8px;">
+                    This may take a moment. The result will appear in Responses.
+                  </div>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Request Screenshot</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_webcam_capture">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/webcam_capture"
+                  data-cmd="webcam_capture"
+                  data-heavy="1"
+                >
+                  <div class="muted" style="margin-top:8px;">
+                    This may take a moment. The result will appear in Responses.
+                  </div>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Request Webcam Capture</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_play_sound_standard">
+                <form
+                  class="cmdForm cmdFormPlaySound"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/play_sound"
+                  data-cmd="play_sound"
+                  data-ps-url-enabled="<%= standardCanPlaySoundUrl ? '1' : '0' %>"
+                >
+                  <input type="hidden" name="kind" value="builtin" />
+                  <input type="hidden" name="name" value="" />
+                  <input type="hidden" name="url" value="" />
+
+                  <div class="cmdField" style="margin-top:10px;">
+                    <label class="muted cmdFieldLabel">Built-in sound</label>
+                    <select class="psSelect" style="width:100%;">
+                        <option value="" selected>— Select a sound —</option>
+                        <option value="clicker.mp3">Clicker</option>
+                        <option value="snap.mp3">Snap</option>
+                        <option value="pop.mp3">Pop</option>
+                        <option value="bell-ring.mp3">Bell Ring</option>
+                        <option value="dog-bark.mp3">Dog Bark</option>
+                        <option value="cat-meow.mp3">Cat Meow</option>
+                    </select>
+                  </div>
+
+                  <% if (standardCanPlaySoundUrl) { %>
+                    <div class="muted cmdDivider">or</div>
+
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input class="psUrlInput" placeholder="https://example.com/sound.mp3" />
+                    </div>
+
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "play_sound",
+                      targetSelector: ".psUrlInput",
+                    }) %>
+                  <% } %>
+
+                  <div style="margin-top:12px;">
+                    <button type="submit">Play</button>
+                  </div>
+                </form>
+              </template>
+
+              <template id="tpl_cmd_play_sound_whitelisted">
+                <form
+                  class="cmdForm cmdFormPlaySound"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/play_sound"
+                  data-cmd="play_sound"
+                  data-ps-url-enabled="<%= whitelistedCanPlaySoundUrl ? '1' : '0' %>"
+                >
+                  <input type="hidden" name="kind" value="builtin" />
+                  <input type="hidden" name="name" value="" />
+                  <input type="hidden" name="url" value="" />
+
+                  <div class="cmdField" style="margin-top:10px;">
+                    <label class="muted cmdFieldLabel">Built-in sound</label>
+                    <select class="psSelect" style="width:100%;">
+                        <option value="" selected>— Select a sound —</option>
+                        <option value="clicker.mp3">Clicker</option>
+                        <option value="snap.mp3">Snap</option>
+                        <option value="pop.mp3">Pop</option>
+                        <option value="bell-ring.mp3">Bell Ring</option>
+                        <option value="dog-bark.mp3">Dog Bark</option>
+                        <option value="cat-meow.mp3">Cat Meow</option>
+                    </select>
+                  </div>
+
+                  <% if (whitelistedCanPlaySoundUrl) { %>
+                    <div class="muted cmdDivider">or</div>
+
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input class="psUrlInput" placeholder="https://example.com/sound.mp3" />
+                    </div>
+
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "play_sound",
+                      targetSelector: ".psUrlInput",
+                    }) %>
+                  <% } %>
+
+                  <div style="margin-top:12px;">
+                    <button type="submit">Play</button>
+                  </div>
+                </form>
+              </template>
+
+              <% function renderPlaySoundLoopForm(urlEnabled) { %>
+                <form
+                  class="cmdForm cmdFormPlaySound"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/play_sound_loop"
+                  data-cmd="play_sound_loop"
+                  data-ps-url-enabled="<%= urlEnabled ? '1' : '0' %>"
+                >
+                  <input type="hidden" name="kind" value="builtin" />
+                  <input type="hidden" name="name" value="" />
+                  <input type="hidden" name="url" value="" />
+
+                  <div class="cmdField" style="margin-top:10px;">
+                    <label class="muted cmdFieldLabel">Loop sound</label>
+                    <select class="psSelect" style="width:100%;">
+                      <option value="" selected>— Select a loop sound —</option>
+                      <option value="__binaural_tone__">Binaural Tone</option>
+                      <option value="clock.mp3">Clock</option>
+                      <option value="bubbles.mp3">Bubbles</option>
+                    </select>
+                  </div>
+
+                  <div class="cmdField psToneSettings" style="display:none;margin-top:10px;" hidden aria-hidden="true">
+                    <label class="muted cmdFieldLabel">Binaural tone settings</label>
+                    <div class="muted" style="margin-bottom:8px;">
+                      The base frequency sets the tone pitch. The beat frequency sets the pulse speed.
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                      <label class="muted">
+                        Base frequency (Hz)
+                        <input class="psBaseHzInput" name="baseHz" type="number" min="0.01" step="any" value="440" />
+                      </label>
+                      <label class="muted">
+                        Beat frequency (Hz)
+                        <input class="psBeatHzInput" name="beatHz" type="number" min="0.01" step="any" value="4" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <% if (urlEnabled) { %>
+                    <div class="muted cmdDivider">or</div>
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel">Enter URL here</label>
+                      <input class="psUrlInput" placeholder="https://example.com/sound.mp3" />
+                    </div>
+                    <div class="muted cmdDivider">or</div>
+                    <%- include("../../common/upload_panel", {
+                      context: "play_sound",
+                      targetSelector: ".psUrlInput",
+                    }) %>
+                  <% } %>
+
+                  <div style="margin-top:12px;">
+                    <button type="submit">Play Loop</button>
+                  </div>
+                </form>
+              <% } %>
+
+              <template id="tpl_cmd_play_sound_loop_standard">
+                <% renderPlaySoundLoopForm(standardCanPlaySoundLoopUrl); %>
+              </template>
+
+              <template id="tpl_cmd_play_sound_loop_whitelisted">
+                <% renderPlaySoundLoopForm(whitelistedCanPlaySoundLoopUrl); %>
+              </template>
+
+              <template id="tpl_cmd_write_for_me">
+                <form
+                  class="cmdForm"
+                  method="POST"
+                  action="/api/device/<%= encodeURIComponent(pairCode) %>/write_for_me"
+                  data-cmd="write_for_me"
+                >
+                  <textarea
+                    name="message"
+                    maxlength="4000"
+                    data-write-for-me-message="1"
+                    placeholder="Text to type on their computer..."
+                    style="margin-top:8px;"
+                  ></textarea>
+
+                  <label for="times">Times:</label>
+                  <input type="number" id="times" name="times" min="1" max="500" value="3">
+
+                  <div class="muted" style="margin-top:8px;">
+                    Sends a typing prompt to the client to type this text.
+                  </div>
+
+                  <div style="margin-top:10px;">
+                    <button type="submit">Send</button>
+                  </div>
+                </form>
+              </template>
+
+              <% if (canReportControlLink) { %>
+                <template id="tpl_control_report">
+                  <form
+                    id="controlReportForm"
+                    class="controlReportForm"
+                    data-control-report-form="1"
+                    action="/api/device/<%= encodeURIComponent(pairCode) %>/report"
+                  >
+                    <div class="muted controlReportIntro">
+                      Choose the reason that best matches this report.
+                    </div>
+
+                    <div class="controlReportReasonList" role="radiogroup" aria-label="Reason for reporting">
+                      <% (controlLinkReportReasonOptions || []).forEach((option, index) => { %>
+                        <label class="controlReportReasonOption">
+                          <input
+                            type="radio"
+                            name="reason"
+                            value="<%= option.key %>"
+                            <%= index === 0 ? "required" : "" %>
+                          />
+                          <span class="controlReportReasonBody">
+                            <span class="controlReportReasonLabel"><%= option.label %></span>
+                            <span class="muted controlReportReasonDescription"><%= option.description %></span>
+                          </span>
+                        </label>
+                      <% }) %>
+                    </div>
+
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel" for="controlReportDetails">
+                        Extra details (optional)
+                      </label>
+                      <textarea
+                        id="controlReportDetails"
+                        name="details"
+                        maxlength="1000"
+                        placeholder="Anything else admins should know?"
+                      ></textarea>
+                    </div>
+
+                    <div class="controlReportActions">
+                      <button type="submit">Send Report</button>
+                      <div
+                        data-control-report-status="1"
+                        class="muted controlReportStatus"
+                        aria-live="polite"
+                      ></div>
+                    </div>
+                  </form>
+                </template>
+              <% } %>
+
+              <% if (viewerIsOwner) { %>
+                <template id="tpl_command_history_report">
+                  <form
+                    class="controlReportForm"
+                    data-control-report-form="1"
+                    data-command-history-report-form="1"
+                    action=""
+                  >
+                    <div class="muted controlReportIntro">
+                      Choose a reason for the report. Admins will review the report without revealing who sent the command to you here.
+                    </div>
+
+                    <div class="controlReportReasonList" role="radiogroup" aria-label="Reason for reporting">
+                      <% (commandHistoryReportReasonOptions || []).forEach((option, index) => { %>
+                        <label class="controlReportReasonOption">
+                          <input
+                            type="radio"
+                            name="reason"
+                            value="<%= option.key %>"
+                            <%= index === 0 ? "required" : "" %>
+                          />
+                          <span class="controlReportReasonBody">
+                            <span class="controlReportReasonLabel"><%= option.label %></span>
+                            <span class="muted controlReportReasonDescription"><%= option.description %></span>
+                          </span>
+                        </label>
+                      <% }) %>
+                    </div>
+
+                    <div class="cmdField">
+                      <label class="muted cmdFieldLabel" for="commandHistoryReportDetails">
+                        Extra details (optional)
+                      </label>
+                      <textarea
+                        id="commandHistoryReportDetails"
+                        name="details"
+                        maxlength="1000"
+                        placeholder="Anything else admins should know?"
+                      ></textarea>
+                    </div>
+
+                    <div class="controlReportActions">
+                      <button type="submit">Send Report</button>
+                      <div
+                        data-control-report-status="1"
+                        class="muted controlReportStatus"
+                        aria-live="polite"
+                      ></div>
+                    </div>
+                  </form>
+                </template>
+              <% } %>
             </div>
             <% } else { %>
             <div class="emptyState">
               <div style="font-weight:900;">Nothing enabled</div>
               <div class="muted" style="margin-top:6px;">
-                This user has disabled all commands on their profile.
+                This user has disabled all commands.
               </div>
             </div>
             <% } %>
@@ -162,9 +1194,7 @@
             <button id="clearResp" type="button">Clear</button>
           </div>
           <div class="cardBd">
-            <div id="respBox" class="respBox">
-              <div class="respLine">Ready.</div>
-            </div>
+            <div id="respBox" class="respBox"></div>
             <div class="muted" style="margin-top:10px;">
               Results and errors will appear here.
             </div>
@@ -176,14 +1206,319 @@
         <%- include("about_me") %>
       </div>
 
-      <div class="areaBoard">
-        <%- include("message_board") %>
-      </div>
-
     </div>
 
+    <%- include("message_board") %>
+
+    <!-- ========= Command Modal (single reusable) ========= -->
+    <div id="cmdModal" class="cmdModal" style="display:none;" aria-hidden="true">
+      <div class="cmdModalBackdrop" data-cmd-modal-close="1"></div>
+
+      <div class="cmdModalCard" role="dialog" aria-modal="true" aria-labelledby="cmdModalTitle">
+        <div class="cmdModalHd">
+          <div id="cmdModalTitle" class="cmdModalTitle">Command</div>
+          <button id="cmdModalClose" class="cmdModalClose" type="button" data-cmd-modal-close="1">Close</button>
+        </div>
+
+        <div id="cmdModalBody" class="cmdModalBody"></div>
+      </div>
+    </div>
+
+    <% if (viewerIsOwner) { %>
+      <template id="tpl_control_theme">
+        <form
+          id="controlThemeForm"
+          class="controlThemeForm"
+          data-control-theme-form="1"
+        >
+          <div class="muted controlThemeIntro">
+            Customize how your control link looks.
+          </div>
+
+          <div class="controlAvatarSection">
+            <div class="controlAvatarPreviewWrap">
+              <img
+                id="controlThemeAvatarPreview"
+                class="controlAvatarPreview"
+                src="<%= siteAvatarUrl(ownerUser || { discord_id: ownerId }, 128) %><%= controlLinkAvatarVersion ? `&v=${encodeURIComponent(controlLinkAvatarVersion)}` : "" %>"
+                alt=""
+              />
+
+              <button
+                id="controlAvatarDeleteBtn"
+                class="controlAvatarDeleteBtn"
+                type="button"
+                title="Remove custom avatar"
+                aria-label="Remove custom avatar"
+                <% if (!controlLinkHasCustomAvatar) { %>hidden<% } %>
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="controlAvatarMeta">
+              <div class="muted cmdFieldLabel controlAvatarLabel">
+                Set avatar
+              </div>
+              <div class="muted controlThemeHint controlThemeHint--left">
+                Upload PNG, JPG, WEBP, or GIF up to 4 MB.
+              </div>
+
+              <input
+                id="controlThemeAvatarInput"
+                class="controlAvatarInput"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+              />
+
+              <button
+                id="controlAvatarUploadBtn"
+                class="controlAvatarUploadBtn"
+                type="button"
+              >
+                Choose Image
+              </button>
+            </div>
+          </div>
+
+          <div class="controlBannerSection">
+            <div class="controlBannerPreviewWrap">
+              <div
+                id="controlThemeBannerPreview"
+                class="controlBannerPreview"
+                <% if (controlLinkHasCustomBanner) { %>
+                  style="background-image:url('<%= siteBannerUrl(ownerUser || { discord_id: ownerId }, 1200) %><%= controlLinkBannerVersion ? `&v=${encodeURIComponent(controlLinkBannerVersion)}` : "" %>')"
+                <% } %>
+              ></div>
+
+              <button
+                id="controlBannerDeleteBtn"
+                class="controlAvatarDeleteBtn controlBannerDeleteBtn"
+                type="button"
+                title="Remove custom banner"
+                aria-label="Remove custom banner"
+                <% if (!controlLinkHasCustomBanner) { %>hidden<% } %>
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="controlAvatarMeta">
+              <div class="muted cmdFieldLabel controlAvatarLabel">
+                Set banner
+              </div>
+              <div class="muted controlThemeHint controlThemeHint--left">
+                Upload PNG, JPG, WEBP, or GIF up to 8 MB.
+              </div>
+
+              <input
+                id="controlThemeBannerInput"
+                class="controlAvatarInput"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+              />
+
+              <button
+                id="controlBannerUploadBtn"
+                class="controlAvatarUploadBtn"
+                type="button"
+              >
+                Choose Image
+              </button>
+            </div>
+          </div>
+
+          <div class="controlBackgroundSection">
+            <div class="controlBackgroundPreviewWrap">
+              <div
+                id="controlThemeBackgroundPreview"
+                class="controlBackgroundPreview"
+                <% if (controlLinkHasCustomBackground) { %>
+                  style="background-image:url('<%= siteBackgroundUrl(ownerUser || { discord_id: ownerId }, 1200) %><%= controlLinkBackgroundVersion ? `&v=${encodeURIComponent(controlLinkBackgroundVersion)}` : "" %>')"
+                <% } %>
+              ></div>
+
+              <button
+                id="controlBackgroundDeleteBtn"
+                class="controlAvatarDeleteBtn controlBackgroundDeleteBtn"
+                type="button"
+                title="Remove custom background"
+                aria-label="Remove custom background"
+                <% if (!controlLinkHasCustomBackground) { %>hidden<% } %>
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Zm1 11a2 2 0 0 1-2-2V8h12v11a2 2 0 0 1-2 2H8Z" fill="currentColor"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="controlAvatarMeta">
+              <div class="muted cmdFieldLabel controlAvatarLabel">
+                Set background
+              </div>
+              <div class="muted controlThemeHint controlThemeHint--left">
+                Upload PNG, JPG, WEBP, or GIF up to 12 MB.
+              </div>
+
+              <input
+                id="controlThemeBackgroundInput"
+                class="controlAvatarInput"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+              />
+
+              <button
+                id="controlBackgroundUploadBtn"
+                class="controlAvatarUploadBtn"
+                type="button"
+              >
+                Choose Image
+              </button>
+            </div>
+          </div>
+
+          <div class="cmdField">
+            <label class="muted cmdFieldLabel" for="controlThemeDisplayName">
+              Custom display name
+            </label>
+            <input
+              id="controlThemeDisplayName"
+              name="displayName"
+              maxlength="40"
+              placeholder="<%= ownerUser?.global_name || ownerUser?.username || ownerId %>"
+              value="<%= controlLinkCustomName || "" %>"
+            />
+            <div class="muted controlThemeHint">
+              Leave blank to use your normal Discord name.
+            </div>
+          </div>
+
+          <div class="cmdField">
+            <label class="muted cmdFieldLabel" for="controlThemeAboutMe">
+              About me
+            </label>
+            <textarea
+              id="controlThemeAboutMe"
+              class="controlThemeAboutMeInput"
+              name="aboutMe"
+              maxlength="500"
+              placeholder="Tell people a little about yourself..."
+            ><%= aboutMe || "" %></textarea>
+            <div class="controlThemeTextareaMeta">
+              <div class="muted controlThemeHint controlThemeHint--left">
+                Markdown: *italics* #bold# -strikethrough- _underline_
+              </div>
+              <div
+                id="controlThemeAboutMeCount"
+                class="muted controlThemeCounter"
+                aria-live="polite"
+              >0/500</div>
+            </div>
+          </div>
+
+          <div class="controlThemePicker" role="radiogroup" aria-label="Control link theme">
+            <% for (const theme of controlLinkThemeOptions) { %>
+              <label
+                class="controlThemeSwatch controlThemeSwatch--<%= theme.key %>"
+                title="<%= theme.label %>"
+              >
+                <input
+                  type="radio"
+                  name="theme"
+                  value="<%= theme.key %>"
+                  aria-label="<%= theme.label %>"
+                  <%= controlLinkTheme === theme.key ? "checked" : "" %>
+                />
+                <span class="controlThemeDot"></span>
+              </label>
+            <% } %>
+          </div>
+
+          <div class="controlThemeActions">
+            <button type="submit">Save Changes</button>
+          </div>
+
+          <div class="muted controlThemeStatus" id="controlThemeStatus"></div>
+        </form>
+      </template>
+
+      <div
+        id="avatarCropModal"
+        class="avatarCropModal"
+        hidden
+        aria-hidden="true"
+      >
+        <div class="avatarCropBackdrop" data-avatar-crop-close="1"></div>
+
+        <div
+          class="avatarCropCard"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="avatarCropTitle"
+        >
+          <div class="avatarCropHd">
+            <div>
+              <div id="avatarCropTitle" class="avatarCropTitle">Crop Avatar</div>
+              <div id="avatarCropSubtitle" class="muted avatarCropSubtitle">Drag to position and use the slider to zoom.</div>
+            </div>
+          </div>
+
+          <div class="avatarCropBody">
+            <div class="avatarCropStage">
+              <div id="avatarCropViewport" class="avatarCropViewport">
+                <img
+                  id="avatarCropImage"
+                  class="avatarCropImage"
+                  alt=""
+                  draggable="false"
+                />
+                <div class="avatarCropFrame" aria-hidden="true">
+                  <div id="avatarCropSafeArea" class="avatarCropSafeArea" aria-hidden="true"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="avatarCropSidebar">
+              <div id="avatarCropPreviewLabel" class="avatarCropPreviewLabel muted">Preview</div>
+              <canvas
+                id="avatarCropPreviewCanvas"
+                class="avatarCropPreviewCanvas"
+                width="160"
+                height="160"
+              ></canvas>
+
+              <label class="avatarCropZoomField" for="avatarCropZoom">
+                <span class="muted avatarCropZoomLabel">Zoom</span>
+                <input
+                  id="avatarCropZoom"
+                  class="avatarCropZoom"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="0"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div class="avatarCropActions">
+            <div id="avatarCropStatus" class="muted avatarCropStatus"></div>
+            <div class="avatarCropButtonRow">
+              <button type="button" class="avatarCropCancelBtn" data-avatar-crop-close="1">Cancel</button>
+              <button id="avatarCropConfirmBtn" type="button" class="avatarCropConfirmBtn">Use Avatar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    <% } %>
   </div>
 
+  <%- include("../../common/favicon_badge_client") %>
   <%- include("con_scripts", { user }) %>
 
 </body>

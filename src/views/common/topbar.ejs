@@ -1,59 +1,126 @@
-<header class="topbar">
-<a class="brand" href="/" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;">
-    <img
-    src="/favicon-96x96.png"
-    alt="PlayCtrl"
-    style="width:34px;height:34px;"
-    />
-    <div class="brandName">Play<span>Ctrl</span>.me</div>
-</a>
+<div class="topbarWrap">
+  <header class="topbar">
+    <a class="brand" href="/" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;">
+      <img
+        src="/favicon-96x96.png"
+        alt="PlayCtrl.me"
+        style="width:34px;height:34px;"
+      />
+      <div class="brandName">Play<span>Ctrl</span>.me</div>
+    </a>
 
-<div class="navRight">
-    <% if (user) { %>
-    <button class="hamburger" id="hamburgerBtn" type="button" aria-label="Open menu" aria-haspopup="dialog" aria-expanded="false">
-        <span class="bar"></span>
-        <span class="bar"></span>
-        <span class="bar"></span>
-    </button>
-
-    <div class="navDesktop" style="display:flex;align-items:center;gap:10px;">
+    <div class="navRight">
+      <% if (user) { %>
+      <div class="navDesktop" style="display:flex;align-items:center;gap:10px;">
         <% if (isAdmin) { %><a class="btn btn--ghost" href="/admin">Admin</a><% } %>
         <a class="btn btn--ghost" href="/favorites">Favorites</a>
         <a class="btn btn--ghost" href="/discover">Discover</a>
         <a class="btn btn--ghost" href="/profile">Profile</a>
 
         <div class="dd" id="dd">
-        <button class="ddBtn" id="ddBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <button class="ddBtn" id="ddBtn" type="button" aria-haspopup="menu" aria-expanded="false">
             <img class="avatar" src="<%= avatarUrl %>"
-                onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
-                alt="" />
+              onerror="this.onerror=null;this.src='/default-avatar.svg'"
+              alt="" />
             <span><%= displayName %></span>
             <span class="caret">▾</span>
-        </button>
+          </button>
 
-        <div class="ddMenu" id="ddMenu" role="menu" aria-label="User menu">
+          <div class="ddMenu" id="ddMenu" role="menu" aria-label="User menu">
             <div class="ddItem">
-            <div>
+              <div>
                 <div style="font-weight:900;"><%= displayName %></div>
                 <div class="muted mono" style="font-size:12px;"><%= user.discord_id %></div>
-            </div>
+              </div>
             </div>
 
             <button class="ddLink" role="menuitem" onclick="location.href='/profile'">Profile</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/discover'">Discover</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/favorites'">Favorites</button>
+            <button class="ddLink" role="menuitem" onclick="location.href='/notifications'">Notifications</button>
             <% if (isAdmin) { %>
             <button class="ddLink" role="menuitem" onclick="location.href='/admin'">Admin</button>
             <% } %>
 
             <form method="POST" action="/logout" style="margin:0;">
-            <button class="ddLink" role="menuitem" type="submit" style="color:var(--danger);">Logout</button>
+              <button class="ddLink" role="menuitem" type="submit" style="color:var(--danger);">Logout</button>
             </form>
+          </div>
         </div>
+      </div>
+
+      <div
+        class="notifShell"
+        id="notifShell"
+        data-unread-count="<%= Number(notificationUnreadCount || 0) %>"
+        data-total-count="<%= Number(notificationTotalCount || 0) %>"
+      >
+        <button
+          class="notifBellBtn"
+          id="notifBellBtn"
+          type="button"
+          aria-label="Notifications"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          data-notification-bell="1"
+          data-has-unread="<%= notificationUnreadCount > 0 ? "1" : "0" %>"
+        >
+          <%- include("./icons/notification_icon") %>
+          <span class="notifBellBadge" data-notification-badge <% if (!(notificationUnreadCount > 0)) { %>hidden<% } %>></span>
+        </button>
+
+        <div class="notifMenu" id="notifMenu" role="menu" aria-label="Notifications">
+          <div class="notifMenuHd">
+            <div>Notifications</div>
+            <div class="notifMenuCount" data-notification-count-label>
+              <% if (notificationUnreadCount > 0) { %>
+                <%= notificationUnreadCount %> new
+              <% } else { %>
+                All caught up
+              <% } %>
+            </div>
+          </div>
+
+          <%- include("notification_list", {
+            notificationItems: notificationMenuItems,
+            compact: true,
+            emptyMessage: "You are all caught up.",
+          }) %>
+
+          <div class="notifMenuFooter">
+            <button
+              class="notifMenuLink"
+              type="button"
+              data-notification-clear-all="1"
+              <% if (!(notificationTotalCount > 0)) { %>disabled<% } %>
+            >
+              Clear all
+            </button>
+            <a class="notifMenuLink" href="/notifications">See all</a>
+          </div>
         </div>
+      </div>
+
+      <button class="hamburger" id="hamburgerBtn" type="button" aria-label="Open menu" aria-haspopup="dialog" aria-expanded="false">
+        <span class="bar"></span>
+        <span class="bar"></span>
+        <span class="bar"></span>
+      </button>
+      <% } else { %>
+      <a class="btn btn--ghost" href="/discover">Discover</a>
+      <a class="btn" href="/auth/discord">Login with Discord</a>
+      <% } %>
     </div>
-    <% } else { %>
-    <a class="btn" href="/auth/discord">Login with Discord</a>
-    <% } %>
+
+    <a
+      class="topbarDiscordTab"
+      href="https://discord.gg/GDKYvcS8RZ"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Join our community Discord"
+    >
+      <img class="topbarDiscordTabIcon" src="/discord_logo.webp" alt="" />
+      <span>Join our community Discord!</span>
+    </a>
+  </header>
 </div>
-</header>

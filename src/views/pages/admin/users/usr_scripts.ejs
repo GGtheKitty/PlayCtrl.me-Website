@@ -8,6 +8,15 @@
     const applyBtn = document.getElementById('apply');
     const go2 = document.getElementById('go2');
 
+    function showToast(message, type) {
+      if (!message) return;
+      if (window.showToast) {
+        window.showToast(message, { type: type || 'info' });
+        return;
+      }
+      window.alert(message);
+    }
+
     function apply(pageOverride) {
       const params = new URLSearchParams(window.location.search);
       const q = (qEl.value || '').trim();
@@ -50,6 +59,45 @@
       const editBtn = e.target.closest('[data-edit]');
       const saveBtn = e.target.closest('[data-save]');
       const cancelBtn = e.target.closest('[data-cancel]');
+      const supporterToggleBtn = e.target.closest('[data-supporter-toggle]');
+      const clearQueueBtn = e.target.closest('[data-clear-queue]');
+
+      function syncSupporterToggle(btn, enabled) {
+        if (!btn) return;
+        const on = !!enabled;
+        btn.setAttribute('data-enabled', on ? '1' : '0');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.classList.toggle('isOn', on);
+      }
+
+      if (supporterToggleBtn) {
+        const nextEnabled = supporterToggleBtn.getAttribute('data-enabled') !== '1';
+        syncSupporterToggle(supporterToggleBtn, nextEnabled);
+        return;
+      }
+
+      if (clearQueueBtn) {
+        const id = clearQueueBtn.getAttribute('data-clear-queue');
+        const displayName = clearQueueBtn.getAttribute('data-display-name') || id || 'this user';
+        const queueCount = parseInt(clearQueueBtn.getAttribute('data-queue-count') || '0', 10);
+        const countLabel = Number.isFinite(queueCount) && queueCount > 0
+          ? queueCount + ' queued command' + (queueCount === 1 ? '' : 's')
+          : 'queued commands';
+
+        if (!id) return;
+        if (!confirm('Clear ' + countLabel + ' for ' + displayName + '?')) return;
+
+        clearQueueBtn.disabled = true;
+        try {
+          const data = await post('/admin/users/' + encodeURIComponent(id) + '/queue/clear', {});
+          showToast('Cleared ' + (data.clearedCount || 0) + ' queued command' + ((data.clearedCount || 0) === 1 ? '' : 's') + '.', 'success');
+          setTimeout(() => location.reload(), 220);
+        } catch (err) {
+          showToast('Failed to clear queue: ' + (err && err.message ? err.message : String(err)), 'error');
+          clearQueueBtn.disabled = false;
+        }
+        return;
+      }
 
       if (editBtn) {
         const id = editBtn.getAttribute('data-edit');
@@ -61,7 +109,24 @@
       if (cancelBtn) {
         const id = cancelBtn.getAttribute('data-cancel');
         const row = document.querySelector('[data-edit-row="' + CSS.escape(id) + '"]');
-        if (row) row.style.display = 'none';
+        if (row) {
+          const input = row.querySelector('[data-commands-input="1"]');
+          const strikeInput = row.querySelector('[data-strike-input="1"]');
+          const supporterToggleBtn = row.querySelector('[data-supporter-toggle]');
+          const status = row.querySelector('[data-status]');
+          if (input) input.value = input.getAttribute('data-original-value') || '0';
+          if (strikeInput) {
+            strikeInput.value = strikeInput.getAttribute('data-original-strike-value') || '0';
+          }
+          if (supporterToggleBtn) {
+            syncSupporterToggle(
+              supporterToggleBtn,
+              supporterToggleBtn.getAttribute('data-original-enabled') === '1'
+            );
+          }
+          if (status) status.textContent = '';
+          row.style.display = 'none';
+        }
         return;
       }
 
@@ -69,20 +134,33 @@
         const id = saveBtn.getAttribute('data-save');
         const row = document.querySelector('[data-edit-row="' + CSS.escape(id) + '"]');
         if (!row) return;
-        const input = row.querySelector('input');
+        const input = row.querySelector('[data-commands-input="1"]');
+        const strikeInput = row.querySelector('[data-strike-input="1"]');
+        const supporterToggleBtn = row.querySelector('[data-supporter-toggle]');
         const status = row.querySelector('[data-status]');
         const val = parseInt(input.value, 10);
+        const strikeVal = parseInt(strikeInput.value, 10);
+        const hasSupporterBadge =
+          supporterToggleBtn && supporterToggleBtn.getAttribute('data-enabled') === '1'
+            ? '1'
+            : '0';
         if (!Number.isFinite(val) || val < 0) {
           if (status) status.textContent = "Enter a valid number.";
           return;
         }
-        if (!confirm("Set commands sent for " + id + " to " + val + "?")) return;
+        if (!Number.isFinite(strikeVal) || strikeVal < 0 || strikeVal > 3) {
+          if (status) status.textContent = "Strikes must be between 0 and 3.";
+          return;
+        }
+        if (!confirm("Save changes for " + id + "?")) return;
 
         if (status) status.textContent = "Saving...";
         try {
           await post("/admin/users/set-commands", {
             discord_id: id,
-            commands_sent_total: String(val)
+            commands_sent_total: String(val),
+            strike_count: String(strikeVal),
+            has_supporter_badge: hasSupporterBadge
           });
           if (status) status.textContent = "Saved.";
           setTimeout(() => {

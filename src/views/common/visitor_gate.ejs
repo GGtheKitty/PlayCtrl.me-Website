@@ -1,0 +1,99 @@
+<div id="visitorGate" class="visitorGate" hidden>
+  <div class="visitorGateBackdrop" aria-hidden="true"></div>
+  <section
+    class="visitorGateDialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="visitorGateTitle"
+    aria-describedby="visitorGateDescription"
+  >
+    <div class="visitorGateHead">
+      <div class="visitorGateKicker">Adults only</div>
+      <h2 id="visitorGateTitle">Confirm before entering PlayCtrl.me</h2>
+      <p id="visitorGateDescription">
+        PlayCtrl.me is only for adults 18+. Read the Terms of Service, then confirm before continuing.
+      </p>
+    </div>
+
+    <div id="visitorGateTerms" class="visitorGateTerms" tabindex="0">
+      <%- include("terms_content") %>
+    </div>
+
+    <div class="visitorGateChecklist">
+      <label>
+        <input id="visitorGateAge" type="checkbox" />
+        <span>I confirm that I am 18 years old or older.</span>
+      </label>
+      <label>
+        <input id="visitorGateRead" type="checkbox" disabled />
+        <span>I have read and agree to the Terms of Service.</span>
+      </label>
+    </div>
+
+    <div class="visitorGateActions">
+      <a href="https://www.google.com/" rel="nofollow">Leave</a>
+      <button id="visitorGateAccept" class="btn" type="button" disabled>Enter site</button>
+    </div>
+  </section>
+</div>
+
+<script>
+  (function() {
+    const storageKey = "playctrl.visitorTerms.v1";
+    const gate = document.getElementById("visitorGate");
+    const terms = document.getElementById("visitorGateTerms");
+    const age = document.getElementById("visitorGateAge");
+    const read = document.getElementById("visitorGateRead");
+    const accept = document.getElementById("visitorGateAccept");
+    if (!gate || !terms || !age || !read || !accept) return;
+
+    function storageConfirmed() {
+      try {
+        return window.localStorage.getItem(storageKey) === "accepted";
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function saveConfirmed() {
+      try {
+        window.localStorage.setItem(storageKey, "accepted");
+      } catch (err) {
+        document.cookie = storageKey + "=accepted; Max-Age=31536000; Path=/; SameSite=Lax";
+      }
+    }
+
+    function hasScrolledTerms() {
+      return terms.scrollTop + terms.clientHeight >= terms.scrollHeight - 8;
+    }
+
+    function sync() {
+      if (hasScrolledTerms()) {
+        read.disabled = false;
+      }
+      accept.disabled = !(age.checked && read.checked && !read.disabled);
+    }
+
+    if (storageConfirmed() || document.cookie.indexOf(storageKey + "=accepted") !== -1) {
+      gate.remove();
+      return;
+    }
+
+    gate.hidden = false;
+    document.documentElement.classList.add("visitorGateLocked");
+    document.body.classList.add("visitorGateLocked");
+    setTimeout(function() { terms.focus(); }, 0);
+    sync();
+
+    terms.addEventListener("scroll", sync);
+    age.addEventListener("change", sync);
+    read.addEventListener("change", sync);
+    accept.addEventListener("click", function() {
+      if (accept.disabled) return;
+      saveConfirmed();
+      gate.remove();
+      document.documentElement.classList.remove("visitorGateLocked");
+      document.body.classList.remove("visitorGateLocked");
+    });
+  })();
+</script>

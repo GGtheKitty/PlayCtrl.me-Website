@@ -1,0 +1,240 @@
+<% if (user) { %>
+<script>
+  const qEl = document.getElementById('q');
+  const searchBtn = document.getElementById('searchBtn');
+  const clearSearchBtn = document.getElementById('clearSearch');
+  const countEl = document.getElementById('count');
+  const listEl = document.getElementById('list');
+  const typesBox = document.getElementById('typesBox');
+  const typeSearchEl = document.getElementById('typeSearch');
+  const typeEmptyEl = document.getElementById('typeEmpty');
+  const typeCountEl = document.getElementById('typeCount');
+  const applyBtn = document.getElementById('apply');
+  const resetAllBtn = document.getElementById('resetAll');
+  const clearTypesBtn = document.getElementById('clearTypes');
+
+  const pageSelect = document.getElementById('pageSelect');
+  const pageInput = document.getElementById('pageInput');
+  const pageGo = document.getElementById('pageGo');
+  const imageModal = document.getElementById('imageModal');
+  const imageModalImg = document.getElementById('imageModalImg');
+  const imageModalClose = document.getElementById('imageModalClose');
+  const typeRows = Array.from(typesBox.querySelectorAll('.chk'));
+  const localTimeEls = Array.from(document.querySelectorAll('.js-local-log-time'));
+
+  function formatLocalLogTimes() {
+    if (!localTimeEls.length) return;
+
+    const labelFormatter = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    });
+    const titleFormatter = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'full',
+      timeStyle: 'long'
+    });
+
+    localTimeEls.forEach((el) => {
+      const ts = Number(el.getAttribute('data-timestamp') || 0);
+      if (!Number.isFinite(ts) || ts <= 0) return;
+
+      const date = new Date(ts);
+      el.textContent = labelFormatter.format(date);
+      el.title = titleFormatter.format(date);
+    });
+  }
+
+  function getSelectedTypes() {
+    const inputs = Array.from(typesBox.querySelectorAll('input[type="checkbox"]'));
+    return inputs.filter(i => i.checked).map(i => i.value);
+  }
+
+  function goWithParams(extra) {
+    const params = new URLSearchParams(window.location.search);
+    for (const [k, v] of Object.entries(extra || {})) {
+      if (v === null) params.delete(k);
+      else params.set(k, String(v));
+    }
+    window.location.search = params.toString();
+  }
+
+  function runSearch() {
+    const q = (qEl.value || '').trim();
+    const types = getSelectedTypes();
+    const typeSearch = (typeSearchEl?.value || '').trim();
+    goWithParams({
+      q: q ? q : null,
+      typeSearch: typeSearch ? typeSearch : null,
+      types: types.length ? types.join(',') : null,
+      page: 1
+    });
+  }
+
+  function getVisibleTypeCount() {
+    return typeRows.filter((row) => !row.hidden).length;
+  }
+
+  function updateTypeCount() {
+    if (!typeCountEl) return;
+    const selected = getSelectedTypes().length;
+    const visible = getVisibleTypeCount();
+    const total = typeRows.length;
+    const left = selected ? `${selected} selected` : 'All types';
+    typeCountEl.textContent = visible === total ? left : `${left} • ${visible}/${total} shown`;
+  }
+
+  function updateTypeFilter() {
+    const q = (typeSearchEl?.value || '').trim().toLowerCase();
+    let visible = 0;
+
+    typeRows.forEach((row) => {
+      const input = row.querySelector('input[type="checkbox"]');
+      const value = String(input?.value || '').toLowerCase();
+      const match = !q || value.includes(q);
+      row.hidden = !match;
+      if (match) visible += 1;
+    });
+
+    if (typeEmptyEl) {
+      typeEmptyEl.hidden = visible !== 0;
+    }
+
+    updateTypeCount();
+  }
+
+  searchBtn.addEventListener('click', runSearch);
+
+  qEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      runSearch();
+    }
+  });
+
+  clearSearchBtn.addEventListener('click', () => {
+    qEl.value = '';
+    runSearch();
+  });
+
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-toggle="payload"]');
+    if (btn) {
+      const card = btn.closest('.logCard');
+      const pre = card.querySelector('pre.payload');
+      const open = pre.style.display !== 'none';
+      pre.style.display = open ? 'none' : 'block';
+      btn.textContent = open ? 'Details' : 'Hide';
+      return;
+    }
+
+    const chip = e.target.closest('.uChip[data-uid]');
+    if (chip && !chip.classList.contains('muted')) {
+      const uid = chip.getAttribute('data-uid') || '';
+      qEl.value = uid;
+      qEl.focus();
+    }
+
+    const preview = e.target.closest('[data-fullscreen-image]');
+    if (preview && imageModal && imageModalImg) {
+      imageModalImg.src = preview.getAttribute('data-fullscreen-image') || '';
+      imageModal.hidden = false;
+      document.body.classList.add('modalOpen');
+    }
+  });
+
+  function closeImageModal() {
+    if (!imageModal || !imageModalImg) return;
+    imageModal.hidden = true;
+    imageModalImg.removeAttribute('src');
+    document.body.classList.remove('modalOpen');
+  }
+
+  if (imageModalClose) {
+    imageModalClose.addEventListener('click', closeImageModal);
+  }
+
+  if (imageModal) {
+    imageModal.addEventListener('click', (e) => {
+      if (e.target === imageModal) closeImageModal();
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && imageModal && !imageModal.hidden) {
+      closeImageModal();
+    }
+  });
+
+  function setTypesByPrefix(prefixes) {
+    const inputs = Array.from(typesBox.querySelectorAll('input[type="checkbox"]'));
+    for (const i of inputs) {
+      const v = i.value || '';
+      i.checked = prefixes.some(p => v.startsWith(p));
+    }
+    updateTypeCount();
+  }
+
+  document.getElementById('onlyCommands').addEventListener('click', () => {
+    setTypesByPrefix(['command_']);
+  });
+
+  document.getElementById('onlyAuth').addEventListener('click', () => {
+    setTypesByPrefix(['user_', 'invite_']);
+  });
+
+  document.getElementById('onlyAdmin').addEventListener('click', () => {
+    setTypesByPrefix(['admin_']);
+  });
+
+  clearTypesBtn.addEventListener('click', () => {
+    const inputs = Array.from(typesBox.querySelectorAll('input[type="checkbox"]'));
+    for (const i of inputs) i.checked = false;
+    if (typeSearchEl) {
+      typeSearchEl.value = '';
+      updateTypeFilter();
+    }
+    updateTypeCount();
+  });
+
+  if (typeSearchEl) {
+    typeSearchEl.addEventListener('input', updateTypeFilter);
+    typeSearchEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      runSearch();
+    });
+  }
+
+  typesBox.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.addEventListener('change', updateTypeCount);
+  });
+
+  applyBtn.addEventListener('click', runSearch);
+
+  resetAllBtn.addEventListener('click', () => {
+    window.location.href = '/admin/logs';
+  });
+
+  if (pageSelect) {
+    pageSelect.addEventListener('change', () => {
+      const n = Number(pageSelect.value || 1) || 1;
+      goWithParams({
+        page: n
+      });
+    });
+  }
+
+  if (pageGo) {
+    pageGo.addEventListener('click', () => {
+      const n = Number(pageInput.value || 1) || 1;
+      goWithParams({
+        page: Math.max(1, Math.min(n, <%- JSON.stringify(pages) %>))
+      });
+    });
+  }
+
+  updateTypeFilter();
+  formatLocalLogTimes();
+  countEl.textContent = "<%= rows.length %> shown on this server page";
+</script>
+<% } %>

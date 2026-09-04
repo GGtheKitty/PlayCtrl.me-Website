@@ -1,0 +1,58 @@
+<% if (cards.length > 0) { %>
+<% for (const c of cards) { %>
+<div class="logCard">
+  <div class="logTop">
+    <div class="logLeft">
+      <span class="badge"><%= c.type %></span>
+      <time
+        class="muted js-local-log-time"
+        data-timestamp="<%= c.createdAt %>"
+        datetime="<%= c.createdAt ? new Date(c.createdAt).toISOString() : '' %>"
+      ><%= c.createdAt ? new Date(c.createdAt).toISOString() : 'Unknown time' %></time>
+
+      <% if (c.pair_code) { %>
+      <span class="kvs"><span class="k">pair</span><span class="v"><%= c.pair_code %></span></span>
+      <% } %>
+
+      <% if (c.device_id) { %>
+      <span class="kvs"><span class="k">device</span><span class="v"><%= c.device_id %></span></span>
+      <% } %>
+    </div>
+
+    <button class="miniBtn" type="button" data-toggle="payload">Details</button>
+  </div>
+
+  <div class="logUsers">
+    <div class="uRow">
+      <span class="role">Actor</span>
+      <%- userChip("actor", c.actor_id, c.actor_username, c.actor_global_name, c.actor_avatar) %>
+    </div>
+    <div class="uRow">
+      <span class="role">Target</span>
+      <%- userChip("target", c.target_id, c.target_username, c.target_global_name, c.target_avatar) %>
+    </div>
+  </div>
+
+  <% if (c.summary) { %>
+  <div class="summary"><%- c.summaryHtml || c.summary %></div>
+  <% } %>
+
+  <% if (c.previewUrl) { %>
+  <button
+    class="mediaPreview"
+    type="button"
+    data-fullscreen-image="<%= c.previewUrl %>"
+    aria-label="<%= c.previewLabel || 'Open image preview' %>"
+    title="Open full screen"
+  >
+    <img src="<%= c.previewUrl %>" alt="<%= c.previewLabel || 'Log image preview' %>" loading="lazy" />
+    <span class="mediaPreviewHint"><%= c.previewLabel || "Image preview" %></span>
+  </button>
+  <% } %>
+
+  <pre class="payload" style="display:none;"><%= c.pretty %></pre>
+</div>
+<% } %>
+<% } else { %>
+    <div class="hint">No logs match your filters.</div>
+<% } %>

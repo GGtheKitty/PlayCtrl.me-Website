@@ -8,7 +8,7 @@
 
     <div class="drawerUser">
         <img class="drawerAv" src="<%= avatarUrl %>"
-                onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
+                onerror="this.onerror=null;this.src='/default-avatar.svg'"
                 alt="" />
         <div>
             <div class="drawerName"><%= displayName %></div>
@@ -20,6 +20,12 @@
         <a class="drawerLink" href="/profile">Profile</a>
         <a class="drawerLink" href="/discover">Discover</a>
         <a class="drawerLink" href="/favorites">Favorites</a>
+        <a class="drawerLink" href="/notifications">
+            <span>Notifications</span>
+            <% if (notificationUnreadCount > 0) { %>
+                <span class="drawerBadge"><%= notificationUnreadCount %></span>
+            <% } %>
+        </a>
         <% if (isAdmin) { %><a class="drawerLink" href="/admin">Admin</a><% } %>
     </div>
 

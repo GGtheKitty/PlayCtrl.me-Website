@@ -21,11 +21,14 @@
         <%- include("../../common/user_cards", {
             display: u.global_name || u.username || u.discord_id,
             handle: u.username || "",
-            avatar: discordAvatarUrl(u, 128),
+            avatar: siteAvatarUrl(u, 128),
+            banner: u.custom_banner_path
+              ? `${siteBannerUrl(u, 1200)}${u.custom_banner_updated_at ? `&v=${encodeURIComponent(u.custom_banner_updated_at)}` : ""}`
+              : "",
             code: u.code_plain,
             id: u.discord_id,
             favorited_at: u.favorited_at,
-            isOnline: u.online
+            status: u.status || (u.online ? "online" : "offline")
           }) %>
         <% } %>
       </div>

@@ -1,0 +1,94 @@
+<div class="card">
+  <div class="cardHd">
+    <span>Friends</span>
+    <span class="friendCount"><%= Number(friendItems?.length || 0) %></span>
+  </div>
+
+  <div class="cardBd">
+    <% if (activeLeash) { %>
+      <div class="leashNotice">
+        <div>
+          <div class="leashNoticeTitle">Control granted</div>
+          <div class="muted">
+            <%= activeLeash.global_name || activeLeash.username || activeLeash.dom_user_id %> can manage your profile settings.
+          </div>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (canManageFriends) { %>
+      <div class="friendSearch">
+        <input
+          id="friendSearchInput"
+          class="friendSearchInput"
+          type="search"
+          placeholder="Search users"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="friendSearchBtn" class="controlUrlCopyBtn" type="button">Find</button>
+      </div>
+      <div id="friendStatus" class="muted friendStatus" aria-live="polite"></div>
+      <div id="friendSearchResults" class="friendSearchResults"></div>
+    <% } else { %>
+      <div class="friendReadOnlyNotice">
+        Friend and control permissions can only be changed by the account owner.
+      </div>
+    <% } %>
+
+    <div id="friendList" class="friendList">
+      <% if (friendItems?.length) { %>
+        <% friendItems.forEach((friend) => { %>
+          <div
+            class="friendRow <%= friend.status === "pending" ? "isPending" : "" %>"
+            data-friend-id="<%= friend.discordId %>"
+          >
+            <div class="friendPerson">
+              <img class="friendAvi" src="<%= friend.avatarUrl %>" alt="" />
+              <div class="friendText">
+                <div class="friendName"><%= friend.displayName %></div>
+                <% if (friend.username) { %><div class="friendHandle">@<%= friend.username %></div><% } %>
+                <div class="friendMeta">
+                  <% if (friend.incoming) { %>
+                    Wants to be friends
+                  <% } else if (friend.outgoing) { %>
+                    Request sent
+                  <% } else if (friend.leashGivenToThem) { %>
+                    Has your control
+                  <% } else if (friend.leashGivenToMe) { %>
+                    Gave you control
+                  <% } else { %>
+                    Friend
+                  <% } %>
+                </div>
+              </div>
+            </div>
+
+            <% if (canManageFriends) { %>
+              <div class="friendActions">
+                <% if (friend.incoming) { %>
+                  <button class="controlUrlCopyBtn" type="button" data-friend-accept="<%= friend.discordId %>">Accept</button>
+                <% } %>
+
+                <% if (friend.friends && !friend.leashGivenToThem && !activeLeash) { %>
+                  <button class="controlUrlCopyBtn" type="button" data-leash-give="<%= friend.discordId %>">Give control</button>
+                <% } %>
+
+                <% if (friend.friends && friend.leashGivenToMe) { %>
+                  <button class="controlUrlCopyBtn" type="button" data-leash-control="<%= friend.discordId %>">Control</button>
+                  <button class="miniDanger" type="button" data-leash-release="<%= friend.discordId %>">Release</button>
+                <% } %>
+
+                <button class="miniDanger" type="button" data-friend-remove="<%= friend.discordId %>">
+                  <%= friend.status === "pending" ? "Cancel" : "Remove" %>
+                </button>
+              </div>
+            <% } %>
+          </div>
+        <% }) %>
+      <% } else { %>
+        <div class="friendEmpty">No friends yet.</div>
+      <% } %>
+    </div>
+  </div>
+</div>

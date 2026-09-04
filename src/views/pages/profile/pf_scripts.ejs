@@ -2,11 +2,542 @@
 <script>
   const discoverToggle = document.getElementById("discoverToggle");
   const discoverStatus = document.getElementById("discoverStatus");
-  const cmdStatus = document.getElementById("cmdStatus");
+  const awayModeToggle = document.getElementById("awayModeToggle");
+  const disableCustomBackgroundsToggle = document.getElementById("disableCustomBackgroundsToggle");
+  const disableCustomBackgroundsStatus = document.getElementById("disableCustomBackgroundsStatus");
+  const excludeFromLeaderboardsToggle = document.getElementById("excludeFromLeaderboardsToggle");
+  const excludeFromLeaderboardsStatus = document.getElementById("excludeFromLeaderboardsStatus");
+  const copyButtons = Array.from(document.querySelectorAll(".controlUrlCopyBtn[data-copy-text]"));
+  const customControlSlugInput = document.getElementById("customControlSlugInput");
+  const saveCustomControlSlugBtn = document.getElementById("saveCustomControlSlugBtn");
+  const customControlSlugStatus = document.getElementById("customControlSlugStatus");
+  const customControlSlugMinLen = <%= Number(customControlUrlMinLength || 4) %>;
+  const customControlSlugMaxLen = <%= Number(customControlUrlMaxLength || 32) %>;
+  const pairCode = <%- inlineScriptJson(pairCode || code) %>;
+  const ownerDiscordId = <%- inlineScriptJson(user.discord_id) %>;
+  const friendSearchMinLength = <%= Number(friendSearchMinLength || 2) %>;
+  const defaultControlDisplayName = <%- inlineScriptJson(user.global_name || user.username || user.discord_id) %>;
+  const profileAvatarImg = document.getElementById("profileAvatarImg");
+  const profileDisplayNameEl = document.getElementById("profileDisplayNameText");
+  const profileActionRow = document.querySelector(".profileActionRow");
+  const profileControlThemeEditBtn = document.getElementById("profileControlThemeEditBtn");
+  const profileConnectDeviceBtn = document.getElementById("profileConnectDeviceBtn");
+  const profileManageDevicesBtn = document.getElementById("profileManageDevicesBtn");
+  const statusPill = document.getElementById("statusPill");
+  const statusText = document.getElementById("statusText");
+  const cmdModal = document.getElementById("cmdModal");
+  const cmdModalTitle = document.getElementById("cmdModalTitle");
+  const cmdModalBody = document.getElementById("cmdModalBody");
+  let currentPresenceStatus = <%- inlineScriptJson(currentPresenceStatus || (anyOnline ? "online" : "offline")) %>;
+  let activeControlTheme = <%- inlineScriptJson(controlLinkTheme || "purple") %>;
+  let activeControlDisplayName = <%- inlineScriptJson(controlLinkCustomName || "") %>;
+  let activeControlAboutMe = <%- inlineScriptJson(aboutMe || "") %>;
+  let activeControlAvatarVersion = <%- inlineScriptJson(Number(controlLinkAvatarVersion || 0)) %>;
+  let activeControlHasCustomAvatar = <%- inlineScriptJson(!!controlLinkHasCustomAvatar) %>;
+  let activeControlBannerVersion = <%- inlineScriptJson(Number(controlLinkBannerVersion || 0)) %>;
+  let activeControlHasCustomBanner = <%- inlineScriptJson(!!controlLinkHasCustomBanner) %>;
+  let activeControlBackgroundVersion = <%- inlineScriptJson(Number(controlLinkBackgroundVersion || 0)) %>;
+  let activeControlHasCustomBackground = <%- inlineScriptJson(!!controlLinkHasCustomBackground) %>;
+  let activeClientSecretCleanup = null;
 
-  function setStatus(el, msg) {
-    el.textContent = msg || "";
+  function makeFakeClientSecret() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let value = "pcs_";
+    for (let i = 0; i < 28; i += 1) {
+      value += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return value;
   }
+
+  function initClientSecretUi(root) {
+    const clientSecretRevealSurface = root?.querySelector("#clientSecretRevealSurface");
+    const clientSecretValue = root?.querySelector("#clientSecretValue");
+    const clientSecretResetBtn = root?.querySelector("#clientSecretResetBtn");
+    const clientSecretStatus = root?.querySelector("#clientSecretStatus");
+    const pairCodeCopyBtn = root?.querySelector("[data-copy-pair-code]");
+    let revealedClientSecret = "";
+    let hideTimer = null;
+    let revealInProgress = false;
+
+    function hideSecret() {
+      revealedClientSecret = "";
+      if (hideTimer) window.clearTimeout(hideTimer);
+      hideTimer = null;
+      if (clientSecretValue) clientSecretValue.textContent = makeFakeClientSecret();
+      clientSecretRevealSurface?.classList.add("isBlurred");
+      clientSecretRevealSurface?.classList.remove("isRevealed");
+      clientSecretRevealSurface?.setAttribute("aria-label", "Reveal client secret");
+    }
+
+    async function revealSecret() {
+      if (!clientSecretValue || !clientSecretRevealSurface || revealInProgress) return;
+      revealInProgress = true;
+      clientSecretRevealSurface.disabled = true;
+      if (clientSecretStatus) clientSecretStatus.textContent = "Revealing...";
+      try {
+        const res = await fetch("/profile/client-secret/reveal", {
+          method: "POST",
+          headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok || !data.secret) throw new Error(data?.message || "Could not reveal client secret.");
+        revealedClientSecret = String(data.secret);
+        clientSecretValue.textContent = revealedClientSecret;
+        requestAnimationFrame(() => {
+          clientSecretRevealSurface.classList.remove("isBlurred");
+          clientSecretRevealSurface.classList.add("isRevealed");
+        });
+        clientSecretRevealSurface.setAttribute("aria-label", "Copy client secret");
+        if (clientSecretStatus) {
+          clientSecretStatus.textContent = data.required
+            ? "Protected mode is active. Click the secret to copy it."
+            : "Protection activates after a device pairs with this secret. Click the secret to copy it.";
+        }
+        hideTimer = window.setTimeout(hideSecret, 30000);
+      } catch (err) {
+        if (clientSecretStatus) clientSecretStatus.textContent = err?.message || "Could not reveal client secret.";
+      } finally {
+        revealInProgress = false;
+        clientSecretRevealSurface.disabled = false;
+      }
+    }
+
+    hideSecret();
+    clientSecretRevealSurface?.addEventListener("click", async () => {
+      if (!revealedClientSecret) {
+        await revealSecret();
+        return;
+      }
+      try {
+        await copyText(revealedClientSecret);
+        if (clientSecretStatus) clientSecretStatus.textContent = "Client secret copied.";
+      } catch {
+        if (clientSecretStatus) clientSecretStatus.textContent = "Could not copy client secret.";
+      }
+    });
+    pairCodeCopyBtn?.addEventListener("click", async () => {
+      try {
+        await copyText(String(pairCodeCopyBtn.dataset.copyPairCode || ""));
+        pairCodeCopyBtn.textContent = "Copied";
+        window.setTimeout(() => { pairCodeCopyBtn.textContent = "Copy"; }, 1200);
+      } catch {
+        if (clientSecretStatus) clientSecretStatus.textContent = "Could not copy pairing code.";
+      }
+    });
+    clientSecretResetBtn?.addEventListener("click", async () => {
+      if (!window.confirm("Reset the client secret? If protection is active, every paired device will be disconnected.")) return;
+      clientSecretResetBtn.disabled = true;
+      try {
+        const res = await fetch("/profile/client-secret/reset", {
+          method: "POST",
+          headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+          credentials: "include",
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok) throw new Error(data?.message || "Could not reset client secret.");
+        if (clientSecretStatus) clientSecretStatus.textContent = data.message || "Client secret reset.";
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (err) {
+        if (clientSecretStatus) clientSecretStatus.textContent = err?.message || "Could not reset client secret.";
+        clientSecretResetBtn.disabled = false;
+      }
+    });
+
+    const cleanup = () => hideSecret();
+    activeClientSecretCleanup = cleanup;
+    return cleanup;
+  }
+  document.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("[data-client-device-revoke]");
+    if (!button) return;
+    const deviceId = String(button.dataset.clientDeviceRevoke || "").trim();
+    if (!deviceId || !window.confirm("Revoke this device? It will be disconnected immediately.")) return;
+    const manager = button.closest("[data-device-manager]");
+    const list = button.closest("[data-device-list]");
+    const status = manager?.querySelector("[data-device-manager-status]");
+    button.disabled = true;
+    try {
+      const res = await fetch(
+        "/profile/devices/" + encodeURIComponent(deviceId) + "/revoke",
+        {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          credentials: "include",
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) throw new Error(data?.message || "Could not revoke device.");
+      button.closest(".clientDeviceRow")?.remove();
+      if (status) status.textContent = data.message || "Device revoked.";
+      const remainingRows = list?.querySelectorAll("[data-device-row]").length || 0;
+      const empty = list?.querySelector("[data-device-empty]");
+      if (empty) empty.hidden = remainingRows > 0;
+      const countLabel = manager?.querySelector("[data-device-summary-count]");
+      if (countLabel) countLabel.textContent = remainingRows + " paired device" + (remainingRows === 1 ? "" : "s");
+      if (profileManageDevicesBtn) profileManageDevicesBtn.textContent = "Manage " + remainingRows + " device" + (remainingRows === 1 ? "" : "s");
+    } catch (err) {
+      button.disabled = false;
+      if (status) status.textContent = err?.message || "Could not revoke device.";
+    }
+  });
+  function toast(message, type) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    if (window.showToast) window.showToast(text, { type: type || inferToastType(text) });
+  }
+
+  function inferToastType(message) {
+    const text = String(message || "").toLowerCase();
+    if (/failed|couldn|could not|copy failed|error|invalid|enter |use /.test(text)) return "error";
+    if (/saved|enabled|disabled|created|copied|added|removed|updated|load normally|hidden from|appear on/.test(text)) return "success";
+    return "info";
+  }
+
+  function toastErrorMessage(prefix, err) {
+    const detail = String(err?.message || err || "").trim();
+    if (!detail || /^HTTP \d+$/i.test(detail)) return prefix + ".";
+    return prefix + ": " + detail;
+  }
+
+  function setStatus(el, msg, type) {
+    if (el) {
+      el.textContent = "";
+      el.hidden = true;
+    }
+    const text = String(msg || "").trim();
+    if (!text || text.endsWith("...")) return;
+    toast(text, type);
+  }
+
+  function normalizePresenceStatus(status) {
+    const value = String(status || "").trim().toLowerCase();
+    if (value === "online" || value === "away") return value;
+    return "offline";
+  }
+
+  function applyProfilePresenceStatus(status) {
+    currentPresenceStatus = normalizePresenceStatus(status);
+    if (!statusPill || !statusText) return;
+
+    statusPill.classList.remove("statusPill--on", "statusPill--away", "statusPill--off");
+    if (currentPresenceStatus === "online") {
+      statusPill.classList.add("statusPill--on");
+      statusText.textContent = "Online";
+      return;
+    }
+    if (currentPresenceStatus === "away") {
+      statusPill.classList.add("statusPill--away");
+      statusText.textContent = "Away";
+      return;
+    }
+    statusPill.classList.add("statusPill--off");
+    statusText.textContent = "Offline";
+  }
+
+  applyProfilePresenceStatus(currentPresenceStatus);
+
+  async function refreshProfilePresence() {
+    if (!pairCode) return;
+
+    try {
+      const res = await fetch("/api/presence/" + encodeURIComponent(pairCode), {
+        headers: {
+          "Accept": "application/json"
+        },
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) return;
+
+      applyProfilePresenceStatus(data.status);
+    } catch (e) {}
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "absolute";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    if (!ok) throw new Error("copy_failed");
+  }
+
+  function bindCopyButton(copyBtn) {
+    if (!copyBtn) return;
+    const originalCopyLabel = copyBtn.textContent;
+
+    copyBtn.addEventListener("click", async () => {
+      const text = copyBtn.getAttribute("data-copy-text") || "";
+      if (!text) return;
+
+      copyBtn.textContent = "Copying...";
+      copyBtn.disabled = true;
+      try {
+        await copyText(text);
+        copyBtn.textContent = "Copied";
+        toast("Link copied.", "success");
+      } catch (e) {
+        copyBtn.textContent = "Copy failed";
+        toast("Couldn't copy link.", "error");
+      } finally {
+        setTimeout(() => {
+          copyBtn.textContent = originalCopyLabel;
+          copyBtn.disabled = false;
+        }, 1500);
+      }
+    });
+  }
+
+  copyButtons.forEach(bindCopyButton);
+
+  (function() {
+    const friendSearchInput = document.getElementById("friendSearchInput");
+    const friendSearchBtn = document.getElementById("friendSearchBtn");
+    const friendStatus = document.getElementById("friendStatus");
+    const friendSearchResults = document.getElementById("friendSearchResults");
+    const friendList = document.getElementById("friendList");
+
+    if (!friendSearchInput || !friendSearchBtn || !friendSearchResults || !friendList) return;
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function friendIdFrom(value) {
+      return String(value || "").trim();
+    }
+
+    function friendDisplayName(user) {
+      return String(user?.displayName || user?.globalName || user?.global_name || user?.username || user?.discordId || user?.discord_id || "").trim();
+    }
+
+    function friendAvatar(user) {
+      return String(user?.avatarUrl || user?.avatar_url || "/default-avatar.svg").trim() || "/default-avatar.svg";
+    }
+
+    function setFriendStatus(message, type) {
+      setStatus(friendStatus, message, type);
+    }
+
+    function buildFriendResult(user) {
+      const discordId = friendIdFrom(user.discordId || user.discord_id);
+      const displayName = friendDisplayName(user) || discordId;
+      const username = String(user.username || "").trim();
+      const avatarUrl = friendAvatar(user);
+      const status = String(user.status || "").trim();
+      const requestedBy = String(user.requestedBy || user.requested_by || "").trim();
+      const isFriend = status === "accepted";
+      const outgoing = status === "pending" && requestedBy === ownerDiscordId;
+      const incoming = status === "pending" && requestedBy && requestedBy !== ownerDiscordId;
+      const disabled = isFriend || outgoing;
+      const label = isFriend ? "Friends" : outgoing ? "Sent" : incoming ? "Accept" : "Add";
+      const actionAttr = incoming ? "data-friend-accept" : "data-friend-request";
+
+      return `
+        <div class="friendResultRow" data-friend-id="${escapeHtml(discordId)}">
+          <div class="friendPerson">
+            <img class="friendAvi" src="${escapeHtml(avatarUrl)}" alt="" />
+            <div class="friendText">
+              <div class="friendName">${escapeHtml(displayName)}</div>
+              ${username ? `<div class="friendHandle">@${escapeHtml(username)}</div>` : ""}
+              <div class="friendMeta">${escapeHtml(discordId)}</div>
+            </div>
+          </div>
+          <button
+            class="controlUrlCopyBtn"
+            type="button"
+            ${actionAttr}="${escapeHtml(discordId)}"
+            ${disabled ? "disabled aria-disabled=\"true\"" : ""}
+          >${label}</button>
+        </div>
+      `;
+    }
+
+    async function postFriendAction(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams(body || {}),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) throw new Error(data?.message || ("HTTP " + res.status));
+      return data;
+    }
+
+    async function runSearch() {
+      const q = String(friendSearchInput.value || "").trim().replace(/^@+/, "").trim();
+      if (q.length < friendSearchMinLength) {
+        friendSearchResults.innerHTML = "";
+        setFriendStatus("Enter at least " + friendSearchMinLength + " characters.", "error");
+        friendSearchInput.focus();
+        return;
+      }
+
+      friendSearchBtn.disabled = true;
+      setFriendStatus("Searching...");
+      try {
+        const res = await fetch("/profile/friends/search?q=" + encodeURIComponent(q), {
+          headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok) throw new Error(data?.message || ("HTTP " + res.status));
+        const items = Array.isArray(data.items) ? data.items : [];
+        friendSearchResults.innerHTML = items.length
+          ? items.map(buildFriendResult).join("")
+          : '<div class="friendEmpty">No users found.</div>';
+        setFriendStatus("");
+      } catch (err) {
+        friendSearchResults.innerHTML = "";
+        setFriendStatus(toastErrorMessage("Couldn't search friends", err), "error");
+      } finally {
+        friendSearchBtn.disabled = false;
+      }
+    }
+
+    friendSearchBtn.addEventListener("click", runSearch);
+    friendSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        runSearch();
+      }
+    });
+
+    document.addEventListener("click", async (event) => {
+      const requestBtn = event.target?.closest?.("[data-friend-request]");
+      const acceptBtn = event.target?.closest?.("[data-friend-accept]");
+      const removeBtn = event.target?.closest?.("[data-friend-remove]");
+      const giveBtn = event.target?.closest?.("[data-leash-give]");
+      const controlBtn = event.target?.closest?.("[data-leash-control]");
+      const releaseBtn = event.target?.closest?.("[data-leash-release]");
+      const button = requestBtn || acceptBtn || removeBtn || giveBtn || controlBtn || releaseBtn;
+      if (!button) return;
+
+      const discordId =
+        button.dataset.friendRequest ||
+        button.dataset.friendAccept ||
+        button.dataset.friendRemove ||
+        button.dataset.leashGive ||
+        button.dataset.leashControl ||
+        button.dataset.leashRelease ||
+        "";
+      if (!discordId) return;
+
+      let url = "";
+      let body = { discord_id: discordId };
+      let confirmMessage = "";
+      if (requestBtn) url = "/profile/friends/request";
+      if (acceptBtn) url = "/profile/friends/accept";
+      if (removeBtn) {
+        url = "/profile/friends/remove";
+        confirmMessage = "Remove this friend? Any delegated control between you will be revoked.";
+      }
+      if (giveBtn) {
+        url = "/profile/leash/give";
+        confirmMessage = "Give this friend control of your profile settings? You can only revoke it by removing them as a friend unless they release you.";
+      }
+      if (controlBtn) {
+        url = "/profile/leash/control";
+        body = { sub_id: discordId };
+      }
+      if (releaseBtn) {
+        url = "/profile/leash/release";
+        body = { sub_id: discordId };
+        confirmMessage = "Release delegated control for this friend?";
+      }
+
+      if (confirmMessage && !window.confirm(confirmMessage)) return;
+
+      button.disabled = true;
+      try {
+        const data = await postFriendAction(url, body);
+        setFriendStatus(data.message || "Updated.", "success");
+        if (data.redirect) {
+          window.location.href = data.redirect;
+          return;
+        }
+        window.setTimeout(() => window.location.reload(), 650);
+      } catch (err) {
+        setFriendStatus(toastErrorMessage("Couldn't update friends", err), "error");
+        button.disabled = false;
+      }
+    });
+  })();
+
+  saveCustomControlSlugBtn?.addEventListener("click", async () => {
+    const rawSlug = (customControlSlugInput?.value || "").trim();
+    if (!rawSlug) {
+      setStatus(customControlSlugStatus, "Enter a custom path.", "error");
+      customControlSlugInput?.focus();
+      return;
+    }
+
+    const normalizedSlug = rawSlug.toLowerCase();
+    const slugPattern = new RegExp("^[a-z0-9]{" + customControlSlugMinLen + "," + customControlSlugMaxLen + "}$");
+    if (!slugPattern.test(normalizedSlug)) {
+      setStatus(
+        customControlSlugStatus,
+        "Use letters and numbers only.",
+        "error"
+      );
+      customControlSlugInput?.focus();
+      return;
+    }
+
+    setStatus(customControlSlugStatus, "Saving...");
+    saveCustomControlSlugBtn.disabled = true;
+
+    try {
+      const res = await fetch("/profile/custom-control-url", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          slug: normalizedSlug
+        }),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.message) || ("HTTP " + res.status));
+      }
+      if (customControlSlugInput) customControlSlugInput.value = data.slug || normalizedSlug;
+      setStatus(customControlSlugStatus, "Custom URL saved.", "success");
+      setTimeout(() => window.location.reload(), 600);
+    } catch (e) {
+      setStatus(customControlSlugStatus, toastErrorMessage("Couldn't save custom URL", e), "error");
+    } finally {
+      saveCustomControlSlugBtn.disabled = false;
+    }
+  });
 
   discoverToggle.addEventListener("change", async () => {
     setStatus(discoverStatus, "Saving...");
@@ -25,41 +556,117 @@
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
-      setStatus(discoverStatus, discoverToggle.checked ? "Enabled." : "Disabled.");
+      setStatus(discoverStatus, discoverToggle.checked ? "Discover enabled." : "Discover disabled.", "success");
     } catch (e) {
-      setStatus(discoverStatus, "Failed to save: " + (e?.message || String(e)));
+      setStatus(discoverStatus, toastErrorMessage("Couldn't update Discover", e), "error");
       discoverToggle.checked = !discoverToggle.checked;
     }
   });
 
-  document.querySelectorAll("[data-cmd-toggle]").forEach((wrap) => {
-    const input = wrap.querySelector("input[type=checkbox]");
-    input.addEventListener("change", async () => {
-      setStatus(cmdStatus, "Saving...");
-      const cmd = wrap.getAttribute("data-cmd-toggle");
-      try {
-        const res = await fetch("/profile/commands", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            cmd,
-            enabled: input.checked ? "1" : "0"
-          }),
-          credentials: "include"
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
-        setStatus(cmdStatus, "Saved.");
-        setTimeout(() => setStatus(cmdStatus, ""), 1200);
-      } catch (e) {
-        setStatus(cmdStatus, "Failed to save: " + (e?.message || String(e)));
-        input.checked = !input.checked;
+  awayModeToggle?.addEventListener("change", async () => {
+    const prevStatus = currentPresenceStatus;
+
+    setStatus(null, "Saving...");
+    try {
+      const res = await fetch("/profile/away-mode", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          enabled: awayModeToggle.checked ? "1" : "0"
+        }),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.message) || ("HTTP " + res.status));
       }
-    });
+
+      applyProfilePresenceStatus(data.status);
+      setStatus(null, data.message || "Away mode updated.", "success");
+    } catch (e) {
+      applyProfilePresenceStatus(prevStatus);
+      setStatus(
+        null,
+        toastErrorMessage("Couldn't update Away mode", e),
+        "error"
+      );
+      awayModeToggle.checked = !awayModeToggle.checked;
+    }
+  });
+
+  refreshProfilePresence();
+  setInterval(refreshProfilePresence, 5000);
+
+  disableCustomBackgroundsToggle?.addEventListener("change", async () => {
+    setStatus(disableCustomBackgroundsStatus, "Saving...");
+    try {
+      const res = await fetch("/profile/disable-custom-backgrounds", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          enabled: disableCustomBackgroundsToggle.checked ? "1" : "0"
+        }),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      setStatus(
+        disableCustomBackgroundsStatus,
+        disableCustomBackgroundsToggle.checked
+          ? "Custom backgrounds disabled."
+          : "Custom backgrounds enabled.",
+        "success"
+      );
+    } catch (e) {
+      setStatus(
+        disableCustomBackgroundsStatus,
+        toastErrorMessage("Couldn't update background setting", e),
+        "error"
+      );
+      disableCustomBackgroundsToggle.checked = !disableCustomBackgroundsToggle.checked;
+    }
+  });
+
+  excludeFromLeaderboardsToggle?.addEventListener("change", async () => {
+    setStatus(excludeFromLeaderboardsStatus, "Saving...");
+    try {
+      const res = await fetch("/profile/exclude-from-leaderboards", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          enabled: excludeFromLeaderboardsToggle.checked ? "1" : "0"
+        }),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      setStatus(
+        excludeFromLeaderboardsStatus,
+        excludeFromLeaderboardsToggle.checked
+          ? "Hidden from leaderboards."
+          : "Visible on leaderboards.",
+        "success"
+      );
+    } catch (e) {
+      setStatus(
+        excludeFromLeaderboardsStatus,
+        toastErrorMessage("Couldn't update leaderboards", e),
+        "error"
+      );
+      excludeFromLeaderboardsToggle.checked = !excludeFromLeaderboardsToggle.checked;
+    }
   });
 
   (function() {
@@ -72,12 +679,12 @@
     const apiKeyText = document.getElementById("apiKeyText");
     const apiStatus = document.getElementById("apiStatus");
 
-    function setStatus(msg) {
-      apiStatus.textContent = msg || "";
+    function setApiStatus(msg, type) {
+      setStatus(apiStatus, msg, type);
     }
 
     async function revealCurrentKey() {
-      setStatus("Revealing...");
+      setApiStatus("Revealing...");
       apiCopyBtn.disabled = true;
 
       try {
@@ -96,11 +703,11 @@
         apiKeyText.textContent = data.api_key;
         apiKeyBox.setAttribute("data-revealed", "true");
         apiCopyBtn.disabled = false;
-        setStatus("");
+        setApiStatus("");
       } catch (e) {
         apiKeyText.textContent = "Hidden. Click “Reset key” to generate a new one.";
         apiKeyBox.setAttribute("data-revealed", "true");
-        setStatus("Couldn’t reveal existing key (reset to generate a new one).");
+        setApiStatus("Couldn't reveal API key.", "error");
       }
     }
 
@@ -111,7 +718,7 @@
 
     apiResetBtn.addEventListener("click", async () => {
       if (!confirm("Reset API key? Your old key will stop working immediately.")) return;
-      setStatus("Generating...");
+      setApiStatus("Generating...");
       apiResetBtn.disabled = true;
       apiCopyBtn.disabled = true;
 
@@ -132,9 +739,9 @@
         apiKeyText.textContent = data.api_key;
         apiKeyBox.setAttribute("data-revealed", "true");
         apiCopyBtn.disabled = false;
-        setStatus("New key created. Copy it now.");
+        setApiStatus("New API key created.", "success");
       } catch (e) {
-        setStatus("Failed: " + (e?.message || String(e)));
+        setApiStatus(toastErrorMessage("Couldn't reset API key", e), "error");
       } finally {
         apiResetBtn.disabled = false;
       }
@@ -145,10 +752,9 @@
       if (!key || key.startsWith("Hidden")) return;
       try {
         await navigator.clipboard.writeText(key);
-        setStatus("Copied.");
-        setTimeout(() => setStatus(""), 1200);
+        setApiStatus("API key copied.", "success");
       } catch (e) {
-        setStatus("Copy failed (your browser may block clipboard).");
+        setApiStatus("Couldn't copy API key.", "error");
       }
     });
   })();
@@ -156,20 +762,280 @@
   (function() {
     const wlToggle = document.getElementById("whitelistToggle");
     const wlStatus = document.getElementById("wlStatus");
-
     const discoverToggle = document.getElementById("discoverToggle");
     const discoverStatus = document.getElementById("discoverStatus");
-
-    const wlInput = document.getElementById("wlInput");
-    const wlAddBtn = document.getElementById("wlAddBtn");
+    const wlSearchInput = document.getElementById("wlSearchInput");
+    const wlSearchBtn = document.getElementById("wlSearchBtn");
+    const wlSearchResults = document.getElementById("wlSearchResults");
     const wlList = document.getElementById("wlList");
+    const wlCountValue = document.getElementById("wlCountValue");
+    const whitelistHeroTitle = document.getElementById("whitelistHeroTitle");
+    const whitelistInfoStrip = document.querySelector(".whitelistInfoStrip");
 
-    function setStatus(el, msg) {
-      el.textContent = msg || "";
+    if (!wlToggle || !wlStatus || !wlSearchInput || !wlSearchBtn || !wlSearchResults || !wlList) {
+      return;
+    }
+
+    let searchTimer = 0;
+    let activeSearchRequestId = 0;
+
+    function setWhitelistStatus(el, msg, type) {
+      setStatus(el, msg, type);
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function getUserDiscordId(user) {
+      return String(user?.discordId || user?.discord_id || "").trim();
+    }
+
+    function getUserDisplayName(user) {
+      return String(
+        user?.displayName ||
+        user?.display_name ||
+        user?.globalName ||
+        user?.global_name ||
+        user?.username ||
+        user?.discordId ||
+        user?.discord_id ||
+        ""
+      ).trim();
+    }
+
+    function getUserUsername(user) {
+      return String(user?.username || "").trim();
+    }
+
+    function getUserAvatarUrl(user) {
+      return String(user?.avatarUrl || user?.avatar_url || "/default-avatar.svg").trim() || "/default-avatar.svg";
+    }
+
+    function normalizeWhitelistSearchQuery(rawValue) {
+      return String(rawValue || "").trim().replace(/^@+/, "").trim();
+    }
+
+    function updateWhitelistCount() {
+      if (!wlCountValue) return;
+      wlCountValue.textContent = String(wlList.querySelectorAll(".wlRow").length);
+    }
+
+    function syncWhitelistCopy(enabled) {
+      if (whitelistHeroTitle) {
+        whitelistHeroTitle.textContent = enabled ? "Whitelist is on" : "Whitelist is off";
+      }
+
+      if (whitelistInfoStrip) {
+        whitelistInfoStrip.textContent = enabled
+          ? "Discover is turned off while whitelist mode is enabled."
+          : "Turn this on whenever you want commands to come from trusted people only.";
+      }
+    }
+
+    function ensureWhitelistEmptyState() {
+      const hasRows = wlList.querySelector(".wlRow");
+      const existingEmpty = wlList.querySelector(".wlEmptyState");
+
+      if (hasRows) {
+        existingEmpty?.remove();
+        return;
+      }
+
+      if (!existingEmpty) {
+        wlList.innerHTML = '<div class="wlEmptyState" id="wlListEmptyState">No whitelisted users yet.</div>';
+      }
+    }
+
+    function buildWhitelistRow(user) {
+      const discordId = getUserDiscordId(user);
+      const displayName = getUserDisplayName(user) || discordId;
+      const username = getUserUsername(user);
+      const avatarUrl = getUserAvatarUrl(user);
+
+      return `
+        <div
+          class="wlRow"
+          data-id="${escapeHtml(discordId)}"
+          data-display-name="${escapeHtml(displayName)}"
+          data-username="${escapeHtml(username)}"
+          data-avatar-url="${escapeHtml(avatarUrl)}"
+        >
+          <div class="wlLeft">
+            <img class="wlAvi" src="${escapeHtml(avatarUrl)}" alt="" />
+            <div class="wlText">
+              <div class="wlName">${escapeHtml(displayName)}</div>
+              ${username ? `<div class="wlHandle">@${escapeHtml(username)}</div>` : ""}
+              <div class="wlId">${escapeHtml(discordId)}</div>
+            </div>
+          </div>
+
+          <button class="wlRm" type="button" data-remove="${escapeHtml(discordId)}">
+            Remove
+          </button>
+        </div>
+      `;
+    }
+
+    function buildSearchResult(user) {
+      const discordId = getUserDiscordId(user);
+      const displayName = getUserDisplayName(user) || discordId;
+      const username = getUserUsername(user);
+      const avatarUrl = getUserAvatarUrl(user);
+      const isAdded = !!user?.alreadyWhitelisted;
+
+      return `
+        <div
+          class="wlResultRow ${isAdded ? "isAdded" : ""}"
+          data-id="${escapeHtml(discordId)}"
+          data-display-name="${escapeHtml(displayName)}"
+          data-username="${escapeHtml(username)}"
+          data-avatar-url="${escapeHtml(avatarUrl)}"
+        >
+          <div class="wlLeft">
+            <img class="wlAvi" src="${escapeHtml(avatarUrl)}" alt="" />
+            <div class="wlText">
+              <div class="wlName">${escapeHtml(displayName)}</div>
+              ${username ? `<div class="wlHandle">@${escapeHtml(username)}</div>` : ""}
+              <div class="wlId">${escapeHtml(discordId)}</div>
+            </div>
+          </div>
+
+          <button
+            class="wlSearchAction"
+            type="button"
+            data-add="${escapeHtml(discordId)}"
+            ${isAdded ? 'disabled aria-disabled="true"' : ""}
+          >
+            ${isAdded ? "Added" : "Add"}
+          </button>
+        </div>
+      `;
+    }
+
+    function renderSearchMessage(message, className = "") {
+      wlSearchResults.innerHTML = `
+        <div class="wlEmptyState ${className}">
+          ${escapeHtml(message)}
+        </div>
+      `;
+    }
+
+    function upsertWhitelistRow(user) {
+      const discordId = getUserDiscordId(user);
+      if (!discordId) return;
+
+      const existingRow = wlList.querySelector(`.wlRow[data-id="${CSS.escape(discordId)}"]`);
+      if (existingRow) return;
+
+      wlList.querySelector(".wlEmptyState")?.remove();
+      wlList.insertAdjacentHTML("afterbegin", buildWhitelistRow(user));
+      updateWhitelistCount();
+      ensureWhitelistEmptyState();
+    }
+
+    function removeWhitelistRow(discordId) {
+      const row = wlList.querySelector(`.wlRow[data-id="${CSS.escape(discordId)}"]`);
+      if (row) row.remove();
+      updateWhitelistCount();
+      ensureWhitelistEmptyState();
+    }
+
+    function syncSearchResultButton(discordId, isAdded) {
+      const row = wlSearchResults.querySelector(`.wlResultRow[data-id="${CSS.escape(discordId)}"]`);
+      if (!row) return;
+
+      row.classList.toggle("isAdded", !!isAdded);
+      const btn = row.querySelector(`[data-add="${CSS.escape(discordId)}"]`);
+      if (!btn) return;
+
+      btn.disabled = !!isAdded;
+      btn.setAttribute("aria-disabled", isAdded ? "true" : "false");
+      btn.textContent = isAdded ? "Added" : "Add";
+    }
+
+    async function postForm(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams(body),
+        credentials: "include"
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        throw new Error((data && data.message) || ("HTTP " + res.status));
+      }
+      return data;
+    }
+
+    async function runWhitelistSearch(rawQuery) {
+      const query = normalizeWhitelistSearchQuery(rawQuery);
+      if (query.length < 2) {
+        activeSearchRequestId += 1;
+        wlSearchBtn.disabled = false;
+        renderSearchMessage("Type to begin searching for users.");
+        return;
+      }
+
+      const requestId = ++activeSearchRequestId;
+      wlSearchBtn.disabled = true;
+      renderSearchMessage("Searching...");
+
+      try {
+        const params = new URLSearchParams({ q: query });
+        const res = await fetch("/profile/whitelist/search?" + params.toString(), {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          credentials: "include"
+        });
+        const data = await res.json().catch(() => null);
+
+        if (requestId !== activeSearchRequestId) return;
+        if (!res.ok || !data || !data.ok) {
+          throw new Error((data && data.message) || ("HTTP " + res.status));
+        }
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length) {
+          renderSearchMessage("No matching users found.");
+          return;
+        }
+
+        wlSearchResults.innerHTML = items.map(buildSearchResult).join("");
+      } catch (e) {
+        if (requestId !== activeSearchRequestId) return;
+        renderSearchMessage(
+          "Search failed: " + (e?.message || String(e)),
+          "wlEmptyState--error"
+        );
+      } finally {
+        if (requestId === activeSearchRequestId) {
+          wlSearchBtn.disabled = false;
+        }
+      }
+    }
+
+    function queueWhitelistSearch() {
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => {
+        runWhitelistSearch(wlSearchInput.value);
+      }, 220);
     }
 
     wlToggle.addEventListener("change", async () => {
-      setStatus(wlStatus, "Saving...");
+      setWhitelistStatus(wlStatus, "Saving...");
       try {
         const res = await fetch("/profile/whitelist/toggle", {
           method: "POST",
@@ -186,243 +1052,642 @@
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
 
-        setStatus(wlStatus, wlToggle.checked ? "Whitelist enabled." : "Whitelist disabled.");
+        setWhitelistStatus(wlStatus, wlToggle.checked ? "Whitelist on." : "Whitelist off.", "success");
+        syncWhitelistCopy(wlToggle.checked);
 
         if (wlToggle.checked) {
           if (discoverToggle) {
             discoverToggle.checked = false;
             discoverToggle.disabled = true;
-            setStatus(discoverStatus, "Disabled (Whitelist enabled).");
+            setWhitelistStatus(discoverStatus, "Discover turned off for whitelist.", "success");
           }
         } else {
           if (discoverToggle) discoverToggle.disabled = false;
         }
       } catch (e) {
-        setStatus(wlStatus, "Failed to save: " + (e?.message || String(e)));
+        setWhitelistStatus(wlStatus, toastErrorMessage("Couldn't update whitelist", e), "error");
         wlToggle.checked = !wlToggle.checked;
       }
     });
 
-    wlAddBtn.addEventListener("click", async () => {
-      const raw = String(wlInput.value || "");
-      const id = raw.trim().replace(/[<@!>]/g, "").replace(/\D/g, "");
-      if (!/^\d{17,19}$/.test(id)) {
-        setStatus(wlStatus, `Enter a valid Discord ID (numbers only).`);
-        return;
-      }
-      setStatus(wlStatus, "Adding...");
-      try {
-        const res = await fetch("/profile/whitelist/add", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            discord_id: id
-          }),
-          credentials: "include"
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+    wlSearchBtn.addEventListener("click", () => {
+      clearTimeout(searchTimer);
+      runWhitelistSearch(wlSearchInput.value);
+    });
 
-        window.location.reload();
+    wlSearchInput.addEventListener("input", queueWhitelistSearch);
+    wlSearchInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      clearTimeout(searchTimer);
+      runWhitelistSearch(wlSearchInput.value);
+    });
+
+    wlSearchResults.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-add]");
+      if (!btn) return;
+
+      const discordId = String(btn.getAttribute("data-add") || "").trim();
+      const row = btn.closest(".wlResultRow");
+      if (!discordId || !row) return;
+
+      const user = {
+        discordId,
+        displayName: row.getAttribute("data-display-name") || discordId,
+        username: row.getAttribute("data-username") || "",
+        avatarUrl: row.getAttribute("data-avatar-url") || "/default-avatar.svg"
+      };
+
+      setWhitelistStatus(wlStatus, "Adding...");
+      btn.disabled = true;
+      try {
+        const data = await postForm("/profile/whitelist/add", { discord_id: discordId });
+        upsertWhitelistRow(user);
+        syncSearchResultButton(discordId, true);
+        setWhitelistStatus(
+          wlStatus,
+          data?.alreadyAdded
+            ? "Already whitelisted."
+            : "User whitelisted.",
+          "success"
+        );
       } catch (e) {
-        setStatus(wlStatus, "Failed: " + (e?.message || String(e)));
+        btn.disabled = false;
+        setWhitelistStatus(wlStatus, toastErrorMessage("Couldn't add user", e), "error");
       }
     });
 
     wlList.addEventListener("click", async (e) => {
       const btn = e.target.closest("button[data-remove]");
       if (!btn) return;
-      const id = btn.getAttribute("data-remove");
-      setStatus(wlStatus, "Removing...");
-      try {
-        const res = await fetch("/profile/whitelist/remove", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            discord_id: id
-          }),
-          credentials: "include"
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
 
-        window.location.reload();
+      const discordId = String(btn.getAttribute("data-remove") || "").trim();
+      if (!discordId) return;
+
+      setWhitelistStatus(wlStatus, "Removing...");
+      btn.disabled = true;
+      try {
+        const data = await postForm("/profile/whitelist/remove", { discord_id: discordId });
+        removeWhitelistRow(discordId);
+        syncSearchResultButton(discordId, false);
+        setWhitelistStatus(
+          wlStatus,
+          data?.removed
+            ? "User removed."
+            : "User already removed.",
+          "success"
+        );
       } catch (e) {
-        setStatus(wlStatus, "Failed: " + (e?.message || String(e)));
+        btn.disabled = false;
+        setWhitelistStatus(wlStatus, toastErrorMessage("Couldn't remove user", e), "error");
       }
     });
 
     if (wlToggle.checked && discoverToggle) {
       discoverToggle.disabled = true;
     }
+    updateWhitelistCount();
+    ensureWhitelistEmptyState();
+    syncWhitelistCopy(wlToggle.checked);
   })();
 
   (function() {
-    let active = "favorites";
-    const tabFav = document.getElementById("tabFav");
-    const tabDis = document.getElementById("tabDis");
-    const tabAbout = document.getElementById("tabAbout");
+    const THEME_VARS = {
+      purple: {
+        accent: "167, 139, 250",
+        deep: "139, 92, 246",
+        glow: "139, 92, 246"
+      },
+      blue: {
+        accent: "96, 165, 250",
+        deep: "59, 130, 246",
+        glow: "37, 99, 235"
+      },
+      green: {
+        accent: "52, 211, 153",
+        deep: "16, 185, 129",
+        glow: "5, 150, 105"
+      },
+      pink: {
+        accent: "244, 114, 182",
+        deep: "236, 72, 153",
+        glow: "219, 39, 119"
+      }
+    };
 
-    const panelList = document.getElementById("panelList");
-    const panelAbout = document.getElementById("panelAbout");
-
-    const search = document.getElementById("listSearch");
-    const box = document.getElementById("listBox");
-    const items = Array.from(box.querySelectorAll(".li"));
-
-    const aboutText = document.getElementById("aboutText");
-    const aboutCount = document.getElementById("aboutCount");
-    const aboutSave = document.getElementById("aboutSave");
-    const aboutStatus = document.getElementById("aboutStatus");
-
-    function showPanel(which) {
-      panelList.setAttribute("data-show", which === "list" ? "true" : "false");
-      panelAbout.setAttribute("data-show", which === "about" ? "true" : "false");
+    function syncControlThemeVars(node, theme) {
+      if (!node || !node.style) return;
+      const vars = THEME_VARS[theme] || THEME_VARS.purple;
+      node.style.setProperty("--control-accent-rgb", vars.accent);
+      node.style.setProperty("--control-accent-deep-rgb", vars.deep);
+      node.style.setProperty("--control-accent-glow-rgb", vars.glow);
     }
 
-    function applySelectionClasses() {
-      for (const el of items) {
-        el.classList.remove("selFav", "selDis");
-        const fav = el.getAttribute("data-fav") === "1";
-        const dis = el.getAttribute("data-dis") === "1";
-        if (fav) el.classList.add("selFav");
-        if (dis) el.classList.add("selDis");
+    function buildControlAssetUrl(kind, size, version) {
+      const qs = new URLSearchParams({
+        size: String(size || 64)
+      });
+      if (version) qs.set("v", String(version));
+      return "/" + kind + "/" + encodeURIComponent(ownerDiscordId) + "?" + qs.toString();
+    }
+
+    function buildControlAvatarUrl(size, version) {
+      return buildControlAssetUrl("avatars", size, version);
+    }
+
+    function buildControlBannerUrl(size, version) {
+      return buildControlAssetUrl("banners", size, version);
+    }
+
+    function buildControlBackgroundUrl(size, version) {
+      return buildControlAssetUrl("backgrounds", size, version);
+    }
+
+    function applyControlTheme(theme) {
+      const themeKey = theme || "purple";
+      if (profileActionRow) profileActionRow.setAttribute("data-control-theme", themeKey);
+      syncControlThemeVars(cmdModal, themeKey);
+    }
+
+    function applyControlDisplayName(value) {
+      if (!profileDisplayNameEl) return;
+      profileDisplayNameEl.textContent = value || defaultControlDisplayName;
+    }
+
+    function applyControlAvatar(version) {
+      if (version) activeControlAvatarVersion = Number(version) || Date.now();
+      if (profileAvatarImg) {
+        profileAvatarImg.src = buildControlAvatarUrl(64, activeControlAvatarVersion);
       }
     }
 
-    function setActive(which) {
-      tabFav.setAttribute("data-active", which === "favorites" ? "true" : "false");
-      tabDis.setAttribute("data-active", which === "dislikes" ? "true" : "false");
-      tabAbout.setAttribute("data-active", which === "about" ? "true" : "false");
-
-      if (which === "about") {
-        showPanel("about");
-      } else {
-        showPanel("list");
-      }
-
-      active = which;
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read that image."));
+        reader.readAsDataURL(file);
+      });
     }
 
-    function refilter() {
-      const q = (search.value || "").trim().toLowerCase();
-      for (const el of items) {
-        const ok = !q || (el.getAttribute("data-label") || "").includes(q) || (el.getAttribute("data-key") || "").includes(q);
-        el.style.display = ok ? "" : "none";
-      }
+    function setFormBusy(form, busy) {
+      form.querySelectorAll("button, input, textarea").forEach((el) => {
+        el.disabled = !!busy;
+      });
     }
 
-    tabFav.addEventListener("click", () => setActive("favorites"));
-    tabDis.addEventListener("click", () => setActive("dislikes"));
-    tabAbout.addEventListener("click", () => setActive("about"));
-    search.addEventListener("input", refilter);
-
-    box.addEventListener("click", async (e) => {
-      if (active === "about") return;
-
-      const el = e.target.closest(".li");
+    function setAssetPreviewBackground(el, url) {
       if (!el) return;
+      el.style.backgroundImage = url ? "url('" + url + "')" : "";
+    }
 
-      const itemKey = el.getAttribute("data-key");
-      const attr = active === "favorites" ? "data-fav" : "data-dis";
-      const otherAttr = active === "favorites" ? "data-dis" : "data-fav";
+    function initControlThemeForm(form) {
+      const statusEl = form.querySelector("#controlThemeStatus");
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const radios = Array.from(form.querySelectorAll('input[name="theme"]'));
+      const displayNameInput = form.querySelector('input[name="displayName"]');
+      const aboutMeInput = form.querySelector('textarea[name="aboutMe"]');
+      const aboutMeCountEl = form.querySelector("#controlThemeAboutMeCount");
+      const avatarPreview = form.querySelector("#controlThemeAvatarPreview");
+      const avatarInput = form.querySelector("#controlThemeAvatarInput");
+      const avatarUploadBtn = form.querySelector("#controlAvatarUploadBtn");
+      const avatarDeleteBtn = form.querySelector("#controlAvatarDeleteBtn");
+      const bannerPreview = form.querySelector("#controlThemeBannerPreview");
+      const bannerInput = form.querySelector("#controlThemeBannerInput");
+      const bannerUploadBtn = form.querySelector("#controlBannerUploadBtn");
+      const bannerDeleteBtn = form.querySelector("#controlBannerDeleteBtn");
+      const backgroundPreview = form.querySelector("#controlThemeBackgroundPreview");
+      const backgroundInput = form.querySelector("#controlThemeBackgroundInput");
+      const backgroundUploadBtn = form.querySelector("#controlBackgroundUploadBtn");
+      const backgroundDeleteBtn = form.querySelector("#controlBackgroundDeleteBtn");
+      let busy = false;
 
-      const cur = el.getAttribute(attr) === "1";
-      const next = !cur;
+      function setThemeStatus(text, type) {
+        setStatus(statusEl, text, type);
+      }
 
-      el.setAttribute(attr, next ? "1" : "0");
-      if (next) el.setAttribute(otherAttr, "0");
-      applySelectionClasses();
+      function assetLabel(kind) {
+        if (kind === "avatar") return "Avatar";
+        if (kind === "banner") return "Banner";
+        if (kind === "background") return "Background";
+        return "Image";
+      }
 
-      try {
-        const res = await fetch("/profile/lists/toggle", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            listKey: active,
-            itemKey,
-            enabled: next ? "1" : "0"
-          }),
-          credentials: "include"
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      function selectedTheme() {
+        const checked = radios.find((radio) => radio.checked);
+        return checked ? checked.value : activeControlTheme;
+      }
 
-        if (next) {
-          const otherListKey = active === "favorites" ? "dislikes" : "favorites";
-          const res2 = await fetch("/profile/lists/toggle", {
+      function syncAboutMeCount() {
+        if (!aboutMeInput || !aboutMeCountEl) return;
+        const maxLength = Number(aboutMeInput.getAttribute("maxlength") || 500) || 500;
+        if (aboutMeInput.value.length > maxLength) {
+          aboutMeInput.value = aboutMeInput.value.slice(0, maxLength);
+        }
+        aboutMeCountEl.textContent = `${aboutMeInput.value.length}/${maxLength}`;
+      }
+
+      function renderAssetControls() {
+        if (avatarPreview) {
+          avatarPreview.src = buildControlAvatarUrl(128, activeControlAvatarVersion);
+        }
+        if (avatarDeleteBtn) avatarDeleteBtn.hidden = !activeControlHasCustomAvatar;
+        setAssetPreviewBackground(
+          bannerPreview,
+          activeControlHasCustomBanner ? buildControlBannerUrl(1200, activeControlBannerVersion) : ""
+        );
+        if (bannerDeleteBtn) bannerDeleteBtn.hidden = !activeControlHasCustomBanner;
+        setAssetPreviewBackground(
+          backgroundPreview,
+          activeControlHasCustomBackground ? buildControlBackgroundUrl(1200, activeControlBackgroundVersion) : ""
+        );
+        if (backgroundDeleteBtn) backgroundDeleteBtn.hidden = !activeControlHasCustomBackground;
+      }
+
+      async function uploadAsset(kind, file) {
+        if (!file || busy) return;
+        busy = true;
+        setFormBusy(form, true);
+        setThemeStatus("Uploading...");
+
+        try {
+          const dataUrl = await fileToDataUrl(file);
+          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/" + kind, {
             method: "POST",
             headers: {
               "Accept": "application/json",
               "X-Requested-With": "XMLHttpRequest",
-              "Content-Type": "application/x-www-form-urlencoded"
+              "Content-Type": "application/json"
             },
-            body: new URLSearchParams({
-              listKey: otherListKey,
-              itemKey,
-              enabled: "0"
+            body: JSON.stringify({
+              filename: file.name || kind + "-upload",
+              mime: file.type || "application/octet-stream",
+              data: dataUrl
             }),
             credentials: "include"
           });
-          const data2 = await res2.json().catch(() => null);
-          if (!res2.ok) throw new Error((data2 && data2.message) || ("HTTP " + res2.status));
-        }
-      } catch (err) {
-        el.setAttribute(attr, cur ? "1" : "0");
-        applySelectionClasses();
-        alert("Failed to save: " + (err && err.message ? err.message : String(err)));
-        window.location.reload();
-      }
-    });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) {
+            throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+          }
 
-    function updateCount() {
-      const len = (aboutText.value || "").length;
-      aboutCount.textContent = String(len);
+          if (kind === "avatar") {
+            activeControlAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomAvatar = !!data.hasCustomAvatar;
+            applyControlAvatar(activeControlAvatarVersion);
+          } else if (kind === "banner") {
+            activeControlBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomBanner = !!data.hasCustomBanner;
+          } else if (kind === "background") {
+            activeControlBackgroundVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomBackground = !!data.hasCustomBackground;
+          }
+          renderAssetControls();
+          setThemeStatus(assetLabel(kind) + " uploaded.", "success");
+        } catch (err) {
+          setThemeStatus("Couldn't upload " + assetLabel(kind).toLowerCase() + ".", "error");
+        } finally {
+          busy = false;
+          setFormBusy(form, false);
+          if (avatarInput) avatarInput.value = "";
+          if (bannerInput) bannerInput.value = "";
+          if (backgroundInput) backgroundInput.value = "";
+        }
+      }
+
+      async function deleteAsset(kind) {
+        if (busy) return;
+        busy = true;
+        setFormBusy(form, true);
+        setThemeStatus("Removing...");
+
+        try {
+          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/" + kind + "/delete", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            credentials: "include"
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) {
+            throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+          }
+
+          if (kind === "avatar") {
+            activeControlAvatarVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomAvatar = false;
+            applyControlAvatar(activeControlAvatarVersion);
+          } else if (kind === "banner") {
+            activeControlBannerVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomBanner = false;
+          } else if (kind === "background") {
+            activeControlBackgroundVersion = Number(data.updatedAt || Date.now()) || Date.now();
+            activeControlHasCustomBackground = false;
+          }
+          renderAssetControls();
+          setThemeStatus(assetLabel(kind) + " removed.", "success");
+        } catch (err) {
+          setThemeStatus("Couldn't remove " + assetLabel(kind).toLowerCase() + ".", "error");
+        } finally {
+          busy = false;
+          setFormBusy(form, false);
+        }
+      }
+
+      const current = radios.find((radio) => radio.value === activeControlTheme);
+      if (current) current.checked = true;
+      if (displayNameInput) displayNameInput.value = activeControlDisplayName;
+      if (aboutMeInput) aboutMeInput.value = activeControlAboutMe;
+      syncAboutMeCount();
+      renderAssetControls();
+      syncControlThemeVars(form, activeControlTheme);
+      applyControlDisplayName(activeControlDisplayName);
+
+      radios.forEach((radio) => {
+        radio.addEventListener("change", () => {
+          applyControlTheme(selectedTheme());
+          syncControlThemeVars(form, selectedTheme());
+          setThemeStatus("");
+        });
+      });
+
+      aboutMeInput?.addEventListener("input", () => {
+        syncAboutMeCount();
+        setThemeStatus("");
+      });
+
+      avatarUploadBtn?.addEventListener("click", () => avatarInput?.click());
+      bannerUploadBtn?.addEventListener("click", () => bannerInput?.click());
+      backgroundUploadBtn?.addEventListener("click", () => backgroundInput?.click());
+      avatarInput?.addEventListener("change", () => uploadAsset("avatar", avatarInput.files && avatarInput.files[0]));
+      bannerInput?.addEventListener("change", () => uploadAsset("banner", bannerInput.files && bannerInput.files[0]));
+      backgroundInput?.addEventListener("change", () => uploadAsset("background", backgroundInput.files && backgroundInput.files[0]));
+      avatarDeleteBtn?.addEventListener("click", () => {
+        if (!activeControlHasCustomAvatar || !window.confirm("Remove your custom avatar?")) return;
+        deleteAsset("avatar");
+      });
+      bannerDeleteBtn?.addEventListener("click", () => {
+        if (!activeControlHasCustomBanner || !window.confirm("Remove your custom banner?")) return;
+        deleteAsset("banner");
+      });
+      backgroundDeleteBtn?.addEventListener("click", () => {
+        if (!activeControlHasCustomBackground || !window.confirm("Remove your custom background?")) return;
+        deleteAsset("background");
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (busy) return;
+
+        const theme = selectedTheme();
+        busy = true;
+        setFormBusy(form, true);
+        setThemeStatus("Saving...");
+
+        try {
+          const res = await fetch("/api/device/" + encodeURIComponent(pairCode) + "/theme", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+            },
+            body: new URLSearchParams({
+              theme,
+              displayName: displayNameInput ? String(displayNameInput.value || "").trim() : "",
+              aboutMe: aboutMeInput ? String(aboutMeInput.value || "") : ""
+            }).toString(),
+            credentials: "include"
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data || !data.ok) {
+            throw new Error((data && (data.message || data.code)) || ("HTTP " + res.status));
+          }
+
+          activeControlTheme = data.theme || theme;
+          activeControlDisplayName = String(data.displayName || "").trim();
+          activeControlAboutMe = String(data.aboutMe || "");
+          applyControlTheme(activeControlTheme);
+          applyControlDisplayName(activeControlDisplayName);
+          setThemeStatus("Control page saved.", "success");
+          setTimeout(hideCmdModal, 180);
+        } catch (err) {
+          setThemeStatus("Couldn't save control page.", "error");
+          applyControlTheme(activeControlTheme);
+          applyControlDisplayName(activeControlDisplayName);
+        } finally {
+          busy = false;
+          setFormBusy(form, false);
+        }
+      });
     }
 
-    aboutText.addEventListener("input", updateCount);
-
-    aboutSave.addEventListener("click", async () => {
-      aboutStatus.textContent = "Saving...";
-      try {
-        const res = await fetch("/profile/aboutme", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            text: aboutText.value || ""
-          }),
-          credentials: "include"
+    function showCmdModal(title, templateId) {
+      if (!cmdModal || !cmdModalBody || !cmdModalTitle) return;
+      const tpl = document.getElementById(templateId);
+      if (!tpl) return;
+      cmdModalTitle.textContent = title || "Command";
+      cmdModalBody.innerHTML = "";
+      cmdModalBody.appendChild(tpl.content.cloneNode(true));
+      cmdModal.classList.toggle("cmdModal--connectDevice", templateId === "tpl_profile_connect_device");
+      cmdModal.classList.toggle("cmdModal--deviceManager", templateId === "tpl_profile_manage_devices");
+      syncControlThemeVars(cmdModal, activeControlTheme);
+      cmdModal.style.display = "flex";
+      cmdModal.setAttribute("aria-hidden", "false");
+      const themeForm = cmdModalBody.querySelector('form[data-control-theme-form="1"]');
+      if (themeForm) initControlThemeForm(themeForm);
+      const clientSecretUi = cmdModalBody.querySelector("[data-client-secret-ui]");
+      if (clientSecretUi) initClientSecretUi(clientSecretUi);
+      const deviceManager = cmdModalBody.querySelector("[data-device-manager]");
+      if (deviceManager) {
+        const search = deviceManager.querySelector("[data-device-search]");
+        const empty = deviceManager.querySelector("[data-device-empty]");
+        search?.addEventListener("input", () => {
+          const query = String(search.value || "").trim().toLowerCase();
+          const rows = Array.from(deviceManager.querySelectorAll("[data-device-row]"));
+          let visible = 0;
+          rows.forEach((row) => {
+            const matches = !query || String(row.dataset.deviceSearchText || "").includes(query);
+            row.hidden = !matches;
+            if (matches) visible += 1;
+          });
+          if (empty) {
+            empty.hidden = visible > 0;
+            empty.textContent = rows.length ? "No devices match your search." : "No paired devices.";
+          }
         });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
-        aboutStatus.textContent = "Saved.";
-        setTimeout(() => aboutStatus.textContent = "", 1200);
-      } catch (e) {
-        aboutStatus.textContent = "Failed to save.";
+      }
+      const first = cmdModalBody.querySelector("textarea, input:not(.controlAvatarInput), button");
+      if (first && first.focus) first.focus();
+    }
+
+    function hideCmdModal() {
+      if (!cmdModal || !cmdModalBody) return;
+      activeClientSecretCleanup?.();
+      activeClientSecretCleanup = null;
+      applyControlTheme(activeControlTheme);
+      cmdModalBody.innerHTML = "";
+      cmdModal.style.display = "none";
+      cmdModal.setAttribute("aria-hidden", "true");
+      cmdModal.classList.remove("cmdModal--connectDevice", "cmdModal--deviceManager");
+    }
+
+    profileControlThemeEditBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      showCmdModal("Edit Control Link", "tpl_control_theme");
+    });
+
+    profileConnectDeviceBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      showCmdModal("Connect a Device", "tpl_profile_connect_device");
+    });
+
+    profileManageDevicesBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      showCmdModal("Paired Devices", "tpl_profile_manage_devices");
+    });
+
+    document.addEventListener("click", (e) => {
+      const close = e.target && e.target.closest && e.target.closest('[data-cmd-modal-close="1"]');
+      if (!close) return;
+      e.preventDefault();
+      hideCmdModal();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && cmdModal?.getAttribute("aria-hidden") === "false") {
+        hideCmdModal();
       }
     });
 
-    applySelectionClasses();
-    refilter();
-    updateCount();
-    setActive("favorites");
+    applyControlTheme(activeControlTheme);
   })();
+
+  (function() {
+    const search = document.getElementById("listSearch");
+    const box = document.getElementById("listBox");
+    const listEmpty = document.getElementById("listEmpty");
+
+    if (!search || !box) return;
+
+    const items = Array.from(box.querySelectorAll(".profileListPill"));
+    const states = ["none", "favorite", "dislike"];
+
+    function getState(el) {
+      if (el.getAttribute("data-fav") === "1") return "favorite";
+      if (el.getAttribute("data-dis") === "1") return "dislike";
+      return "none";
+    }
+
+    function applyState(el, state) {
+      el.classList.remove("isFav", "isDis");
+      el.setAttribute("data-state", state);
+      el.setAttribute("data-fav", state === "favorite" ? "1" : "0");
+      el.setAttribute("data-dis", state === "dislike" ? "1" : "0");
+      el.setAttribute("aria-pressed", state === "none" ? "false" : "true");
+      el.setAttribute("aria-label", `${el.textContent.trim()}: ${state === "none" ? "unselected" : state}`);
+      if (state === "favorite") el.classList.add("isFav");
+      if (state === "dislike") el.classList.add("isDis");
+    }
+
+    function nextState(currentState, direction) {
+      const index = states.indexOf(currentState);
+      const safeIndex = index >= 0 ? index : 0;
+      return states[(safeIndex + direction + states.length) % states.length];
+    }
+
+    function saveStateChange(previousState, nextStateValue, itemKey) {
+      let listKey = "";
+      let enabled = "0";
+
+      if (nextStateValue === "favorite") {
+        listKey = "favorites";
+        enabled = "1";
+      } else if (nextStateValue === "dislike") {
+        listKey = "dislikes";
+        enabled = "1";
+      } else if (previousState === "favorite") {
+        listKey = "favorites";
+      } else if (previousState === "dislike") {
+        listKey = "dislikes";
+      }
+
+      if (!listKey) return Promise.resolve();
+
+      return fetch("/profile/lists/toggle", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          listKey,
+          itemKey,
+          enabled
+        }),
+        credentials: "include"
+      }).then(async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && data.message) || ("HTTP " + res.status));
+      });
+    }
+
+    async function cycleItem(el, direction) {
+      if (el.disabled) return;
+
+      const itemKey = el.getAttribute("data-key");
+      const previousState = getState(el);
+      const nextStateValue = nextState(previousState, direction);
+
+      applyState(el, nextStateValue);
+      el.disabled = true;
+      el.classList.add("isSaving");
+
+      try {
+        await saveStateChange(previousState, nextStateValue, itemKey);
+      } catch (err) {
+        applyState(el, previousState);
+        toast(toastErrorMessage("Couldn't update interest", err), "error");
+      } finally {
+        el.disabled = false;
+        el.classList.remove("isSaving");
+      }
+    }
+
+    function refilter() {
+      const q = (search.value || "").trim().toLowerCase();
+      let visibleCount = 0;
+      for (const el of items) {
+        const ok = !q || (el.getAttribute("data-label") || "").includes(q) || (el.getAttribute("data-key") || "").includes(q);
+        el.style.display = ok ? "" : "none";
+        if (ok) visibleCount += 1;
+      }
+      if (listEmpty) listEmpty.hidden = visibleCount > 0;
+    }
+
+    search.addEventListener("input", refilter);
+
+    box.addEventListener("click", (e) => {
+      const el = e.target.closest(".profileListPill");
+      if (!el) return;
+      e.preventDefault();
+      cycleItem(el, 1);
+    });
+
+    box.addEventListener("contextmenu", (e) => {
+      const el = e.target.closest(".profileListPill");
+      if (!el) return;
+      e.preventDefault();
+      cycleItem(el, -1);
+    });
+
+    for (const el of items) applyState(el, getState(el));
+    refilter();
+  })();
+
 </script>
 
 <% } %>

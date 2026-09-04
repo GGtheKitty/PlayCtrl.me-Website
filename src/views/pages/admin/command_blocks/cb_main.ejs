@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="/css/users.css">
+  <link rel="stylesheet" href="/css/admin_command_blocks.css">
+</head>
+
+<body>
+  <div class="panel">
+    <div class="panelHd">
+      <div>
+        <h1>Command Blocks</h1>
+        <p class="muted commandBlockSubhead">
+          Users who are currently blocked from sending commands to someone. Expand a user to see who blocked them.
+        </p>
+      </div>
+      <a class="btn" href="/admin">Back</a>
+    </div>
+
+    <div class="panelBd">
+      <div class="toolbar commandBlockToolbar">
+        <span class="pill">
+          <span class="k">blocked users</span>
+          <span class="v"><%= Number(adminCommandBlockBlockedUserCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">block relationships</span>
+          <span class="v"><%= Number(adminCommandBlockCount || 0).toLocaleString() %></span>
+        </span>
+        <span class="pill">
+          <span class="k">blockers</span>
+          <span class="v"><%= Number(adminCommandBlockBlockerUserCount || 0).toLocaleString() %></span>
+        </span>
+
+        <% if (adminCommandBlockFlash) { %>
+          <span class="commandBlockFlash <%= adminCommandBlockFlashIsError ? "commandBlockFlash--error" : "" %>">
+            <%= adminCommandBlockFlash %>
+          </span>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+  <div id="list" class="commandBlockList">
+    <% if (adminCommandBlockGroups && adminCommandBlockGroups.length) { %>
+      <% for (const blocked of adminCommandBlockGroups) { %>
+        <details class="uCard commandBlockCard" data-command-block-card>
+          <summary class="commandBlockSummary">
+            <div class="uTop commandBlockTop">
+              <div class="uLeft">
+                <img class="uAv" src="<%= siteAvatarUrl({ discord_id: blocked.userId }, 64) %>" alt="" />
+                <div class="commandBlockIdentity">
+                  <div class="uName"><%= blocked.displayName %></div>
+                  <div class="uMeta">
+                    <% if (blocked.username) { %>
+                      <span class="mono">@<%= blocked.username %></span>
+                      <span class="dot">•</span>
+                    <% } %>
+                    <span class="mono"><%= blocked.userId %></span>
+                  </div>
+                  <div class="uMeta">
+                    <span class="pill">
+                      <span class="k">blocked by</span>
+                      <span class="v"><%= Number(blocked.blockerCount || 0).toLocaleString() %></span>
+                    </span>
+                    <% if (blocked.latestBlockedLabel) { %>
+                      <span class="pill">
+                        <span class="k">latest</span>
+                        <span class="v"><%= blocked.latestBlockedLabel %></span>
+                      </span>
+                    <% } %>
+                  </div>
+                </div>
+              </div>
+
+              <span class="miniBtn commandBlockExpand" aria-hidden="true">Blockers</span>
+            </div>
+          </summary>
+
+          <div class="commandBlockDetails">
+            <% for (const blocker of blocked.blockers) { %>
+              <div class="commandBlockBlockerRow" data-command-block-row>
+                <div class="uLeft commandBlockBlockerMain">
+                  <img class="uAv commandBlockSmallAv" src="<%= siteAvatarUrl({ discord_id: blocker.userId }, 48) %>" alt="" />
+                  <div class="commandBlockIdentity">
+                    <div class="uName commandBlockBlockerName"><%= blocker.displayName %></div>
+                    <div class="uMeta">
+                      <% if (blocker.username) { %>
+                        <span class="mono">@<%= blocker.username %></span>
+                        <span class="dot">•</span>
+                      <% } %>
+                      <span class="mono"><%= blocker.userId %></span>
+                    </div>
+                    <div class="uMeta">
+                      <% if (blocker.createdLabel) { %>
+                        <span class="pill">
+                          <span class="k">blocked</span>
+                          <span class="v">
+                            <time datetime="<%= blocker.createdIso %>"><%= blocker.createdLabel %></time>
+                          </span>
+                        </span>
+                      <% } %>
+                      <% if (blocker.sourceEventId) { %>
+                        <span class="pill">
+                          <span class="k">source</span>
+                          <span class="v"><%= blocker.sourceEventId %></span>
+                        </span>
+                      <% } %>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="commandBlockActions">
+                  <% if (blocker.adminUrl) { %>
+                    <a class="btnSm commandBlockViewLink" href="<%= blocker.adminUrl %>">View blocker</a>
+                  <% } %>
+                  <% if (blocked.adminUrl) { %>
+                    <a class="btnSm commandBlockViewLink" href="<%= blocked.adminUrl %>">View blocked</a>
+                  <% } %>
+                  <form
+                    class="commandBlockUnblockForm"
+                    method="POST"
+                    action="/admin/command-blocks/unblock"
+                    data-command-block-unblock-form
+                    data-blocker-name="<%= blocker.displayName %>"
+                    data-blocked-name="<%= blocked.displayName %>"
+                  >
+                    <input type="hidden" name="owner_user_id" value="<%= blocker.userId %>" />
+                    <input type="hidden" name="blocked_user_id" value="<%= blocked.userId %>" />
+                    <button class="btnSm commandBlockUnblockBtn" type="submit">Unblock</button>
+                  </form>
+                </div>
+              </div>
+            <% } %>
+          </div>
+        </details>
+      <% } %>
+    <% } else { %>
+      <div class="hint commandBlockEmpty">No command sender blocks have been created yet.</div>
+    <% } %>
+  </div>
+
+  <script>
+    (() => {
+      document.addEventListener("submit", (event) => {
+        const form = event.target?.closest?.("[data-command-block-unblock-form]");
+        if (!form) return;
+
+        const blockerName = form.dataset.blockerName || "this blocker";
+        const blockedName = form.dataset.blockedName || "this user";
+        const ok = window.confirm(
+          "Unblock " + blockedName + " from " + blockerName + "?"
+        );
+
+        if (!ok) {
+          event.preventDefault();
+        }
+      });
+    })();
+  </script>
+</body>
+
+</html>

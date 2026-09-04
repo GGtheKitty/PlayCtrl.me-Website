@@ -7,7 +7,7 @@
 
 <body>
   <div class="docs">
-    <h1>PlayCtrl API Documentation</h1>
+    <h1>PlayCtrl.me API Documentation</h1>
     <div class="muted">Base URL: <code><%= base %></code></div>
 
     <div class="toc">
@@ -188,7 +188,7 @@
             <td><code>command</code></td>
             <td><code>string</code></td>
             <td>✅</td>
-            <td>One of: <code>popup</code>, <code>open_url</code>, <code>image_popup</code>, <code>set_wallpaper</code>.</td>
+            <td>One of: <code>popup</code>, <code>subliminal_message</code>, <code>open_url</code>, <code>image_popup</code>, <code>fullscreen_popup</code>, <code>set_wallpaper</code>.</td>
           </tr>
           <tr>
             <td><code>parameters</code></td>
@@ -220,9 +220,19 @@
             <td><code>{"pairCode":"123456","command":"open_url","parameters":{"url":"https://example.com"}}</code></td>
           </tr>
           <tr>
+            <td><code>subliminal_message</code></td>
+            <td><code>messages</code> (array of strings)</td>
+            <td><code>{"pairCode":"123456","command":"subliminal_message","parameters":{"messages":["drop down","sink deeper","obedience is bliss"]}}</code></td>
+          </tr>
+          <tr>
             <td><code>image_popup</code></td>
             <td><code>url</code></td>
             <td><code>{"pairCode":"123456","command":"image_popup","parameters":{"url":"https://example.com/image.png"}}</code></td>
+          </tr>
+          <tr>
+            <td><code>fullscreen_popup</code></td>
+            <td><code>url</code></td>
+            <td><code>{"pairCode":"123456","command":"fullscreen_popup","parameters":{"url":"https://example.com/image.png"}}</code></td>
           </tr>
           <tr>
             <td><code>set_wallpaper</code></td>

@@ -1,0 +1,78 @@
+<link rel="stylesheet" href="/css/admin_uploads.css">
+
+<div class="uploadAdminPage">
+  <div class="uploadAdminPanel">
+    <div class="uploadAdminPanelHd">
+      <div>
+        <h1>Admin Screenshots</h1>
+        <p class="uploadAdminMuted">Admin gallery for image files currently stored in <code>responses_store</code>.</p>
+      </div>
+      <div class="uploadAdminPanelActions">
+        <a class="uploadAdminBtn uploadAdminBtn--ghost" href="/admin">Back</a>
+      </div>
+    </div>
+
+    <div class="uploadAdminStats">
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Images</span>
+        <span class="uploadAdminStatValue"><%= Number(adminScreenshotsStats?.count || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Storage</span>
+        <span class="uploadAdminStatValue"><%= adminScreenshotsStats?.totalBytesLabel || "0B" %></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="uploadAdminGrid">
+    <% if (adminScreenshots && adminScreenshots.length) { %>
+      <% for (const item of adminScreenshots) { %>
+        <article class="uploadAdminCard uploadAdminCard--image">
+          <div class="uploadAdminPreviewShell">
+            <a
+              class="uploadAdminPreviewBtn"
+              href="<%= item.url %>"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img src="<%= item.url %>" alt="<%= item.filename %>" loading="lazy" />
+              <span class="uploadAdminPreviewHint">Open image</span>
+            </a>
+          </div>
+
+          <div class="uploadAdminBody">
+            <div class="uploadAdminFileName" title="<%= item.filename %>">
+              <%= item.filename %>
+            </div>
+
+            <div class="uploadAdminPills">
+              <span class="uploadAdminPill">
+                <span class="uploadAdminPillKey">Size</span>
+                <span><%= item.sizeLabel %></span>
+              </span>
+              <span class="uploadAdminPill">
+                <span class="uploadAdminPillKey">Updated</span>
+                <span><%= new Date(item.modifiedAt).toLocaleString() %></span>
+              </span>
+            </div>
+          </div>
+
+          <div class="uploadAdminActions">
+            <a
+              class="uploadAdminLink"
+              href="<%= item.url %>"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open file
+            </a>
+          </div>
+        </article>
+      <% } %>
+    <% } %>
+  </div>
+
+  <div class="uploadAdminEmpty"<%= adminScreenshots && adminScreenshots.length ? " hidden" : "" %>>
+    No image files are currently stored in <code>responses_store</code>.
+  </div>
+</div>

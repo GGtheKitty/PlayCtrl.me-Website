@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <div class="card notificationPageCard" data-notifications-page="1">
+    <div class="cardHd notificationPageHd">
+      <div>
+        <div>Notifications</div>
+        <div class="muted notificationPageSubhead">
+          Your latest updates and system messages.
+        </div>
+      </div>
+
+      <div class="notificationPageActions">
+        <% if (notificationPageCount) { %>
+          <button
+            class="btn btn--ghost"
+            type="button"
+            data-notification-clear-all="1"
+          >
+            Clear all
+          </button>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="cardBd">
+      <% if (notificationPageTruncated) { %>
+        <div class="notificationPageNotice muted">
+          Showing the newest <%= notificationPageItems.length %> notifications.
+        </div>
+      <% } %>
+
+      <%- include("../../common/notification_list", {
+        notificationItems: notificationPageItems,
+        compact: false,
+        emptyMessage: "You're all caught up.",
+      }) %>
+    </div>
+  </div>
+</body>
+</html>

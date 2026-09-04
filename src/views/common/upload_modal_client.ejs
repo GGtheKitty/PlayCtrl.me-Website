@@ -1,0 +1,951 @@
+  const uploadItemsCache = new Map();
+  let activeUploadPreviewAudio = null;
+  let activeUploadPreviewButton = null;
+  let activeUploadPreviewTile = null;
+  let activeUploadPreviewPanel = null;
+  let activeUploadPreviewItemId = "";
+
+  function setUploadStatus(panel, text, tone) {
+    const el = panel && panel.querySelector("[data-upload-status]");
+    if (!el) return;
+
+    el.textContent = text || "";
+    el.classList.remove("uploadStatus--error", "uploadStatus--ok", "uploadStatus--busy");
+
+    if (tone === "error") el.classList.add("uploadStatus--error");
+    if (tone === "ok") el.classList.add("uploadStatus--ok");
+    if (tone === "busy") el.classList.add("uploadStatus--busy");
+  }
+
+  function setUploadDragActive(panel, active) {
+    if (!panel) return;
+    panel.classList.toggle("is-dragover", !!active);
+  }
+
+  function getStoredUploadsCacheKey(context) {
+    return "upload_recent_" + String(context || "").trim();
+  }
+
+  function readStoredUploadItems(context) {
+    const key = getStoredUploadsCacheKey(context);
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((item) => {
+        if (!item || typeof item !== "object") return false;
+        const expiresAt = Number(item.expiresAt || 0);
+        if (expiresAt && expiresAt <= Date.now()) return false;
+        return !!String(item.url || "").trim();
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  function writeStoredUploadItems(context, items) {
+    const key = getStoredUploadsCacheKey(context);
+    try {
+      const safeItems = Array.isArray(items)
+        ? items.filter((item) => item && String(item.url || "").trim())
+        : [];
+      window.localStorage.setItem(key, JSON.stringify(safeItems));
+    } catch {}
+  }
+
+  function getUploadPanelFromNode(node) {
+    return node && node.closest
+      ? node.closest(".uploadPanel[data-upload-context]")
+      : null;
+  }
+
+  function setUploadPreviewButtonState(button, playing) {
+    if (!button) return;
+    button.textContent = playing ? "Stop" : "Play";
+    button.classList.toggle("is-playing", !!playing);
+    button.setAttribute("aria-pressed", playing ? "true" : "false");
+  }
+
+  function setUploadPreviewTileState(tile, playing) {
+    if (!tile) return;
+    tile.classList.toggle("is-previewing", !!playing);
+  }
+
+  function clearActiveUploadPreviewState() {
+    setUploadPreviewButtonState(activeUploadPreviewButton, false);
+    setUploadPreviewTileState(activeUploadPreviewTile, false);
+    activeUploadPreviewAudio = null;
+    activeUploadPreviewButton = null;
+    activeUploadPreviewTile = null;
+    activeUploadPreviewPanel = null;
+    activeUploadPreviewItemId = "";
+  }
+
+  function stopUploadAudioPreview() {
+    if (activeUploadPreviewAudio) {
+      try {
+        activeUploadPreviewAudio.pause();
+        activeUploadPreviewAudio.currentTime = 0;
+      } catch {}
+    }
+
+    clearActiveUploadPreviewState();
+  }
+
+  async function toggleUploadAudioPreview({ panel, tile, button, item }) {
+    const itemId = String(item?.id || "");
+    if (!item?.url) {
+      setUploadStatus(panel, "Could not preview this audio file.", "error");
+      return;
+    }
+
+    if (
+      activeUploadPreviewAudio &&
+      activeUploadPreviewItemId &&
+      activeUploadPreviewItemId === itemId
+    ) {
+      stopUploadAudioPreview();
+      return;
+    }
+
+    stopUploadAudioPreview();
+
+    const audio = new Audio(item.url);
+    audio.preload = "metadata";
+
+    activeUploadPreviewAudio = audio;
+    activeUploadPreviewButton = button;
+    activeUploadPreviewTile = tile;
+    activeUploadPreviewPanel = panel;
+    activeUploadPreviewItemId = itemId;
+
+    setUploadPreviewButtonState(button, true);
+    setUploadPreviewTileState(tile, true);
+
+    audio.addEventListener("ended", () => {
+      if (activeUploadPreviewAudio !== audio) return;
+      clearActiveUploadPreviewState();
+    });
+
+    audio.addEventListener("error", () => {
+      if (activeUploadPreviewAudio !== audio) return;
+      stopUploadAudioPreview();
+      setUploadStatus(panel, "Could not preview this audio file.", "error");
+    });
+
+    try {
+      await audio.play();
+    } catch (err) {
+      if (activeUploadPreviewAudio === audio) {
+        stopUploadAudioPreview();
+      }
+      setUploadStatus(panel, "Could not preview this audio file.", "error");
+    }
+  }
+
+  function markUploadPickerPending(panel, pending) {
+    if (!panel) return;
+    panel.dataset.uploadPickerPending = pending ? "1" : "";
+  }
+
+  function getUploadDragDepth(panel) {
+    return Math.max(0, Number(panel?.dataset?.uploadDragDepth || 0));
+  }
+
+  function setUploadDragDepth(panel, depth) {
+    if (!panel) return;
+    const next = Math.max(0, Number(depth || 0));
+    if (next > 0) {
+      panel.dataset.uploadDragDepth = String(next);
+    } else {
+      delete panel.dataset.uploadDragDepth;
+    }
+  }
+
+  function nextUploadRefreshToken(panel) {
+    if (!panel) return 0;
+    const next = Number(panel.dataset.uploadRefreshToken || 0) + 1;
+    panel.dataset.uploadRefreshToken = String(next);
+    return next;
+  }
+
+  function isUploadRefreshTokenCurrent(panel, token) {
+    if (!panel) return false;
+    return Number(panel.dataset.uploadRefreshToken || 0) === Number(token || 0);
+  }
+
+  function formatUploadBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (!Number.isFinite(n) || n <= 0) return "0 B";
+    if (n >= 1024 * 1024) {
+      return (n / (1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 ? 0 : 1) + " MB";
+    }
+    if (n >= 1024) {
+      return (n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1) + " KB";
+    }
+    return Math.round(n) + " B";
+  }
+
+  function getFileExtension(name) {
+    const value = String(name || "").trim().toLowerCase();
+    const dot = value.lastIndexOf(".");
+    if (dot < 0) return "";
+    return value.slice(dot);
+  }
+
+  function fileMatchesAccept(file, acceptValue) {
+    const accept = String(acceptValue || "").trim();
+    if (!accept) return true;
+
+    const tokens = accept
+      .split(",")
+      .map((part) => String(part || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!tokens.length) return true;
+
+    const ext = getFileExtension(file && file.name);
+    const mime = String(file && file.type || "").trim().toLowerCase();
+
+    return tokens.some((token) => {
+      if (token === "*/*") return true;
+      if (token.startsWith(".")) return !!ext && ext === token;
+      if (token.endsWith("/*")) {
+        const base = token.slice(0, -1);
+        return !!mime && mime.startsWith(base);
+      }
+      return !!mime && mime === token;
+    });
+  }
+
+  function getUploadPanelTarget(panel) {
+    const form = panel && panel.closest ? panel.closest("form") : null;
+    const selector = String(panel?.dataset?.uploadTarget || "").trim();
+    if (!form || !selector) return null;
+    return form.querySelector(selector);
+  }
+
+  function getUploadBatchMaxFiles(panel) {
+    const raw = Number(panel?.dataset?.uploadMaxFiles || 0);
+    return Math.max(1, raw || 5);
+  }
+
+  function isUploadFileLike(file) {
+    return (
+      !!file &&
+      typeof file === "object" &&
+      typeof file.name === "string" &&
+      Number.isFinite(Number(file.size))
+    );
+  }
+
+  function readEmbeddedUploadItems(panel) {
+    const context = String(panel?.dataset?.uploadContext || "").trim();
+    const script = panel && panel.querySelector
+      ? panel.querySelector("script[data-upload-initial-items]")
+      : null;
+
+    if (!script) return [];
+
+    try {
+      const parsed = JSON.parse(script.textContent || "[]");
+      if (!Array.isArray(parsed)) return [];
+      if (parsed.length) {
+        writeStoredUploadItems(context, parsed);
+      }
+      return parsed;
+    } catch {
+      return [];
+    }
+  }
+
+  function setSelectedUploadId(panel, itemId) {
+    if (!panel) return;
+    panel.dataset.selectedUploadId = itemId ? String(itemId) : "";
+    panel.querySelectorAll(".uploadTile").forEach((tile) => {
+      tile.classList.toggle(
+        "is-selected",
+        !!itemId && tile.dataset.uploadId === String(itemId),
+      );
+    });
+  }
+
+  function mergeUploadItems(items, incomingItem, limit) {
+    const next = [];
+    const seen = new Set();
+    const all = [];
+
+    if (incomingItem) all.push(incomingItem);
+    if (Array.isArray(items)) all.push(...items);
+
+    for (const item of all) {
+      if (!item || typeof item !== "object") continue;
+      const id = String(item.id || "").trim();
+      const url = String(item.url || "").trim();
+      const key = id || url;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      next.push(item);
+    }
+
+    next.sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
+
+    const max = Math.max(Number(limit || 0), 1);
+    return next.slice(0, max);
+  }
+
+  function renderUploadItems(panel, items) {
+    const grid = panel && panel.querySelector("[data-upload-grid]");
+    const recent = panel && panel.querySelector("[data-upload-recent]");
+    if (!grid || !recent) return;
+
+    if (activeUploadPreviewPanel === panel) {
+      stopUploadAudioPreview();
+    }
+
+    const selectedId = String(panel.dataset.selectedUploadId || "");
+    grid.innerHTML = "";
+
+    if (!Array.isArray(items) || !items.length) {
+      recent.hidden = true;
+      return;
+    }
+
+    recent.hidden = false;
+
+    for (const item of items) {
+      const previewKind =
+        item.previewKind === "audio"
+          ? "audio"
+          : (item.previewKind === "video" ? "video" : "image");
+      const tile = document.createElement("div");
+      tile.className = "uploadTile";
+      tile.classList.add("uploadTile--" + previewKind);
+      tile.dataset.uploadId = String(item.id || "");
+      tile.title = item.originalName || item.storedName || item.url || "Upload";
+      tile.tabIndex = 0;
+      tile.setAttribute("role", "button");
+
+      const media = document.createElement("div");
+      media.className = "uploadTileMedia";
+
+      if (item.previewKind === "video") {
+        const video = document.createElement("video");
+        video.src = item.url;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        media.appendChild(video);
+      } else if (item.previewKind === "audio") {
+        const icon = document.createElement("div");
+        icon.className = "uploadTileIcon";
+        icon.textContent = String(item.ext || "audio").toUpperCase();
+        media.appendChild(icon);
+      } else {
+        const img = document.createElement("img");
+        img.src = item.url;
+        img.alt = item.originalName || item.storedName || "Upload";
+        img.loading = "lazy";
+        media.appendChild(img);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "uploadTileMeta";
+      meta.textContent = item.originalName || item.storedName || item.url || "Upload";
+
+      tile.appendChild(media);
+      tile.appendChild(meta);
+
+      if (item.previewKind === "audio") {
+        const controls = document.createElement("div");
+        controls.className = "uploadTileControls";
+
+        const previewBtn = document.createElement("button");
+        previewBtn.type = "button";
+        previewBtn.className = "uploadTilePreviewBtn";
+        setUploadPreviewButtonState(previewBtn, false);
+
+        previewBtn.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await toggleUploadAudioPreview({ panel, tile, button: previewBtn, item });
+        });
+
+        previewBtn.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.stopPropagation();
+        });
+
+        controls.appendChild(previewBtn);
+        tile.appendChild(controls);
+      }
+
+      if (selectedId && tile.dataset.uploadId === selectedId) {
+        tile.classList.add("is-selected");
+      }
+
+      const selectUpload = () => {
+        const target = getUploadPanelTarget(panel);
+        if (!target) {
+          setUploadStatus(panel, "Could not find the URL field for this upload.", "error");
+          return false;
+        }
+
+        target.value = item.url || "";
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        target.focus();
+
+        const form = panel.closest("form");
+        const soundSelect = form && form.querySelector(".psSelect");
+        if (soundSelect && target.classList.contains("psUrlInput")) {
+          soundSelect.value = "";
+        }
+
+        setSelectedUploadId(panel, item.id);
+        setUploadStatus(panel, "Inserted uploaded file URL.", "ok");
+        return true;
+      };
+
+      tile.addEventListener("click", () => {
+        selectUpload();
+      });
+
+      tile.addEventListener("keydown", (event) => {
+        if (event.target !== tile) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectUpload();
+      });
+
+      grid.appendChild(tile);
+    }
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("file_read_failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function parseFetchPayload(res) {
+    const contentType = res.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+      return await res.json().catch(() => null);
+    }
+
+    const text = await res.text().catch(() => "");
+    return text ? { message: text } : null;
+  }
+
+  async function loadUploadsForContext(context, refresh) {
+    const key = String(context || "").trim();
+    if (!refresh && uploadItemsCache.has(key)) {
+      return uploadItemsCache.get(key);
+    }
+
+    if (refresh) {
+      uploadItemsCache.delete(key);
+    }
+
+    const query = new URLSearchParams({ context: key });
+    if (refresh) {
+      query.set("_ts", String(Date.now()));
+    }
+
+    const res = await fetch(
+      "/api/uploads?" + query.toString(),
+      {
+        headers: {
+          Accept: "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        cache: "no-store",
+        credentials: "include",
+      },
+    );
+
+    const payload = await parseFetchPayload(res);
+    if (!res.ok) {
+      throw new Error(payload?.message || "Could not load uploads.");
+    }
+
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    uploadItemsCache.set(key, items);
+    if (items.length) {
+      writeStoredUploadItems(key, items);
+    }
+    return items;
+  }
+
+  async function refreshUploadPanel(panel, refresh) {
+    const context = String(panel?.dataset?.uploadContext || "").trim();
+    const refreshToken = nextUploadRefreshToken(panel);
+    const storedItems = readStoredUploadItems(context);
+    if (storedItems.length && isUploadRefreshTokenCurrent(panel, refreshToken)) {
+      renderUploadItems(panel, storedItems);
+    }
+
+    const items = await loadUploadsForContext(context, !!refresh);
+    const finalItems = Array.isArray(items) && items.length ? items : storedItems;
+    if (isUploadRefreshTokenCurrent(panel, refreshToken)) {
+      renderUploadItems(panel, finalItems);
+    }
+    return finalItems;
+  }
+
+  function applyUploadedItemToTarget(panel, item, { focus = false } = {}) {
+    const target = getUploadPanelTarget(panel);
+    if (!target) {
+      throw new Error("Could not find the URL field for this upload.");
+    }
+
+    target.value = item.url || "";
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const form = panel.closest("form");
+    const soundSelect = form && form.querySelector(".psSelect");
+    if (soundSelect && target.classList.contains("psUrlInput")) {
+      soundSelect.value = "";
+    }
+
+    setSelectedUploadId(panel, item.id);
+    if (focus) target.focus();
+    return target;
+  }
+
+  async function uploadSingleFile(panel, file, progress = {}) {
+    if (!file) {
+      return { ok: false, error: "No file was selected." };
+    }
+
+    const batchIndex = Math.max(1, Number(progress.index || 1));
+    const batchTotal = Math.max(1, Number(progress.total || 1));
+
+    console.log("[uploads] selected file", {
+      context: String(panel?.dataset?.uploadContext || ""),
+      name: file.name,
+      type: file.type || "",
+      size: Number(file.size || 0),
+    });
+
+    setUploadStatus(
+      panel,
+      (batchTotal > 1
+        ? "Preparing file " + batchIndex + " of " + batchTotal + ": "
+        : "Selected ") + file.name + "...",
+      "busy",
+    );
+
+    const context = String(panel?.dataset?.uploadContext || "").trim();
+    const accept = String(panel?.dataset?.uploadAccept || "").trim();
+    const maxBytes = Number(panel?.dataset?.uploadMaxBytes || 0);
+    const target = getUploadPanelTarget(panel);
+    if (!target) {
+      return {
+        ok: false,
+        error: "Could not find the URL field for this upload.",
+      };
+    }
+
+    if (!fileMatchesAccept(file, accept)) {
+      return {
+        ok: false,
+        error: file.name + " is not an allowed file type.",
+      };
+    }
+
+    if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
+      return {
+        ok: false,
+        error:
+          file.name +
+          " is too large. Max size is " +
+          formatUploadBytes(maxBytes) +
+          ".",
+      };
+    }
+
+    setUploadStatus(
+      panel,
+      (batchTotal > 1
+        ? "Uploading file " + batchIndex + " of " + batchTotal + ": "
+        : "Uploading ") + file.name + "...",
+      "busy",
+    );
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      console.log("[uploads] posting upload", {
+        context,
+        filename: file.name,
+        mime: context === "play_sound" ? "" : (file.type || ""),
+        dataUrlLength: dataUrl.length,
+      });
+
+      const res = await fetch("/api/uploads", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({
+          context,
+          filename: file.name,
+          mime: context === "play_sound" ? "" : (file.type || ""),
+          data: dataUrl,
+        }),
+        credentials: "include",
+      });
+
+      const payload = await parseFetchPayload(res);
+      console.log("[uploads] upload response", {
+        context,
+        status: res.status,
+        ok: res.ok,
+        payload,
+      });
+      if (!res.ok) {
+        throw new Error(payload?.message || "Could not upload file.");
+      }
+
+      const item = payload?.item || null;
+      if (!item || !item.url) {
+        throw new Error("Upload completed but no URL was returned.");
+      }
+
+      const mergedItems = mergeUploadItems(
+        readStoredUploadItems(context),
+        item,
+        18,
+      );
+      uploadItemsCache.set(context, mergedItems);
+      writeStoredUploadItems(context, mergedItems);
+      renderUploadItems(panel, mergedItems);
+      applyUploadedItemToTarget(panel, item);
+
+      return { ok: true, item };
+    } catch (err) {
+      console.error("[uploads] upload failed", err);
+      return {
+        ok: false,
+        error: err && err.message ? err.message : "Could not upload file.",
+      };
+    }
+  }
+
+  async function handleUploadFiles(panel, files, input) {
+    const list = Array.isArray(files)
+      ? files.filter(isUploadFileLike)
+      : [];
+
+    if (!list.length) {
+      console.warn("[uploads] input change fired without a file", {
+        context: String(panel?.dataset?.uploadContext || ""),
+      });
+      setUploadStatus(
+        panel,
+        "No file was selected. If this keeps happening, try drag and drop.",
+        "error",
+      );
+      if (input) input.value = "";
+      setUploadDragActive(panel, false);
+      return;
+    }
+
+    const maxFiles = getUploadBatchMaxFiles(panel);
+    const selectedFiles = list.slice(0, maxFiles);
+    const skippedCount = Math.max(0, list.length - selectedFiles.length);
+    const successes = [];
+    const failures = [];
+
+    for (let i = 0; i < selectedFiles.length; i += 1) {
+      const result = await uploadSingleFile(panel, selectedFiles[i], {
+        index: i + 1,
+        total: selectedFiles.length,
+      });
+      if (result?.ok && result.item) {
+        successes.push(result.item);
+      } else {
+        failures.push(
+          String(result?.error || "Could not upload file.").trim() ||
+            "Could not upload file.",
+        );
+      }
+    }
+
+    try {
+      if (successes.length) {
+        applyUploadedItemToTarget(
+          panel,
+          successes[successes.length - 1],
+          { focus: true },
+        );
+      }
+
+      refreshUploadPanel(panel, true).catch((err) => {
+        console.warn("[uploads] refresh after upload failed", err);
+      });
+
+      if (selectedFiles.length === 1 && skippedCount === 0) {
+        if (successes.length) {
+          setUploadStatus(panel, "Upload complete. URL inserted.", "ok");
+        } else {
+          setUploadStatus(
+            panel,
+            failures[0] || "Could not upload file.",
+            "error",
+          );
+        }
+        return;
+      }
+
+      const parts = [];
+      if (successes.length) {
+        parts.push(
+          "Uploaded " +
+            successes.length +
+            " file" +
+            (successes.length === 1 ? "" : "s") +
+            ".",
+        );
+      }
+      if (failures.length) {
+        parts.push(
+          failures.length +
+            " file" +
+            (failures.length === 1 ? "" : "s") +
+            " failed.",
+        );
+      }
+      if (skippedCount > 0) {
+        parts.push(
+          skippedCount +
+            " skipped because only " +
+            maxFiles +
+            " can be uploaded at once.",
+        );
+      }
+
+      let message = parts.join(" ").trim();
+      if (!message) {
+        message = "Could not upload the selected files.";
+      }
+      if (successes.length) {
+        message += " Latest URL inserted.";
+      }
+      if (failures.length) {
+        message += " First error: " + failures[0];
+      }
+
+      setUploadStatus(panel, message, successes.length ? "ok" : "error");
+    } finally {
+      if (input) input.value = "";
+      setUploadDragActive(panel, false);
+    }
+  }
+
+  async function handleUploadSelection(panel, input) {
+    const files = Array.from(input?.files || []);
+    markUploadPickerPending(panel, false);
+    await handleUploadFiles(panel, files, input);
+  }
+
+  function initUploadPanel(panel) {
+    if (!panel || panel.dataset.uploadReady === "1") return;
+    panel.dataset.uploadReady = "1";
+
+    const embeddedItems = readEmbeddedUploadItems(panel);
+    if (embeddedItems.length) {
+      renderUploadItems(panel, embeddedItems);
+    }
+
+    refreshUploadPanel(panel, true).catch((err) => {
+      setUploadStatus(
+        panel,
+        err && err.message ? err.message : "Could not load uploads.",
+        "error",
+      );
+    });
+  }
+
+  function initUploadPanels(root) {
+    const scope =
+      root && typeof root.querySelectorAll === "function" ? root : document;
+
+    scope
+      .querySelectorAll(".uploadPanel[data-upload-context]")
+      .forEach(initUploadPanel);
+  }
+
+  async function refreshUploadPanels(root, refresh) {
+    const scope =
+      root && typeof root.querySelectorAll === "function" ? root : document;
+    const panels = Array.from(
+      scope.querySelectorAll(".uploadPanel[data-upload-context]"),
+    );
+
+    await Promise.all(
+      panels.map(async (panel) => {
+        try {
+          await refreshUploadPanel(panel, !!refresh);
+        } catch (err) {
+          setUploadStatus(
+            panel,
+            err && err.message ? err.message : "Could not load uploads.",
+            "error",
+          );
+        }
+      }),
+    );
+  }
+
+  window.stopUploadAudioPreview = stopUploadAudioPreview;
+  window.refreshUploadPanels = refreshUploadPanels;
+
+  if (!window.__uploadDelegationBound) {
+    window.__uploadDelegationBound = true;
+
+    document.addEventListener("click", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      if (!dropzone) return;
+
+      const panel = getUploadPanelFromNode(dropzone);
+      if (!panel) return;
+
+      console.log("[uploads] file picker opened", {
+        context: String(panel?.dataset?.uploadContext || ""),
+      });
+      markUploadPickerPending(panel, true);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      if (!dropzone) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      const panel = getUploadPanelFromNode(dropzone);
+      const input = panel && panel.querySelector(".uploadInput");
+      if (!panel || !input) return;
+
+      event.preventDefault();
+      console.log("[uploads] file picker opened", {
+        context: String(panel?.dataset?.uploadContext || ""),
+      });
+      markUploadPickerPending(panel, true);
+      input.click();
+    });
+
+    document.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!input.classList.contains("uploadInput")) return;
+
+      const panel = getUploadPanelFromNode(input);
+      if (!panel) return;
+
+      console.log("[uploads] file input changed", {
+        context: String(panel?.dataset?.uploadContext || ""),
+        fileCount: Number(input.files?.length || 0),
+      });
+      handleUploadSelection(panel, input);
+    });
+
+    document.addEventListener("dragenter", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      const panel = getUploadPanelFromNode(dropzone);
+      if (!panel) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setUploadDragDepth(panel, getUploadDragDepth(panel) + 1);
+      setUploadDragActive(panel, true);
+    });
+
+    document.addEventListener("dragover", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      const panel = getUploadPanelFromNode(dropzone);
+      if (!panel) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setUploadDragActive(panel, true);
+    });
+
+    document.addEventListener("dragleave", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      const panel = getUploadPanelFromNode(dropzone);
+      if (!panel) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      const nextDepth = getUploadDragDepth(panel) - 1;
+      setUploadDragDepth(panel, nextDepth);
+      if (nextDepth <= 0) setUploadDragActive(panel, false);
+    });
+
+    document.addEventListener("drop", (event) => {
+      const dropzone = event.target && event.target.closest
+        ? event.target.closest("[data-upload-dropzone]")
+        : null;
+      const panel = getUploadPanelFromNode(dropzone);
+      if (!panel) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setUploadDragDepth(panel, 0);
+      setUploadDragActive(panel, false);
+
+      const input = panel.querySelector(".uploadInput");
+      const files = event.dataTransfer && event.dataTransfer.files;
+      const droppedFiles = Array.from(files || []).filter(isUploadFileLike);
+      if (!droppedFiles.length) {
+        setUploadStatus(panel, "No file was dropped.", "error");
+        return;
+      }
+
+      console.log("[uploads] file dropped", {
+        context: String(panel?.dataset?.uploadContext || ""),
+        fileCount: droppedFiles.length,
+        names: droppedFiles.map((file) => file.name),
+      });
+      markUploadPickerPending(panel, false);
+      handleUploadFiles(panel, droppedFiles, input);
+    });
+  }
+
+  window.addEventListener("focus", () => {
+    setTimeout(() => {
+      document
+        .querySelectorAll('.uploadPanel[data-upload-picker-pending="1"]')
+        .forEach((panel) => {
+          const input = panel.querySelector(".uploadInput");
+          const hasFile = !!(input && input.files && input.files.length);
+          if (hasFile) return;
+
+          console.warn("[uploads] picker closed without a file", {
+            context: String(panel?.dataset?.uploadContext || ""),
+          });
+          markUploadPickerPending(panel, false);
+        });
+    }, 150);
+  });
+
+  window.addEventListener("pagehide", stopUploadAudioPreview);

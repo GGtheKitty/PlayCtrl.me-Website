@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "avatars:backfill": "DB_PATH=${DB_PATH:-src/ggbot.db} node src/server.js avatars:backfill"
+  },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "cookie-parser": "^1.4.7",

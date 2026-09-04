@@ -1,79 +1,1505 @@
 <script>
   (function() {
-    function fnv1a32(str) {
-      let h = 0x811c9dc5;
-      for (let i = 0; i < str.length; i++) {
-        h ^= str.charCodeAt(i);
-        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-      }
-      return h >>> 0;
+    const COMMUNITY_PUBLIC_MIN_COMMANDS = <%- inlineScriptJson(Number(communityPublicMinCommands || 100)) %>;
+    const INITIAL_COMMUNITY_INVITE_CODE = <%- inlineScriptJson(String(communityInviteCode || "")) %>;
+    const INITIAL_COMMANDS_SENT_TOTAL = <%- inlineScriptJson(Number(commandsSentTotal || 0)) %>;
+    const INITIAL_DISCOVER_MODE = <%- inlineScriptJson(String(discoverInitialMode || "users")) %>;
+
+    const tabUsers = document.getElementById("tabUsers");
+    const tabGroups = document.getElementById("tabGroups");
+    const tabCommunity = document.getElementById("tabCommunity");
+    const usersPane = document.getElementById("usersPane");
+    const groupsPane = document.getElementById("groupsPane");
+    const communityPane = document.getElementById("communityPane");
+    const heading = document.getElementById("discoverHeading");
+    const subheading = document.getElementById("discoverSubheading");
+    const searchWrap = document.getElementById("discoverSearchWrap");
+    const searchInput = document.getElementById("discoverSearchInput");
+    const filterWrap = document.getElementById("discoverFilterWrap");
+    const filterBtn = document.getElementById("discoverFilterBtn");
+    const filterMenu = document.getElementById("discoverFilterMenu");
+    const filterOnline = document.getElementById("discoverFilterOnline");
+    const filterAway = document.getElementById("discoverFilterAway");
+    let totalPages = 1;
+    let currentMode = INITIAL_COMMUNITY_INVITE_CODE
+      ? "community"
+      : INITIAL_DISCOVER_MODE;
+    let viewerCommandsSentTotal = INITIAL_COMMANDS_SENT_TOTAL;
+
+    if (
+      !tabUsers ||
+      !tabGroups ||
+      !tabCommunity ||
+      !usersPane ||
+      !groupsPane ||
+      !communityPane
+    ) {
+      return;
     }
 
-    function windowIdNow10m() {
-      return Math.floor(Date.now() / (10 * 60 * 1000));
+    function notify(message, type = "info") {
+      const text = String(message || "").trim();
+      if (!text) return;
+      if (window.showToast && typeof window.showToast[type] === "function") {
+        window.showToast[type](text);
+        return;
+      }
+      if (typeof window.showToast === "function") {
+        window.showToast(text, { type });
+        return;
+      }
+      window.alert(text);
     }
+
+    function setPaneVisible(el, visible) {
+      if (!el) return;
+      el.style.display = visible ? "" : "none";
+    }
+
+    function setFilterMenuOpen(open) {
+      const canOpen = !!open && !!filterMenu && !!filterBtn && !filterBtn.disabled;
+      if (filterMenu) filterMenu.hidden = !canOpen;
+      if (filterBtn) {
+        filterBtn.setAttribute("aria-expanded", canOpen ? "true" : "false");
+      }
+      if (filterWrap) filterWrap.classList.toggle("isOpen", canOpen);
+    }
+
+    function updateFilterButtonState() {
+      if (!filterBtn) return;
+      const allEnabled =
+        (!filterOnline || filterOnline.checked) &&
+        (!filterAway || filterAway.checked);
+      filterBtn.classList.toggle("isFiltered", !allEnabled);
+    }
+
+    function updateHeading(mode) {
+      if (!heading || !subheading) return;
+      if (mode === "groups") {
+        heading.textContent = "Discover Groups";
+        subheading.textContent = "Browse the group catalog and jump into shared controls.";
+        return;
+      }
+      if (mode === "community") {
+        heading.textContent = "Discover Community";
+        subheading.textContent = "Create invite-only circles, join public ones, and grow toward a public listing.";
+        return;
+      }
+      heading.textContent = "Discover";
+      subheading.textContent = "Find opted-in users, join groups, and grow your own communities.";
+    }
+
+    function syncDiscoverTabUrl(mode) {
+      const url = new URL(window.location.href);
+      if (mode === "groups" || mode === "community") {
+        url.searchParams.set("tab", mode);
+      } else {
+        url.searchParams.delete("tab");
+      }
+
+      const next =
+        `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}${url.hash}`;
+      window.history.replaceState({}, "", next);
+    }
+
+    function setMode(mode, { loadCommunityTab = true, updateUrl = true } = {}) {
+      currentMode = mode === "groups" || mode === "community" ? mode : "users";
+      const isUsers = currentMode === "users";
+      const isGroups = currentMode === "groups";
+      const isCommunity = currentMode === "community";
+
+      if (updateUrl) syncDiscoverTabUrl(currentMode);
+
+      setPaneVisible(usersPane, isUsers);
+      setPaneVisible(groupsPane, isGroups);
+      setPaneVisible(communityPane, isCommunity);
+
+      tabUsers.classList.toggle("isActive", isUsers);
+      tabGroups.classList.toggle("isActive", isGroups);
+      tabCommunity.classList.toggle("isActive", isCommunity);
+
+      if (searchInput) {
+        searchInput.disabled = !(isUsers || isCommunity);
+        searchInput.placeholder = isCommunity ? "Search community groups" : "Search users";
+      }
+      if (searchWrap) searchWrap.classList.toggle("isDisabled", !(isUsers || isCommunity));
+      if (filterBtn) filterBtn.disabled = !isUsers;
+      if (!isUsers) setFilterMenuOpen(false);
+      for (const pager of document.querySelectorAll(".discoverPager")) {
+        pager.hidden = !isUsers || totalPages <= 1;
+      }
+
+      updateHeading(currentMode);
+
+      if (isCommunity && loadCommunityTab) {
+        loadCommunity().catch(() => {});
+      }
+    }
+
+    tabUsers.addEventListener("click", () => setMode("users"));
+    tabGroups.addEventListener("click", () => setMode("groups"));
+    tabCommunity.addEventListener("click", () => setMode("community"));
+
+    filterBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setFilterMenuOpen(filterMenu?.hidden);
+    });
+
+    filterMenu?.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!filterWrap || filterWrap.contains(event.target)) return;
+      setFilterMenuOpen(false);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setFilterMenuOpen(false);
+        closeCommunityCreateModal();
+        closeCommunityInviteModal();
+      }
+    });
+
+    updateFilterButtonState();
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, Object.assign(
+        {
+          headers: {
+            "Accept": "application/json",
+          },
+          credentials: "include",
+        },
+        options || {},
+      ));
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.ok) {
+        const error = new Error(
+          String(data?.message || data?.error || "request_failed"),
+        );
+        error.status = res.status;
+        error.data = data || null;
+        throw error;
+      }
+      return data;
+    }
+
+    async function copyText(text) {
+      const value = String(text || "");
+      if (!value) throw new Error("missing_text");
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+
+      const input = document.createElement("textarea");
+      input.value = value;
+      input.setAttribute("readonly", "readonly");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      const ok = document.execCommand("copy");
+      input.remove();
+      if (!ok) throw new Error("copy_failed");
+    }
+
+    const gGrid = document.getElementById("gGrid");
+    if (gGrid) {
+      gGrid.addEventListener("click", async (event) => {
+        const btn = event.target.closest(".gJoinBtn[data-group]");
+        if (!btn) return;
+
+        const key = btn.getAttribute("data-group");
+        const isJoined = btn.classList.contains("isJoined");
+        btn.disabled = true;
+
+        try {
+          const url = isJoined
+            ? `/api/group/${encodeURIComponent(key)}/leave`
+            : `/api/group/${encodeURIComponent(key)}/join`;
+          const data = await fetchJson(url, { method: "POST" });
+
+          btn.classList.toggle("isJoined", !isJoined);
+          const text = btn.querySelector(".gJoinText");
+          if (text) text.textContent = !isJoined ? "✓" : "Join";
+          btn.title = !isJoined ? "Leave" : "Join";
+          btn.setAttribute("aria-label", !isJoined ? "Leave group" : "Join group");
+
+          reorderGroupsByCounts();
+          notify(!isJoined ? "Joined group." : "Left group.", "success");
+        } catch (err) {
+          console.error(err);
+          notify("Failed to update group membership.", "error");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      function setGroupCounts(card, online, members) {
+        const onlineEl = card.querySelector(".gOnlineCount");
+        const memberEl = card.querySelector(".gMemberCount");
+        if (onlineEl) onlineEl.textContent = String(online || 0);
+        if (memberEl) memberEl.textContent = String(members || 0);
+      }
+
+      function reorderGroupsByCounts(countMap = null) {
+        if (!gGrid) return;
+
+        const cards = Array.from(gGrid.querySelectorAll(".gCard[data-group]"));
+
+        cards.sort((a, b) => {
+          const ak = a.getAttribute("data-group") || "";
+          const bk = b.getAttribute("data-group") || "";
+
+          const aBtn = a.querySelector(".gJoinBtn[data-group]");
+          const bBtn = b.querySelector(".gJoinBtn[data-group]");
+
+          const aJoined = aBtn?.classList.contains("isJoined") ? 1 : 0;
+          const bJoined = bBtn?.classList.contains("isJoined") ? 1 : 0;
+          if (bJoined !== aJoined) return bJoined - aJoined;
+
+          const ao = Number(countMap?.[ak]?.online ?? a.querySelector(".gOnlineCount")?.textContent ?? 0);
+          const bo = Number(countMap?.[bk]?.online ?? b.querySelector(".gOnlineCount")?.textContent ?? 0);
+          if (bo !== ao) return bo - ao;
+
+          const am = Number(countMap?.[ak]?.members ?? a.querySelector(".gMemberCount")?.textContent ?? 0);
+          const bm = Number(countMap?.[bk]?.members ?? b.querySelector(".gMemberCount")?.textContent ?? 0);
+          if (bm !== am) return bm - am;
+
+          const at = (a.querySelector(".gTitle")?.textContent || ak).trim().toLowerCase();
+          const bt = (b.querySelector(".gTitle")?.textContent || bk).trim().toLowerCase();
+          return at.localeCompare(bt);
+        });
+
+        const frag = document.createDocumentFragment();
+        for (const card of cards) frag.appendChild(card);
+        gGrid.appendChild(frag);
+      }
+
+      async function tickGroups() {
+        if (!gGrid) return;
+
+        try {
+          const data = await fetchJson("/api/presence/groups");
+          const map = data.map || {};
+          const cards = Array.from(gGrid.querySelectorAll(".gCard[data-group]"));
+          for (const card of cards) {
+            const key = card.getAttribute("data-group");
+            const stats = map[key] || { online: 0, members: 0 };
+            setGroupCounts(card, Number(stats.online || 0), Number(stats.members || 0));
+          }
+
+          reorderGroupsByCounts(map);
+        } catch {}
+      }
+
+      tickGroups();
+      setInterval(tickGroups, 5000);
+    }
+
+    const communityCreateLaunchBtn = document.getElementById("communityCreateLaunchBtn");
+    const communityCreateModal = document.getElementById("communityCreateModal");
+    const communityCreateForm = document.getElementById("communityCreateForm");
+    const communityCreateBtn = document.getElementById("communityCreateBtn");
+    const communityNameInput = document.getElementById("communityNameInput");
+    const communityDescriptionInput = document.getElementById("communityDescriptionInput");
+    const communityPublicInput = document.getElementById("communityPublicInput");
+    const communityCreateHint = document.getElementById("communityCreateHint");
+    const communityInviteJoinForm = document.getElementById("communityInviteJoinForm");
+    const communityInviteInput = document.getElementById("communityInviteInput");
+    const communityInviteJoinBtn = document.getElementById("communityInviteJoinBtn");
+    const communityMyGroups = document.getElementById("communityMyGroups");
+    const communityPublicGroups = document.getElementById("communityPublicGroups");
+    const communityMyEmpty = document.getElementById("communityMyEmpty");
+    const communityPublicEmpty = document.getElementById("communityPublicEmpty");
+    const communityPublicHint = document.getElementById("communityPublicHint");
+    const communityInviteModal = document.getElementById("communityInviteModal");
+    const communityInviteConfirmBtn = document.getElementById("communityInviteConfirmBtn");
+    const communityInviteDetails = document.getElementById("communityInviteDetails");
+    const communityMyPager = document.getElementById("communityMyPager");
+    const communityMyPrev = document.getElementById("communityMyPrev");
+    const communityMyNext = document.getElementById("communityMyNext");
+    const communityMyPageLabel = document.getElementById("communityMyPageLabel");
+    const communityPublicPager = document.getElementById("communityPublicPager");
+    const communityPublicPrev = document.getElementById("communityPublicPrev");
+    const communityPublicNext = document.getElementById("communityPublicNext");
+    const communityPublicPageLabel = document.getElementById("communityPublicPageLabel");
+
+    let communityLoaded = false;
+    let communityRequest = null;
+    let communityRequestId = 0;
+    let inviteQueryHandled = false;
+    let pendingCommunityInviteCode = "";
+    let activeInvitePreviewRequestId = 0;
+    let communityMyPage = 1;
+    let communityPublicPage = 1;
+    const communityPerPage = 12;
+
+    function openCommunityCreateModal() {
+      if (!communityCreateModal) return;
+      communityCreateModal.style.display = "flex";
+      communityCreateModal.setAttribute("aria-hidden", "false");
+      window.setTimeout(() => {
+        communityNameInput?.focus();
+      }, 0);
+    }
+
+    function closeCommunityCreateModal() {
+      if (!communityCreateModal) return;
+      communityCreateModal.style.display = "none";
+      communityCreateModal.setAttribute("aria-hidden", "true");
+    }
+
+    function renderCommunityInviteDetails(group) {
+      if (!communityInviteDetails) return;
+      communityInviteDetails.replaceChildren();
+
+      if (!group) {
+        communityInviteDetails.appendChild(
+          createEl("div", "communityLoading", "That invite link is invalid or has expired."),
+        );
+        return;
+      }
+
+      const card = createEl("div", "communityInviteGroupCard");
+      const top = createEl("div", "communityOwner");
+      const avatar = document.createElement("img");
+      avatar.className = "communityOwnerAvatar";
+      avatar.alt = "";
+      avatar.src = String(group.ownerAvatarUrl || "/default-avatar.svg");
+
+      const text = createEl("div", "communityOwnerText");
+      text.appendChild(createEl("div", "communityGroupName", group.name || "Community group"));
+      text.appendChild(
+        createEl("div", "communityOwnerMeta", `by ${group.ownerDisplayName || "Unknown"}`),
+      );
+      top.appendChild(avatar);
+      top.appendChild(text);
+      card.appendChild(top);
+
+      if (group.description) {
+        card.appendChild(createEl("p", "communityGroupDescription", group.description));
+      }
+
+      const stats = createEl("div", "communityGroupStats");
+      stats.appendChild(createEl("div", "communityGroupStat", `${Number(group.onlineCount || 0)} online`));
+      stats.appendChild(createEl("div", "communityGroupStat", `${Number(group.memberCount || 0)} members`));
+      card.appendChild(stats);
+      communityInviteDetails.appendChild(card);
+    }
+
+    async function loadCommunityInvitePreview(code, requestId) {
+      if (!communityInviteDetails) return;
+      communityInviteDetails.replaceChildren(
+        createEl("div", "communityLoading", "Loading group details..."),
+      );
+      if (communityInviteConfirmBtn) communityInviteConfirmBtn.disabled = true;
+
+      try {
+        const data = await fetchJson(
+          `/api/community/invites/preview?code=${encodeURIComponent(code)}`,
+        );
+        if (requestId !== activeInvitePreviewRequestId) return;
+        renderCommunityInviteDetails(data.group);
+        if (communityInviteConfirmBtn) communityInviteConfirmBtn.disabled = false;
+      } catch {
+        if (requestId !== activeInvitePreviewRequestId) return;
+        renderCommunityInviteDetails(null);
+        if (communityInviteConfirmBtn) communityInviteConfirmBtn.disabled = true;
+      }
+    }
+
+    function openCommunityInviteModal(code) {
+      const inviteCode = parseInviteCode(code);
+      if (!communityInviteModal || !inviteCode) return;
+      pendingCommunityInviteCode = inviteCode;
+      const requestId = ++activeInvitePreviewRequestId;
+      communityInviteModal.style.display = "flex";
+      communityInviteModal.setAttribute("aria-hidden", "false");
+      void loadCommunityInvitePreview(inviteCode, requestId);
+      window.setTimeout(() => {
+        communityInviteConfirmBtn?.focus();
+      }, 0);
+    }
+
+    function closeCommunityInviteModal({ clearQuery = true } = {}) {
+      if (!communityInviteModal) return;
+      communityInviteModal.style.display = "none";
+      communityInviteModal.setAttribute("aria-hidden", "true");
+      pendingCommunityInviteCode = "";
+      activeInvitePreviewRequestId += 1;
+      if (clearQuery) clearInviteQueryParam();
+    }
+
+    function updateCommunityCreateHint() {
+      const remaining = Math.max(
+        0,
+        COMMUNITY_PUBLIC_MIN_COMMANDS - Number(viewerCommandsSentTotal || 0),
+      );
+      if (communityPublicHint) {
+        communityPublicHint.textContent =
+          remaining > 0
+            ? `Public listings unlock when the owner reaches ${COMMUNITY_PUBLIC_MIN_COMMANDS} commands sent. You need ${remaining} more right now.`
+            : "You already qualify to make community groups public.";
+      }
+      if (communityCreateHint) {
+        communityCreateHint.textContent =
+          remaining > 0
+            ? `You can create private groups immediately. Public listings unlock in ${remaining} more commands.`
+            : "You can create private groups now or list them publicly right away.";
+      }
+    }
+
+    communityCreateLaunchBtn?.addEventListener("click", () => {
+      openCommunityCreateModal();
+    });
+
+    communityCreateModal?.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-community-modal-close='1']");
+      if (!closeBtn) return;
+      closeCommunityCreateModal();
+    });
+
+    communityInviteModal?.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-community-invite-modal-close='1']");
+      if (!closeBtn) return;
+      closeCommunityInviteModal();
+    });
+
+    function parseInviteCode(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+
+      if (raw.includes("communityInvite=")) {
+        try {
+          const url = raw.startsWith("http://") || raw.startsWith("https://")
+            ? new URL(raw)
+            : new URL(raw, window.location.origin);
+          return String(url.searchParams.get("communityInvite") || "").trim();
+        } catch {}
+      }
+
+      return raw;
+    }
+
+    function clearInviteQueryParam() {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has("communityInvite")) return;
+      url.searchParams.delete("communityInvite");
+      const next =
+        `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}${url.hash}`;
+      window.history.replaceState({}, "", next);
+    }
+
+    function createEl(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (typeof text !== "undefined") el.textContent = String(text);
+      return el;
+    }
+
+    function createCommunityButton(label, className, action, groupKey, disabled) {
+      const btn = createEl("button", className, label);
+      btn.type = "button";
+      btn.dataset.communityAction = action;
+      btn.dataset.groupKey = groupKey;
+      btn.disabled = !!disabled;
+      return btn;
+    }
+
+    function createCommunityLink(label, href, className) {
+      const link = createEl("a", className, label);
+      link.href = href;
+      return link;
+    }
+
+    function createBadge(label, className) {
+      return createEl("span", `communityBadge ${className || ""}`.trim(), label);
+    }
+
+    function renderCommunityGroups(listEl, groups) {
+      if (!listEl) return;
+      listEl.replaceChildren();
+
+      for (const group of Array.isArray(groups) ? groups : []) {
+        const card = createEl("article", "communityGroupCard");
+        card.dataset.groupKey = String(group.key || "");
+
+        const top = createEl("div", "communityGroupTop");
+        const owner = createEl("div", "communityOwner");
+        const ownerAvatar = document.createElement("img");
+        ownerAvatar.className = "communityOwnerAvatar";
+        ownerAvatar.alt = "";
+        ownerAvatar.src = String(group.ownerAvatarUrl || "/default-avatar.svg");
+
+        const ownerText = createEl("div", "communityOwnerText");
+        const groupName = createEl("div", "communityGroupName", group.name || group.key || "Community group");
+        const ownerMeta = createEl(
+          "div",
+          "communityOwnerMeta",
+          `by ${group.ownerDisplayName || "Unknown"}`
+        );
+        ownerText.appendChild(groupName);
+        ownerText.appendChild(ownerMeta);
+        owner.appendChild(ownerAvatar);
+        owner.appendChild(ownerText);
+
+        const badges = createEl("div", "communityBadgeRow");
+        badges.appendChild(
+          createBadge(
+            group.publicVisible ? "Public" : "Private",
+            group.publicVisible ? "communityBadge--public" : "communityBadge--private",
+          ),
+        );
+        if (group.isOwner) {
+          badges.appendChild(createBadge("Owner", "communityBadge--owner"));
+        } else if (group.isMember) {
+          badges.appendChild(createBadge("Joined", "communityBadge--member"));
+        }
+
+        top.appendChild(owner);
+        top.appendChild(badges);
+        card.appendChild(top);
+
+        if (group.description) {
+          card.appendChild(createEl("p", "communityGroupDescription", group.description));
+        }
+
+        const stats = createEl("div", "communityGroupStats");
+        stats.appendChild(createEl("div", "communityGroupStat", `${Number(group.onlineCount || 0)} online`));
+        stats.appendChild(createEl("div", "communityGroupStat", `${Number(group.memberCount || 0)} members`));
+        card.appendChild(stats);
+
+        if (group.isOwner && !group.publicEligible) {
+          const remaining = Math.max(
+            0,
+            COMMUNITY_PUBLIC_MIN_COMMANDS - Number(group.ownerCommandsSentTotal || 0),
+          );
+          card.appendChild(
+            createEl(
+              "div",
+              "communityGroupHint",
+              `Need ${remaining} more commands to list this group publicly.`,
+            ),
+          );
+        }
+
+        const actions = createEl("div", "communityActionRow");
+
+        if (group.isOwner) {
+          actions.appendChild(
+            createCommunityButton(
+              "Invite Link",
+              "communitySecondaryBtn communityActionBtn",
+              "invite",
+              group.key,
+              false,
+            ),
+          );
+          actions.appendChild(
+            createCommunityButton(
+              group.isPublic ? "Make Private" : group.publicEligible ? "List Publicly" : `Need ${COMMUNITY_PUBLIC_MIN_COMMANDS}`,
+              "communitySecondaryBtn communityActionBtn",
+              "toggle-public",
+              group.key,
+              !group.isPublic && !group.publicEligible,
+            ),
+          );
+          actions.appendChild(
+            createCommunityLink("Control", group.groupUrl, "communityPrimaryBtn communityActionLink"),
+          );
+        } else if (group.isMember) {
+          const leaveBtn = createCommunityButton(
+            "Leave",
+            "communitySecondaryBtn communityActionBtn",
+            "leave",
+            group.key,
+            false,
+          );
+          leaveBtn.dataset.groupPublicVisible = group.publicVisible ? "1" : "0";
+          leaveBtn.dataset.groupName = group.name || group.key || "this group";
+          actions.appendChild(leaveBtn);
+          actions.appendChild(
+            createCommunityLink("Control", group.groupUrl, "communityPrimaryBtn communityActionLink"),
+          );
+        } else {
+          actions.appendChild(
+            createCommunityButton(
+              "Join",
+              "communityPrimaryBtn communityActionBtn",
+              "join",
+              group.key,
+              !group.publicVisible,
+            ),
+          );
+          actions.appendChild(
+            createCommunityLink("Preview", group.groupUrl, "communitySecondaryBtn communityActionLink"),
+          );
+        }
+
+        card.appendChild(actions);
+        listEl.appendChild(card);
+      }
+    }
+
+    function normalizeCommunityPagination(value) {
+      const total = Math.max(0, Number(value?.total || 0));
+      const totalPages = Math.max(1, Number(value?.totalPages || 1));
+      const page = Math.max(1, Math.min(Number(value?.page || 1), totalPages));
+      return {
+        total,
+        totalPages,
+        page,
+        perPage: Math.max(1, Number(value?.perPage || communityPerPage)),
+      };
+    }
+
+    function updateCommunityPager(kind, pagination) {
+      const state = normalizeCommunityPagination(pagination);
+      const pager = kind === "my" ? communityMyPager : communityPublicPager;
+      const prev = kind === "my" ? communityMyPrev : communityPublicPrev;
+      const next = kind === "my" ? communityMyNext : communityPublicNext;
+      const label = kind === "my" ? communityMyPageLabel : communityPublicPageLabel;
+
+      if (kind === "my") {
+        communityMyPage = state.page;
+      } else {
+        communityPublicPage = state.page;
+      }
+
+      if (pager) pager.hidden = state.totalPages <= 1;
+      if (prev) prev.disabled = state.page <= 1;
+      if (next) next.disabled = state.page >= state.totalPages;
+      if (label) label.textContent = `Page ${state.page} of ${state.totalPages}`;
+    }
+
+    function renderCommunity(data) {
+      const myGroups = Array.isArray(data?.myGroups) ? data.myGroups : [];
+      const publicGroups = Array.isArray(data?.publicGroups) ? data.publicGroups : [];
+      viewerCommandsSentTotal = Number(data?.viewerCommandsSentTotal || 0);
+      updateCommunityCreateHint();
+
+      renderCommunityGroups(communityMyGroups, myGroups);
+      renderCommunityGroups(communityPublicGroups, publicGroups);
+
+      const hasQuery = !!getCommunitySearchQuery();
+      if (communityMyEmpty) {
+        communityMyEmpty.hidden = myGroups.length > 0;
+        if (!communityMyEmpty.hidden) {
+          communityMyEmpty.textContent = hasQuery
+            ? "(No joined or owned community groups match your search.)"
+            : "(You haven't created or joined any community groups yet.)";
+        }
+      }
+      if (communityPublicEmpty) {
+        communityPublicEmpty.hidden = publicGroups.length > 0;
+        if (!communityPublicEmpty.hidden) {
+          communityPublicEmpty.textContent = hasQuery
+            ? "(No public community groups match your search.)"
+            : "(No community groups are listed publicly right now.)";
+        }
+      }
+      updateCommunityPager("my", data?.myPagination);
+      updateCommunityPager("public", data?.publicPagination);
+    }
+
+    function renderCommunityLoading() {
+      if (communityMyGroups && !communityLoaded) {
+        communityMyGroups.innerHTML = '<div class="communityLoading">Loading your groups...</div>';
+      }
+      if (communityPublicGroups && !communityLoaded) {
+        communityPublicGroups.innerHTML = '<div class="communityLoading">Loading public groups...</div>';
+      }
+      if (communityMyEmpty) communityMyEmpty.hidden = true;
+      if (communityPublicEmpty) communityPublicEmpty.hidden = true;
+    }
+
+    function getCommunitySearchQuery() {
+      return String(searchInput?.value || "").trim();
+    }
+
+    function buildCommunityRequestUrl() {
+      const params = new URLSearchParams();
+      const query = getCommunitySearchQuery();
+      params.set("myPage", String(communityMyPage));
+      params.set("publicPage", String(communityPublicPage));
+      params.set("perPage", String(communityPerPage));
+      if (query) params.set("q", query);
+      return `/api/community/discover?${params.toString()}`;
+    }
+
+    async function loadCommunity({ force = false, showLoading = !communityLoaded } = {}) {
+      if (communityRequest && !force) return communityRequest;
+      if (showLoading) renderCommunityLoading();
+
+      const requestId = ++communityRequestId;
+      communityRequest = (async () => {
+        try {
+          const data = await fetchJson(buildCommunityRequestUrl());
+          if (requestId !== communityRequestId) return;
+          communityLoaded = true;
+          renderCommunity(data);
+        } catch (err) {
+          if (requestId !== communityRequestId) return;
+          if (!communityLoaded) {
+            if (communityMyGroups) {
+              communityMyGroups.innerHTML = '<div class="communityLoading">Couldn\'t load your groups right now.</div>';
+            }
+            if (communityPublicGroups) {
+              communityPublicGroups.innerHTML = '<div class="communityLoading">Couldn\'t load public groups right now.</div>';
+            }
+          }
+          throw err;
+        } finally {
+          if (requestId === communityRequestId) {
+            communityRequest = null;
+          }
+        }
+      })();
+
+      return communityRequest;
+    }
+
+    async function joinCommunityInvite(code, { silent = false } = {}) {
+      const inviteCode = parseInviteCode(code);
+      if (!inviteCode) return;
+
+      try {
+        const data = await fetchJson("/api/community/invites/join", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ code: inviteCode }),
+        });
+        if (communityInviteInput) communityInviteInput.value = "";
+        await loadCommunity({ force: true });
+        if (!silent) {
+          notify(`Joined ${data?.group?.name || "community group"}.`, "success");
+        }
+      } catch (err) {
+        if (!silent) {
+          notify(
+            err?.data?.message || "That invite link or code is invalid.",
+            "error",
+          );
+        }
+        throw err;
+      } finally {
+        clearInviteQueryParam();
+      }
+    }
+
+    communityInviteConfirmBtn?.addEventListener("click", async () => {
+      const inviteCode = pendingCommunityInviteCode;
+      if (!inviteCode) {
+        closeCommunityInviteModal();
+        return;
+      }
+
+      const originalLabel = communityInviteConfirmBtn.textContent;
+      communityInviteConfirmBtn.disabled = true;
+      communityInviteConfirmBtn.textContent = "Joining...";
+
+      try {
+        await joinCommunityInvite(inviteCode);
+        closeCommunityInviteModal({ clearQuery: false });
+      } catch {
+        closeCommunityInviteModal({ clearQuery: false });
+      } finally {
+        communityInviteConfirmBtn.disabled = false;
+        communityInviteConfirmBtn.textContent = originalLabel;
+      }
+    });
+
+    communityCreateForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const name = String(communityNameInput?.value || "").trim();
+      const description = String(communityDescriptionInput?.value || "").trim();
+      const isPublic = !!communityPublicInput?.checked;
+
+      if (!name) {
+        notify("Give the group a name first.", "warning");
+        communityNameInput?.focus();
+        return;
+      }
+
+      communityCreateBtn.disabled = true;
+      const originalLabel = communityCreateBtn.textContent;
+      communityCreateBtn.textContent = "Creating...";
+
+      try {
+        const data = await fetchJson("/api/community/groups", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name, description, isPublic }),
+        });
+
+        communityCreateForm.reset();
+        closeCommunityCreateModal();
+        viewerCommandsSentTotal = Math.max(
+          viewerCommandsSentTotal,
+          Number(data?.group?.ownerCommandsSentTotal || 0),
+        );
+        updateCommunityCreateHint();
+        await loadCommunity({ force: true });
+        setMode("community", { loadCommunityTab: false });
+
+        if (data.requestedPublic && !data.createdPublic) {
+          notify(
+            `Created ${data?.group?.name || "group"} as private. Public listing unlocks at ${COMMUNITY_PUBLIC_MIN_COMMANDS} commands sent.`,
+            "warning",
+          );
+        } else {
+          notify(`Created ${data?.group?.name || "community group"}.`, "success");
+        }
+      } catch (err) {
+        notify(err?.data?.message || "Couldn't create that community group.", "error");
+      } finally {
+        communityCreateBtn.disabled = false;
+        communityCreateBtn.textContent = originalLabel;
+      }
+    });
+
+    communityInviteJoinForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const inviteCode = parseInviteCode(communityInviteInput?.value);
+      if (!inviteCode) {
+        notify("Paste an invite code or link first.", "warning");
+        communityInviteInput?.focus();
+        return;
+      }
+
+      communityInviteJoinBtn.disabled = true;
+      const originalLabel = communityInviteJoinBtn.textContent;
+      communityInviteJoinBtn.textContent = "Joining...";
+
+      try {
+        await joinCommunityInvite(inviteCode);
+      } catch {} finally {
+        communityInviteJoinBtn.disabled = false;
+        communityInviteJoinBtn.textContent = originalLabel;
+      }
+    });
+
+    communityPane.addEventListener("click", async (event) => {
+      const actionBtn = event.target.closest("[data-community-action][data-group-key]");
+      if (!actionBtn) return;
+
+      const action = actionBtn.dataset.communityAction || "";
+      const groupKey = actionBtn.dataset.groupKey || "";
+      if (!action || !groupKey) return;
+
+      if (
+        action === "leave" &&
+        actionBtn.dataset.groupPublicVisible !== "1"
+      ) {
+        const groupName = String(actionBtn.dataset.groupName || "this private group");
+        const confirmed = window.confirm(
+          `Leave ${groupName}? This is a private group, so you won't be able to rejoin unless someone provides you with a new invite link.`,
+        );
+        if (!confirmed) return;
+      }
+
+      const originalLabel = actionBtn.textContent;
+      actionBtn.disabled = true;
+
+      try {
+        if (action === "join") {
+          await fetchJson(`/api/group/${encodeURIComponent(groupKey)}/join`, {
+            method: "POST",
+          });
+          await loadCommunity({ force: true });
+          notify("Joined group.", "success");
+        } else if (action === "leave") {
+          await fetchJson(`/api/group/${encodeURIComponent(groupKey)}/leave`, {
+            method: "POST",
+          });
+          await loadCommunity({ force: true });
+          notify("Left group.", "success");
+        } else if (action === "invite") {
+          actionBtn.textContent = "Copying...";
+          const data = await fetchJson(
+            `/api/community/groups/${encodeURIComponent(groupKey)}/invite`,
+            { method: "POST" },
+          );
+          const inviteUrl = new URL(
+            String(data.invitePath || ""),
+            window.location.origin,
+          ).toString();
+          await copyText(inviteUrl);
+          notify("Invite link copied. It expires in 24 hours.", "success");
+        } else if (action === "toggle-public") {
+          const shouldBePublic = originalLabel !== "Make Private";
+          actionBtn.textContent = shouldBePublic ? "Listing..." : "Updating...";
+          await fetchJson(
+            `/api/community/groups/${encodeURIComponent(groupKey)}/visibility`,
+            {
+              method: "POST",
+              headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ isPublic: shouldBePublic }),
+            },
+          );
+          await loadCommunity({ force: true });
+          notify(
+            shouldBePublic ? "Group is now public." : "Group is private again.",
+            "success",
+          );
+        }
+      } catch (err) {
+        notify(
+          err?.data?.message || "That community action couldn't be completed.",
+          "error",
+        );
+      } finally {
+        actionBtn.disabled = false;
+        actionBtn.textContent = originalLabel;
+      }
+    });
 
     const grid = document.getElementById("uGrid");
-    if (!grid) return;
+    const emptyState = document.getElementById("discoverUsersEmpty");
+    const pagers = [
+      {
+        root: document.getElementById("discoverPagerTop"),
+        prev: document.getElementById("discoverPrevPageTop"),
+        next: document.getElementById("discoverNextPageTop"),
+        list: document.getElementById("discoverPageListTop"),
+      },
+      {
+        root: document.getElementById("discoverPagerBottom"),
+        prev: document.getElementById("discoverPrevPageBottom"),
+        next: document.getElementById("discoverNextPageBottom"),
+        list: document.getElementById("discoverPageListBottom"),
+      },
+    ];
+    if (
+      !grid ||
+      !emptyState ||
+      pagers.some((pager) => !pager.root || !pager.prev || !pager.next || !pager.list)
+    ) {
+      setMode(currentMode);
+      return;
+    }
 
-    function setDot(card, online) {
-      const dot = card.querySelector('.statusDot');
+    let currentPage = 1;
+    let currentCardsPerPage = 0;
+    let hasLoadedUsers = false;
+    let activeUsersRequestId = 0;
+    let usersAbortController = null;
+    let searchTimer = null;
+
+    function normalizeStatus(status) {
+      const value = String(status || "").trim().toLowerCase();
+      if (value === "online" || value === "away") return value;
+      return "offline";
+    }
+
+    function getSelectedStatuses() {
+      const statuses = [];
+      if (!filterOnline || filterOnline.checked) statuses.push("online");
+      if (!filterAway || filterAway.checked) statuses.push("away");
+      return statuses;
+    }
+
+    function getSearchQuery() {
+      return String(searchInput?.value || "").trim().toLowerCase();
+    }
+
+    function getCardsPerRow() {
+      const width = window.innerWidth || document.documentElement.clientWidth || 0;
+      if (width <= 520) return 1;
+      if (width <= 900) return 2;
+      if (width <= 1200) return 3;
+      return 4;
+    }
+
+    function getCardsPerPage() {
+      return Math.max(1, getCardsPerRow() * 3);
+    }
+
+    function shouldUseCompactPager() {
+      const width = window.innerWidth || document.documentElement.clientWidth || 0;
+      return width <= 640;
+    }
+
+    function setDot(card, statusValue) {
+      const status = normalizeStatus(statusValue);
+      const dot = card.querySelector(".statusDot");
       if (!dot) return;
-      dot.classList.toggle("statusDot--online", !!online);
-      dot.classList.toggle("statusDot--offline", !online);
-      dot.title = online ? "Online" : "Offline";
+      card.dataset.status = status;
+      card.dataset.online = status === "online" ? "1" : "0";
+      dot.classList.remove("statusDot--online", "statusDot--away", "statusDot--offline");
+      dot.classList.add(`statusDot--${status}`);
+      dot.title =
+        status === "online" ? "Online" : status === "away" ? "Away" : "Offline";
     }
 
-    function reorderDeterministic() {
-      const winId = windowIdNow10m();
-      const cards = Array.from(grid.children);
-      cards.sort((a, b) => {
-        const ak = fnv1a32(String(winId) + ":" + String(a.getAttribute("data-pair") || ""));
-        const bk = fnv1a32(String(winId) + ":" + String(b.getAttribute("data-pair") || ""));
-        return ak - bk;
-      });
-      const frag = document.createDocumentFragment();
-      for (const c of cards) frag.appendChild(c);
-      grid.appendChild(frag);
+    function normalizeUserPayload(user) {
+      const pairCode = String(user?.pairCode || user?.code || "").trim();
+      if (!pairCode) return null;
+
+      return {
+        pairCode,
+        displayName: String(
+          user?.displayName ||
+            user?.preferred_display_name ||
+            user?.username ||
+            user?.discordId ||
+            pairCode,
+        ),
+        username: String(user?.username || ""),
+        avatarUrl: String(user?.avatarUrl || "/default-avatar.svg"),
+        bannerUrl: String(user?.bannerUrl || ""),
+        status: normalizeStatus(
+          user?.status || (user?.online ? "online" : "offline"),
+        ),
+      };
     }
 
-    reorderDeterministic();
+    function setBanner(card, bannerUrl) {
+      const banner = card.querySelector(".uCardBanner");
+      if (!banner) return;
 
-    let lastWin = windowIdNow10m();
-    setInterval(() => {
-      const nowWin = windowIdNow10m();
-      if (nowWin !== lastWin) {
-        lastWin = nowWin;
-        reorderDeterministic();
+      if (bannerUrl) {
+        banner.style.backgroundImage =
+          `linear-gradient(180deg, rgba(7, 10, 18, 0.08), rgba(7, 10, 18, 0.56)), url("${bannerUrl}")`;
+        card.dataset.hasBanner = "1";
+        return;
       }
-    }, 5000);
 
-    async function tick() {
+      banner.style.removeProperty("background-image");
+      card.dataset.hasBanner = "0";
+    }
+
+    function updateUserCard(card, user) {
+      if (!card || !user) return;
+
+      card.setAttribute("data-pair", user.pairCode);
+      if (!card.hasAttribute("data-fav-ts")) {
+        card.setAttribute("data-fav-ts", "");
+      }
+
+      const avatar = card.querySelector(".uAvi");
+      const display = card.querySelector(".display");
+      const handle = card.querySelector(".handle");
+      const control = card.querySelector(".control");
+
+      if (avatar) avatar.src = user.avatarUrl || "/default-avatar.svg";
+      if (display) display.textContent = user.displayName;
+      if (handle) handle.textContent = user.username ? `@${user.username}` : "";
+      if (control) {
+        control.setAttribute("href", `/device/${encodeURIComponent(user.pairCode)}`);
+      }
+
+      setBanner(card, user.bannerUrl);
+      setDot(card, user.status);
+    }
+
+    function createUserCard(user) {
+      const card = document.createElement("div");
+      card.className = "uCard";
+      card.setAttribute("data-pair", user.pairCode);
+      card.setAttribute("data-fav-ts", "");
+      card.setAttribute("data-status", user.status);
+      card.setAttribute("data-online", user.status === "online" ? "1" : "0");
+      card.setAttribute("data-has-banner", user.bannerUrl ? "1" : "0");
+
+      const banner = document.createElement("div");
+      banner.className = "uCardBanner";
+
+      const dot = document.createElement("div");
+      dot.className = "statusDot";
+
+      const body = document.createElement("div");
+      body.className = "uCardBody";
+
+      const avatar = document.createElement("img");
+      avatar.className = "uAvi";
+      avatar.alt = "";
+
+      const display = document.createElement("div");
+      display.className = "display";
+
+      const handle = document.createElement("div");
+      handle.className = "handle";
+
+      const control = document.createElement("a");
+      control.className = "control";
+      control.textContent = "Control";
+
+      body.appendChild(avatar);
+      body.appendChild(display);
+      body.appendChild(handle);
+      body.appendChild(control);
+
+      card.appendChild(banner);
+      card.appendChild(dot);
+      card.appendChild(body);
+
+      updateUserCard(card, user);
+      return card;
+    }
+
+    function createSkeletonCard() {
+      const card = document.createElement("div");
+      card.className = "uCard uCard--skeleton";
+
+      const banner = document.createElement("div");
+      banner.className = "uCardBanner";
+
+      const body = document.createElement("div");
+      body.className = "uCardBody";
+
+      const avatar = document.createElement("div");
+      avatar.className = "uSkeletonAvatar";
+
+      const title = document.createElement("div");
+      title.className = "uSkeletonLine uSkeletonLine--title";
+
+      const handle = document.createElement("div");
+      handle.className = "uSkeletonLine uSkeletonLine--handle";
+
+      const control = document.createElement("div");
+      control.className = "uSkeletonButton";
+
+      body.appendChild(avatar);
+      body.appendChild(title);
+      body.appendChild(handle);
+      body.appendChild(control);
+
+      card.appendChild(banner);
+      card.appendChild(body);
+
+      return card;
+    }
+
+    function renderLoadingSkeletons() {
+      const frag = document.createDocumentFragment();
+      const skeletonCount = Math.max(1, getCardsPerPage());
+
+      for (let index = 0; index < skeletonCount; index += 1) {
+        frag.appendChild(createSkeletonCard());
+      }
+
+      grid.replaceChildren(frag);
+      grid.dataset.loading = "1";
+      emptyState.hidden = true;
+      for (const pager of pagers) {
+        pager.root.hidden = true;
+      }
+    }
+
+    function renderUsers(users) {
+      const frag = document.createDocumentFragment();
+
+      for (const rawUser of Array.isArray(users) ? users : []) {
+        const user = normalizeUserPayload(rawUser);
+        if (!user || user.status === "offline") continue;
+        frag.appendChild(createUserCard(user));
+      }
+
+      grid.replaceChildren(frag);
+      grid.dataset.loading = "0";
+    }
+
+    function buildPagerItems(pageCount, activePage) {
+      if (pageCount <= 1) return [1];
+
+      if (shouldUseCompactPager()) {
+        if (pageCount <= 5) {
+          return Array.from({ length: pageCount }, (_, index) => index + 1);
+        }
+
+        if (activePage <= 3) {
+          return [1, 2, 3, "ellipsis", pageCount];
+        }
+
+        if (activePage >= pageCount - 2) {
+          return [1, "ellipsis", pageCount - 2, pageCount - 1, pageCount];
+        }
+
+        return [1, "ellipsis", activePage, "ellipsis", pageCount];
+      }
+
+      const pages = new Set([1, pageCount, activePage - 1, activePage, activePage + 1]);
+
+      if (activePage <= 3) {
+        pages.add(2);
+        pages.add(3);
+      }
+
+      if (activePage >= pageCount - 2) {
+        pages.add(pageCount - 1);
+        pages.add(pageCount - 2);
+      }
+
+      const sortedPages = Array.from(pages)
+        .filter((page) => page >= 1 && page <= pageCount)
+        .sort((left, right) => left - right);
+
+      const items = [];
+      let previousPage = null;
+      for (const page of sortedPages) {
+        if (previousPage !== null && page - previousPage > 1) {
+          items.push("ellipsis");
+        }
+        items.push(page);
+        previousPage = page;
+      }
+
+      return items;
+    }
+
+    function renderPager() {
+      const items = buildPagerItems(totalPages, currentPage);
+
+      for (const pager of pagers) {
+        pager.list.replaceChildren();
+
+        for (const item of items) {
+          if (item === "ellipsis") {
+            const ellipsis = document.createElement("span");
+            ellipsis.className = "discoverPagerEllipsis";
+            ellipsis.textContent = "...";
+            ellipsis.setAttribute("aria-hidden", "true");
+            pager.list.appendChild(ellipsis);
+            continue;
+          }
+
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "discoverPageBtn";
+          btn.textContent = String(item);
+          btn.dataset.page = String(item);
+          btn.setAttribute("aria-label", `Go to discover page ${item}`);
+
+          if (item === currentPage) {
+            btn.classList.add("isActive");
+            btn.setAttribute("aria-current", "page");
+          }
+
+          pager.list.appendChild(btn);
+        }
+      }
+    }
+
+    function updatePager(totalCount, nextTotalPages, nextPage) {
+      totalPages = Math.max(1, Number(nextTotalPages || 1));
+      currentPage = Math.max(1, Math.min(Number(nextPage || 1), totalPages));
+
+      for (const pager of pagers) {
+        pager.prev.disabled = !hasLoadedUsers || currentPage <= 1 || totalCount <= 0;
+        pager.next.disabled = !hasLoadedUsers || currentPage >= totalPages || totalCount <= 0;
+        pager.root.hidden = currentMode !== "users" || !hasLoadedUsers || totalPages <= 1;
+      }
+
+      renderPager();
+    }
+
+    function updateEmptyState(totalCount) {
+      if (!hasLoadedUsers) {
+        emptyState.hidden = true;
+        return;
+      }
+
+      emptyState.hidden = totalCount > 0;
+      if (totalCount > 0) return;
+
+      const defaultMessage =
+        emptyState.getAttribute("data-default-message") ||
+        "(No users are online or away right now.)";
+      const filteredMessage =
+        emptyState.getAttribute("data-filtered-message") || defaultMessage;
+      const hasQuery = !!getSearchQuery();
+      const hasFilteredStatus = getSelectedStatuses().length !== 2;
+
+      emptyState.textContent =
+        hasQuery || hasFilteredStatus ? filteredMessage : defaultMessage;
+    }
+
+    function buildDiscoverRequestUrl() {
+      const params = new URLSearchParams();
+      const query = getSearchQuery();
+      const statuses = getSelectedStatuses();
+
+      params.set("page", String(currentPage));
+      params.set("perPage", String(currentCardsPerPage || getCardsPerPage()));
+      params.set("online", statuses.includes("online") ? "1" : "0");
+      params.set("away", statuses.includes("away") ? "1" : "0");
+      if (query) params.set("q", query);
+
+      return `/api/presence/discover?${params.toString()}`;
+    }
+
+    async function loadUsers({ resetPage = false, showSkeletons = false } = {}) {
+      if (resetPage) currentPage = 1;
+      currentCardsPerPage = getCardsPerPage();
+
+      const requestId = ++activeUsersRequestId;
+      if (usersAbortController) usersAbortController.abort();
+      const controller = new AbortController();
+      usersAbortController = controller;
+
+      if (!hasLoadedUsers || showSkeletons) {
+        renderLoadingSkeletons();
+        emptyState.hidden = true;
+      }
+
       try {
-        const res = await fetch("/api/presence/discover", {
+        const res = await fetch(buildDiscoverRequestUrl(), {
           headers: {
-            "Accept": "application/json"
+            "Accept": "application/json",
           },
-          credentials: "include"
+          credentials: "include",
+          signal: controller.signal,
         });
         const data = await res.json().catch(() => null);
-        if (!res.ok || !data || !data.ok) return;
+        if (requestId !== activeUsersRequestId) return;
+        if (!res.ok || !data || !data.ok) throw new Error("discover_load_failed");
 
-        const cards = Array.from(grid.querySelectorAll('.uCard[data-pair]'));
-        for (const card of cards) {
-          const code = card.getAttribute("data-pair");
-          const st = data.map && data.map[code];
-          if (!st) continue;
-
-          const online = !!st.online;
-          setDot(card, online);
-
-          card.style.display = online ? "" : "none";
+        hasLoadedUsers = true;
+        renderUsers(data.users);
+        updatePager(
+          Number(data.total || 0),
+          Number(data.totalPages || 1),
+          Number(data.page || 1),
+        );
+        updateEmptyState(Number(data.total || 0));
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+        if (!hasLoadedUsers) {
+          hasLoadedUsers = true;
+          grid.replaceChildren();
+          grid.dataset.loading = "0";
+          currentPage = 1;
+          updatePager(0, 1, 1);
+          emptyState.hidden = false;
+          emptyState.textContent = "(Couldn't load users right now.)";
         }
-      } catch (e) {}
+      } finally {
+        if (requestId === activeUsersRequestId && usersAbortController === controller) {
+          usersAbortController = null;
+        }
+      }
     }
 
-    tick();
-    setInterval(tick, 5000);
+    for (const pager of pagers) {
+      pager.prev.addEventListener("click", () => {
+        if (currentPage <= 1) return;
+        currentPage -= 1;
+        void loadUsers();
+      });
+
+      pager.next.addEventListener("click", () => {
+        currentPage += 1;
+        void loadUsers();
+      });
+
+      pager.list.addEventListener("click", (event) => {
+        const btn = event.target.closest(".discoverPageBtn[data-page]");
+        if (!btn) return;
+        const requestedPage = Number(btn.dataset.page || 1);
+        currentPage = Number.isFinite(requestedPage)
+          ? Math.max(1, Math.round(requestedPage))
+          : currentPage;
+        void loadUsers();
+      });
+    }
+
+    communityMyPrev?.addEventListener("click", () => {
+      if (communityMyPage <= 1) return;
+      communityMyPage -= 1;
+      void loadCommunity({ force: true, showLoading: false });
+    });
+
+    communityMyNext?.addEventListener("click", () => {
+      communityMyPage += 1;
+      void loadCommunity({ force: true, showLoading: false });
+    });
+
+    communityPublicPrev?.addEventListener("click", () => {
+      if (communityPublicPage <= 1) return;
+      communityPublicPage -= 1;
+      void loadCommunity({ force: true, showLoading: false });
+    });
+
+    communityPublicNext?.addEventListener("click", () => {
+      communityPublicPage += 1;
+      void loadCommunity({ force: true, showLoading: false });
+    });
+
+    searchInput?.addEventListener("input", () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        if (currentMode === "community") {
+          communityMyPage = 1;
+          communityPublicPage = 1;
+          void loadCommunity({ force: true });
+          return;
+        }
+        if (currentMode === "users") {
+          void loadUsers({ resetPage: true });
+        }
+      }, 180);
+    });
+
+    filterOnline?.addEventListener("change", () => {
+      updateFilterButtonState();
+      void loadUsers({ resetPage: true });
+    });
+
+    filterAway?.addEventListener("change", () => {
+      updateFilterButtonState();
+      void loadUsers({ resetPage: true });
+    });
+
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (currentMode !== "users") return;
+        const nextCardsPerPage = getCardsPerPage();
+        if (nextCardsPerPage === currentCardsPerPage) return;
+        void loadUsers();
+      }, 120);
+    });
+
+    async function tickUsers() {
+      if (currentMode !== "users") return;
+      await loadUsers();
+    }
+
+    async function tickCommunity() {
+      if (currentMode !== "community" || !communityLoaded) return;
+      try {
+        await loadCommunity({ force: true, showLoading: false });
+      } catch {}
+    }
+
+    setMode(currentMode);
+    updateCommunityCreateHint();
+    renderLoadingSkeletons();
+    void loadUsers({ showSkeletons: true });
+
+    if (INITIAL_COMMUNITY_INVITE_CODE && !inviteQueryHandled) {
+      inviteQueryHandled = true;
+      openCommunityInviteModal(INITIAL_COMMUNITY_INVITE_CODE);
+    }
+
+    setInterval(tickUsers, 5000);
+    setInterval(tickCommunity, 15000);
   })();
 </script>

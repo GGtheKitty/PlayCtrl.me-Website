@@ -1,11 +1,17 @@
 <% if (commandsSentTotal !== null) { %>
 <div class="cmdCountBar">
-  <div>
+  <div class="cmdCountStat">
     <div class="cmdCountTitle">Commands Sent:</div>
+    <div class="cmdCountNum" id="cmdSentTotal">
+      <%= Number(commandsSentTotal).toLocaleString() %>
+    </div>
   </div>
 
-  <div class="cmdCountNum" id="cmdSentTotal">
-    <%= Number(commandsSentTotal).toLocaleString() %>
+  <div class="cmdCountStat">
+    <div class="cmdCountTitle">Likes:</div>
+    <div class="cmdCountNum cmdCountNum--likes" id="cmdLikesTotal">
+      <%= Number(commandLikesTotal || 0).toLocaleString() %>
+    </div>
   </div>
 </div>
 <% } %>

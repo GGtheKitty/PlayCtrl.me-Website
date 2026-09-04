@@ -1,0 +1,151 @@
+<link rel="stylesheet" href="/css/admin_uploads.css">
+
+<div class="uploadAdminPage">
+  <div class="uploadAdminPanel">
+    <div class="uploadAdminPanelHd">
+      <div>
+        <h1>Admin Uploads</h1>
+        <p class="uploadAdminMuted">Browse all active uploads, preview them, and remove anything that should not stay on the site.</p>
+      </div>
+      <div class="uploadAdminPanelActions">
+        <a class="uploadAdminBtn uploadAdminBtn--ghost" href="/admin/uploads/control-links">Control Link Uploads</a>
+        <a class="uploadAdminBtn" href="/admin">Back</a>
+      </div>
+    </div>
+
+    <div class="uploadAdminStats">
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Uploads</span>
+        <span id="uploadStatCount" class="uploadAdminStatValue"><%= Number(uploadStats?.count || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminStat">
+        <span class="uploadAdminStatLabel">Storage</span>
+        <span id="uploadStatBytes" class="uploadAdminStatValue"><%= uploadStats?.totalBytesLabel || "0B" %></span>
+      </div>
+    </div>
+  </div>
+
+  <a class="uploadAdminJumpCard" href="/admin/uploads/control-links">
+    <div class="uploadAdminJumpBody">
+      <span class="uploadAdminJumpEyebrow">Separate Page</span>
+      <h2>Control Link Uploads</h2>
+      <p class="uploadAdminMuted">Custom profile pictures, banners, and background images grouped by user for quick review and removal.</p>
+    </div>
+    <div class="uploadAdminSectionStats">
+      <div class="uploadAdminMiniStat">
+        <span class="uploadAdminMiniStatLabel">Users</span>
+        <span class="uploadAdminMiniStatValue"><%= Number(controlLinkAssetStats?.userCount || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminMiniStat">
+        <span class="uploadAdminMiniStatLabel">Assets</span>
+        <span class="uploadAdminMiniStatValue"><%= Number(controlLinkAssetStats?.assetCount || 0).toLocaleString() %></span>
+      </div>
+      <div class="uploadAdminMiniStat">
+        <span class="uploadAdminMiniStatLabel">Storage</span>
+        <span class="uploadAdminMiniStatValue"><%= controlLinkAssetStats?.totalBytesLabel || "0B" %></span>
+      </div>
+    </div>
+  </a>
+
+  <div id="uploadAdminGrid" class="uploadAdminGrid">
+    <% if (uploads && uploads.length) { %>
+      <% for (const item of uploads) { %>
+        <article
+          class="uploadAdminCard uploadAdminCard--<%= item.previewKind %>"
+          data-upload-card
+          data-upload-id="<%= item.id %>"
+          data-upload-bytes="<%= Number(item.bytes || 0) %>"
+          data-upload-url="<%= item.url %>"
+          data-upload-kind="<%= item.previewKind %>"
+          data-upload-name="<%= item.originalName || item.storedName || 'Upload' %>"
+        >
+          <div class="uploadAdminPreviewShell">
+            <% if (item.previewKind === "audio") { %>
+              <div class="uploadAdminAudioPreview">
+                <div class="uploadAdminAudioIcon"><%= String(item.ext || "audio").toUpperCase() %></div>
+                <button
+                  class="uploadAdminAudioBtn"
+                  type="button"
+                  data-audio-toggle="1"
+                  aria-pressed="false"
+                >
+                  Play
+                </button>
+              </div>
+            <% } else if (item.previewKind === "video") { %>
+              <button class="uploadAdminPreviewBtn" type="button" data-open-preview="1">
+                <video src="<%= item.url %>" muted playsinline preload="metadata"></video>
+                <span class="uploadAdminPreviewHint">Open preview</span>
+              </button>
+            <% } else { %>
+              <button class="uploadAdminPreviewBtn" type="button" data-open-preview="1">
+                <img src="<%= item.url %>" alt="<%= item.originalName || item.storedName || 'Upload' %>" loading="lazy" />
+                <span class="uploadAdminPreviewHint">Open preview</span>
+              </button>
+            <% } %>
+          </div>
+
+          <div class="uploadAdminBody">
+            <div class="uploadAdminFileName" title="<%= item.originalName || item.storedName || item.url %>">
+              <%= item.originalName || item.storedName || item.url %>
+            </div>
+
+            <div class="uploadAdminUploader">
+              <img
+                class="uploadAdminAvatar"
+                src="<%= item.uploader?.avatarUrl || '/default-avatar.svg' %>"
+                alt=""
+              />
+              <div class="uploadAdminUploaderText">
+                <div class="uploadAdminUploaderName"><%= item.uploaderDisplayName %></div>
+                <div class="uploadAdminUploaderMeta">
+                  <span>@<%= item.uploader?.username || "unknown" %></span>
+                  <span>•</span>
+                  <span><%= item.uploader?.discordId || "unknown user" %></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="uploadAdminPills">
+              <span class="uploadAdminPill"><span class="uploadAdminPillKey">Size</span><span><%= item.sizeLabel %></span></span>
+              <span class="uploadAdminPill"><span class="uploadAdminPillKey">Type</span><span><%= item.previewKind %></span></span>
+              <span class="uploadAdminPill"><span class="uploadAdminPillKey">Uploaded</span><span><%= new Date(item.createdAt).toLocaleString() %></span></span>
+            </div>
+          </div>
+
+          <div class="uploadAdminActions">
+            <a
+              class="uploadAdminLink"
+              href="<%= item.url %>"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open file
+            </a>
+            <button class="uploadAdminDeleteBtn" type="button" data-delete-upload="1">Delete</button>
+          </div>
+        </article>
+      <% } %>
+    <% } %>
+  </div>
+
+  <div id="uploadAdminEmpty" class="uploadAdminEmpty"<%= uploads && uploads.length ? ' hidden' : '' %>>
+    No uploads are currently stored.
+  </div>
+</div>
+
+<div id="uploadPreviewModal" class="uploadPreviewModal" hidden>
+  <div class="uploadPreviewBackdrop" data-close-preview="1"></div>
+  <div class="uploadPreviewCard" role="dialog" aria-modal="true" aria-labelledby="uploadPreviewTitle">
+    <div class="uploadPreviewHd">
+      <div id="uploadPreviewTitle" class="uploadPreviewTitle">Preview</div>
+      <button class="uploadPreviewClose" type="button" data-close-preview="1">Close</button>
+    </div>
+    <div class="uploadPreviewBd">
+      <img id="uploadPreviewImage" class="uploadPreviewImage" alt="" hidden />
+      <video id="uploadPreviewVideo" class="uploadPreviewVideo" controls playsinline hidden></video>
+    </div>
+  </div>
+</div>
+
+<%- include("upl_scripts") %>
