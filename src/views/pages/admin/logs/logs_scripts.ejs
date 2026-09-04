@@ -17,7 +17,7 @@
   const pageInput = document.getElementById('pageInput');
   const pageGo = document.getElementById('pageGo');
   const imageModal = document.getElementById('imageModal');
-  const imageModalImg = document.getElementById('imageModalImg');
+  let imageModalImg = document.getElementById('imageModalImg');
   const imageModalClose = document.getElementById('imageModalClose');
   const typeRows = Array.from(typesBox.querySelectorAll('.chk'));
   const localTimeEls = Array.from(document.querySelectorAll('.js-local-log-time'));
@@ -134,9 +134,16 @@
       qEl.focus();
     }
 
-    const preview = e.target.closest('[data-fullscreen-image]');
-    if (preview && imageModal && imageModalImg) {
-      imageModalImg.src = preview.getAttribute('data-fullscreen-image') || '';
+    const preview = e.target.closest('.mediaPreview');
+    const previewImage = preview?.querySelector('img');
+    if (previewImage && imageModal && imageModalImg) {
+      const modalImage = previewImage.cloneNode(false);
+      modalImage.id = 'imageModalImg';
+      modalImage.className = 'imageModalImg';
+      modalImage.alt = '';
+      modalImage.removeAttribute('loading');
+      imageModalImg.replaceWith(modalImage);
+      imageModalImg = modalImage;
       imageModal.hidden = false;
       document.body.classList.add('modalOpen');
     }
