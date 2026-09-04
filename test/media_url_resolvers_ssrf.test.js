@@ -4,10 +4,21 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  decodeHtmlAttribute,
   fetchHtmlDocument,
   isPublicIpAddress,
   validateOutboundUrl,
 } = require("../src/services/media_url_resolvers");
+
+test("decodes HTML attribute entities exactly once", () => {
+  assert.equal(
+    decodeHtmlAttribute("a&amp;b &quot;c&quot; &#39;d&#39; &lt;e&gt;"),
+    `a&b "c" 'd' <e>`,
+  );
+  assert.equal(decodeHtmlAttribute("&amp;quot;"), "&quot;");
+  assert.equal(decodeHtmlAttribute("&amp;#39;"), "&#39;");
+  assert.equal(decodeHtmlAttribute("&amp;amp;"), "&amp;");
+});
 
 test("accepts publicly routable IP addresses", () => {
   assert.equal(isPublicIpAddress("8.8.8.8"), true);

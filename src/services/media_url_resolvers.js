@@ -79,14 +79,22 @@ function isHttpUrl(rawValue) {
 }
 
 function decodeHtmlAttribute(rawValue) {
-  return String(rawValue || "")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x2f;/gi, "/")
-    .replace(/&#47;/gi, "/")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
+  const decodedEntities = {
+    "&amp;": "&",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&#x2f;": "/",
+    "&#47;": "/",
+    "&lt;": "<",
+    "&gt;": ">",
+  };
+
+  // Replace only entities present in the original string. A single pass keeps
+  // nested input such as "&amp;quot;" from being decoded twice into a quote.
+  return String(rawValue || "").replace(
+    /&(amp|quot|#39|#x2f|#47|lt|gt);/gi,
+    (entity) => decodedEntities[entity.toLowerCase()] || entity,
+  );
 }
 
 function extractTagAttribute(tag, attributeName) {
@@ -803,6 +811,7 @@ function createMediaUrlResolverService({ db, logEvent }) {
 
 module.exports = {
   createMediaUrlResolverService,
+  decodeHtmlAttribute,
   fetchHtmlDocument,
   isPublicIpAddress,
   validateOutboundUrl,
