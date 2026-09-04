@@ -1,7 +1,13 @@
 "use strict";
 
+const dns = require("dns").promises;
+const http = require("http");
+const https = require("https");
+const net = require("net");
+
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_HTML_LENGTH = 1024 * 1024;
+const MAX_REDIRECTS = 4;
 const MEDIA_COMMAND_TYPES = new Set(["image_popup", "fullscreen_popup"]);
 const RESOLVER_SEED_KEY = "media_url_resolver_seed_v3";
 
@@ -205,43 +211,231 @@ function findDefaultResolverForHost(host) {
   );
 }
 
-async function fetchHtmlDocument(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+function ipv4ToNumber(address) {
+  if (net.isIP(address) !== 4) return null;
+  return address
+    .split(".")
+    .reduce((value, octet) => value * 256 + Number(octet), 0);
+}
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "accept":
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "user-agent":
-          "PlayCtrlMediaResolver/1.0 (+https://playctrl.me)",
-      },
-    });
+function isIpv4InCidr(address, base, prefixLength) {
+  const value = ipv4ToNumber(address);
+  const baseValue = ipv4ToNumber(base);
+  if (value === null || baseValue === null) return false;
+  const blockSize = 2 ** (32 - prefixLength);
+  return Math.floor(value / blockSize) === Math.floor(baseValue / blockSize);
+}
 
-    if (!response.ok) {
-      throw new Error(`upstream_status_${response.status}`);
-    }
+function expandIpv6(address) {
+  if (net.isIP(address) !== 6) return null;
 
-    const contentType = String(response.headers.get("content-type") || "")
-      .trim()
-      .toLowerCase();
-    if (contentType && !contentType.includes("text/html")) {
-      throw new Error("non_html_response");
-    }
+  const halves = address.toLowerCase().split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return null;
 
-    const html = await response.text();
-    if (!html.trim()) {
-      throw new Error("empty_html");
-    }
+  const groups = [
+    ...left,
+    ...Array(halves.length === 2 ? missing : 0).fill("0"),
+    ...right,
+  ];
+  if (groups.length !== 8) return null;
+  return groups.map((group) => Number.parseInt(group || "0", 16));
+}
 
-    return html.slice(0, MAX_HTML_LENGTH);
-  } finally {
-    clearTimeout(timeout);
+function ipv6ToBigInt(address) {
+  const groups = expandIpv6(address);
+  if (!groups) return null;
+  return groups.reduce((value, group) => (value << 16n) + BigInt(group), 0n);
+}
+
+function isIpv6InCidr(address, base, prefixLength) {
+  const value = ipv6ToBigInt(address);
+  const baseValue = ipv6ToBigInt(base);
+  if (value === null || baseValue === null) return false;
+  const shift = BigInt(128 - prefixLength);
+  return value >> shift === baseValue >> shift;
+}
+
+function isPublicIpAddress(address) {
+  const family = net.isIP(address);
+  if (family === 4) {
+    const blockedRanges = [
+      ["0.0.0.0", 8],
+      ["10.0.0.0", 8],
+      ["100.64.0.0", 10],
+      ["127.0.0.0", 8],
+      ["169.254.0.0", 16],
+      ["172.16.0.0", 12],
+      ["192.0.0.0", 24],
+      ["192.0.2.0", 24],
+      ["192.88.99.0", 24],
+      ["192.168.0.0", 16],
+      ["198.18.0.0", 15],
+      ["198.51.100.0", 24],
+      ["203.0.113.0", 24],
+      ["224.0.0.0", 4],
+      ["240.0.0.0", 4],
+    ];
+    return !blockedRanges.some(([base, prefix]) =>
+      isIpv4InCidr(address, base, prefix),
+    );
   }
+
+  if (family === 6) {
+    // Only globally routable unicast IPv6 is eligible. Explicit exclusions
+    // cover special-use ranges that sit inside 2000::/3.
+    if (!isIpv6InCidr(address, "2000::", 3)) return false;
+    return ![
+      ["2001::", 23],
+      ["2001:db8::", 32],
+      ["2002::", 16],
+    ].some(([base, prefix]) => isIpv6InCidr(address, base, prefix));
+  }
+
+  return false;
+}
+
+function normalizedNetworkHostname(hostname) {
+  return String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function validateOutboundUrl(rawUrl) {
+  const parsed = rawUrl instanceof URL ? new URL(rawUrl.href) : new URL(rawUrl);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("unsupported_upstream_protocol");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("upstream_credentials_not_allowed");
+  }
+
+  const expectedPort = parsed.protocol === "https:" ? "443" : "80";
+  if (parsed.port && parsed.port !== expectedPort) {
+    throw new Error("non_standard_upstream_port");
+  }
+
+  const hostname = normalizedNetworkHostname(parsed.hostname);
+  if (!hostname) throw new Error("invalid_upstream_hostname");
+  return { parsed, hostname };
+}
+
+async function resolvePublicAddress(hostname) {
+  const literalFamily = net.isIP(hostname);
+  const records = literalFamily
+    ? [{ address: hostname, family: literalFamily }]
+    : await dns.lookup(hostname, { all: true, verbatim: true });
+
+  if (!records.length || records.some(({ address }) => !isPublicIpAddress(address))) {
+    throw new Error("non_public_upstream_address");
+  }
+
+  return records[0];
+}
+
+function createPinnedLookup(record) {
+  return (_hostname, options, callback) => {
+    let lookupOptions = options;
+    let done = callback;
+    if (typeof lookupOptions === "function") {
+      done = lookupOptions;
+      lookupOptions = {};
+    }
+    if (lookupOptions?.all) {
+      done(null, [{ address: record.address, family: record.family }]);
+      return;
+    }
+    done(null, record.address, record.family);
+  };
+}
+
+async function requestHtmlOnce(rawUrl) {
+  const { parsed, hostname } = validateOutboundUrl(rawUrl);
+  const address = await resolvePublicAddress(hostname);
+  const transport = parsed.protocol === "https:" ? https : http;
+
+  return new Promise((resolve, reject) => {
+    const request = transport.request(
+      {
+        protocol: parsed.protocol,
+        hostname,
+        port: parsed.port || undefined,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: "GET",
+        lookup: createPinnedLookup(address),
+        headers: {
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "user-agent": "PlayCtrlMediaResolver/1.0 (+https://playctrl.me)",
+        },
+      },
+      (response) => {
+        const status = Number(response.statusCode || 0);
+        const location = String(response.headers.location || "").trim();
+        if ([301, 302, 303, 307, 308].includes(status) && location) {
+          response.resume();
+          resolve({ redirectUrl: new URL(location, parsed) });
+          return;
+        }
+
+        if (status < 200 || status >= 300) {
+          response.resume();
+          reject(new Error(`upstream_status_${status}`));
+          return;
+        }
+
+        const contentType = String(response.headers["content-type"] || "")
+          .trim()
+          .toLowerCase();
+        if (contentType && !contentType.includes("text/html")) {
+          response.resume();
+          reject(new Error("non_html_response"));
+          return;
+        }
+
+        const chunks = [];
+        let receivedLength = 0;
+        response.on("data", (chunk) => {
+          receivedLength += chunk.length;
+          if (receivedLength > MAX_HTML_LENGTH) {
+            response.destroy(new Error("upstream_response_too_large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          const html = Buffer.concat(chunks).toString("utf8");
+          if (!html.trim()) {
+            reject(new Error("empty_html"));
+            return;
+          }
+          resolve({ html });
+        });
+        response.on("error", reject);
+      },
+    );
+
+    request.setTimeout(FETCH_TIMEOUT_MS, () => {
+      request.destroy(new Error("upstream_timeout"));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function fetchHtmlDocument(url) {
+  let currentUrl = new URL(url);
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const result = await requestHtmlOnce(currentUrl);
+    if (!result.redirectUrl) return result.html;
+    if (redirectCount === MAX_REDIRECTS) {
+      throw new Error("too_many_upstream_redirects");
+    }
+    currentUrl = result.redirectUrl;
+  }
+
+  throw new Error("too_many_upstream_redirects");
 }
 
 function sanitizeResolverForUi(resolver) {
@@ -609,4 +803,7 @@ function createMediaUrlResolverService({ db, logEvent }) {
 
 module.exports = {
   createMediaUrlResolverService,
+  fetchHtmlDocument,
+  isPublicIpAddress,
+  validateOutboundUrl,
 };
