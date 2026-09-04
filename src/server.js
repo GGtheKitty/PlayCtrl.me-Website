@@ -22,6 +22,7 @@ const {
   createMediaUrlResolverService,
 } = require("./services/media_url_resolvers");
 const { createNotificationService } = require("./services/notifications");
+const { parseBearerToken } = require("./services/http_authorization");
 const {
   randomSixDigitCode,
   randomStringFromAlphabet,
@@ -11109,9 +11110,7 @@ app.post(
 
 function requireVerifiedClientDevice(req, res, next) {
   const deviceId = String(req.get("X-Device-Id") || "").trim();
-  const authorization = String(req.get("Authorization") || "").trim();
-  const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
-  const deviceToken = String(tokenMatch?.[1] || "").trim();
+  const deviceToken = parseBearerToken(req.get("Authorization"));
   if (!deviceId || !deviceToken) {
     return res.status(401).json({
       ok: false,
