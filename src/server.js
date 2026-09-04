@@ -12,6 +12,10 @@ const cookieParser = require("cookie-parser");
 const db = require("./db");
 const { renderWithLayout } = require("./views/render");
 const { createAuthMiddleware } = require("./middleware/auth");
+const {
+  CSRF_COOKIE_NAME,
+  createCsrfProtection,
+} = require("./middleware/csrf");
 const { createAdminActivityService } = require("./services/admin_activity");
 const { createApiKeyHasher } = require("./services/api_key_hashing");
 const {
@@ -800,6 +804,12 @@ const clientPairingCredentials = createClientPairingCredentialService({
   db,
   hmac,
   encryptionKey: CLIENT_PAIRING_ENCRYPTION_KEY,
+});
+const csrfProtection = createCsrfProtection({
+  secret:
+    process.env.CSRF_SECRET ||
+    API_KEY_HASH_PEPPER ||
+    CLIENT_PAIRING_ENCRYPTION_KEY,
 });
 function inviteHash(code) {
   return hmac("invite:" + String(code));
@@ -8954,6 +8964,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(csrfProtection);
+
 app.use(inviteGate);
 
 app.use((req, res, next) => {
@@ -9328,6 +9340,11 @@ app.post("/logout", (req, res) => {
     db.prepare("DELETE FROM sessions WHERE session_id=?").run(sid);
   }
   res.clearCookie("sid");
+  res.clearCookie(CSRF_COOKIE_NAME, {
+    sameSite: "strict",
+    secure: true,
+    path: "/",
+  });
   res.clearCookie("delegated_sub_id", { path: "/" });
   res.redirect("/");
 });

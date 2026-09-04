@@ -1,0 +1,65 @@
+<script>
+  (function() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    const token = String(meta && meta.content || "").trim();
+    if (!token) return;
+
+    const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+    const nativeFetch = window.fetch;
+
+    window.fetch = function(input, init) {
+      const options = init ? Object.assign({}, init) : {};
+      const inputMethod = input instanceof Request ? input.method : "GET";
+      const method = String(options.method || inputMethod || "GET").toUpperCase();
+      let requestUrl;
+
+      try {
+        requestUrl = new URL(input instanceof Request ? input.url : input, window.location.href);
+      } catch {
+        return nativeFetch.call(this, input, init);
+      }
+
+      if (requestUrl.origin === window.location.origin && unsafeMethods.has(method)) {
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        new Headers(options.headers || {}).forEach((value, name) => {
+          headers.set(name, value);
+        });
+        if (!headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", token);
+        options.headers = headers;
+      }
+
+      return nativeFetch.call(this, input, options);
+    };
+
+    function protectForm(form) {
+      if (!(form instanceof HTMLFormElement)) return;
+      const method = String(form.method || "GET").toUpperCase();
+      if (!unsafeMethods.has(method)) return;
+
+      let action;
+      try {
+        action = new URL(form.action || window.location.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (action.origin !== window.location.origin) return;
+
+      let field = form.querySelector('input[name="_csrf"]');
+      if (!field) {
+        field = document.createElement("input");
+        field.type = "hidden";
+        field.name = "_csrf";
+        form.appendChild(field);
+      }
+      field.value = token;
+    }
+
+    document.addEventListener("submit", function(event) {
+      protectForm(event.target);
+    }, true);
+
+    document.addEventListener("DOMContentLoaded", function() {
+      document.querySelectorAll("form").forEach(protectForm);
+    });
+  })();
+</script>

@@ -4,6 +4,10 @@
 <meta name="robots" content="<%= meta?.robots || "noindex, nofollow, noarchive, nosnippet, noimageindex" %>" />
 <meta name="googlebot" content="<%= meta?.robots || "noindex, nofollow, noarchive, nosnippet, noimageindex" %>" />
 <link rel="canonical" href="<%= meta?.canonicalUrl || "https://playctrl.me/" %>" />
+<% if (typeof csrfToken !== "undefined" && csrfToken) { %>
+  <meta name="csrf-token" content="<%= csrfToken %>" />
+<% } %>
+<%- include("csrf_client") %>
 
 <%- include("favicon_links") %>
 
