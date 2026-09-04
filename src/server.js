@@ -19,6 +19,10 @@ const {
 } = require("./services/media_url_resolvers");
 const { createNotificationService } = require("./services/notifications");
 const {
+  randomSixDigitCode,
+  randomStringFromAlphabet,
+} = require("./services/secure_random");
+const {
   createClientPairingCredentialService,
 } = require("./services/client_pairing_credentials");
 const { createRealtimeService } = require("./realtime/devices");
@@ -797,23 +801,19 @@ const clientPairingCredentials = createClientPairingCredentialService({
   hmac,
   encryptionKey: CLIENT_PAIRING_ENCRYPTION_KEY,
 });
-function randBase32(len) {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  const buf = crypto.randomBytes(len);
-  for (let i = 0; i < len; i++) out += alphabet[buf[i] % alphabet.length];
-  return out;
-}
 function inviteHash(code) {
   return hmac("invite:" + String(code));
 }
 
 function genInviteCode() {
-  return randBase32(12);
+  return randomStringFromAlphabet(
+    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789",
+    12,
+  );
 }
 
 function gen6() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return randomSixDigitCode();
 }
 
 function genApiKey() {
