@@ -23,6 +23,7 @@ const {
 } = require("./services/media_url_resolvers");
 const { createNotificationService } = require("./services/notifications");
 const { parseBearerToken } = require("./services/http_authorization");
+const { normalizeHost } = require("./services/host_normalization");
 const {
   randomSixDigitCode,
   randomStringFromAlphabet,
@@ -2716,14 +2717,6 @@ function parseHostLine(line) {
     }
   } catch {}
   return normalizeHost(s);
-}
-
-function normalizeHost(host) {
-  const h = String(host || "")
-    .trim()
-    .toLowerCase();
-
-  return h.replace(/\/+$/, "");
 }
 
 let cacheAllow = { mtimeMs: 0, set: new Set() };
