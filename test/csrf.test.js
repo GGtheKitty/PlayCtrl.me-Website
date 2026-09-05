@@ -5,9 +5,9 @@ const test = require("node:test");
 
 const {
   CSRF_COOKIE_NAME,
+  csrfTokensEqual,
   createCsrfProtection,
   csrfTokenForSession,
-  tokensMatch,
 } = require("../src/middleware/csrf");
 
 const SECRET = "test-only-csrf-secret";
@@ -69,8 +69,8 @@ test("creates stable, session-bound CSRF tokens", () => {
   assert.equal(first, repeated);
   assert.notEqual(first, otherSession);
   assert.match(first, /^[A-Za-z0-9_-]{43}$/);
-  assert.equal(tokensMatch(first, repeated), true);
-  assert.equal(tokensMatch(first, `${first}x`), false);
+  assert.equal(csrfTokensEqual(first, repeated), true);
+  assert.equal(csrfTokensEqual(first, `${first}x`), false);
 });
 
 test("publishes a token and hardened cookie for authenticated safe requests", () => {

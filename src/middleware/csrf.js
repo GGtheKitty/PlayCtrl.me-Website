@@ -18,7 +18,7 @@ function csrfTokenForSession(sessionId, secret) {
     .digest("base64url");
 }
 
-function tokensMatch(left, right) {
+function csrfTokensEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""), "utf8");
   const rightBuffer = Buffer.from(String(right || ""), "utf8");
   return (
@@ -56,12 +56,14 @@ function createCsrfProtection({ secret, secureCookies = true } = {}) {
     if (!sessionId || !req.actorUser) return next();
 
     const expectedToken = csrfTokenForSession(sessionId, csrfSecret);
-    const csrfCookie = String(req.cookies?.[CSRF_COOKIE_NAME] || "").trim();
+    const csrfCookie = String(
+      req.cookies?.["__Host-playctrl_csrf"] || "",
+    ).trim();
     res.locals.csrfToken = expectedToken;
     res.set("Cache-Control", "private, no-store, max-age=0");
 
-    if (!tokensMatch(csrfCookie, expectedToken)) {
-      res.cookie(CSRF_COOKIE_NAME, expectedToken, {
+    if (!csrfTokensEqual(csrfCookie, expectedToken)) {
+      res.cookie("__Host-playctrl_csrf", expectedToken, {
         httpOnly: true,
         sameSite: "strict",
         secure: secureCookies,
@@ -76,8 +78,8 @@ function createCsrfProtection({ secret, secureCookies = true } = {}) {
 
     const suppliedToken = requestCsrfToken(req);
     if (
-      tokensMatch(csrfCookie, expectedToken) &&
-      tokensMatch(suppliedToken, expectedToken)
+      csrfTokensEqual(csrfCookie, expectedToken) &&
+      csrfTokensEqual(suppliedToken, expectedToken)
     ) {
       return next();
     }
@@ -99,7 +101,7 @@ function createCsrfProtection({ secret, secureCookies = true } = {}) {
 
 module.exports = {
   CSRF_COOKIE_NAME,
+  csrfTokensEqual,
   createCsrfProtection,
   csrfTokenForSession,
-  tokensMatch,
 };

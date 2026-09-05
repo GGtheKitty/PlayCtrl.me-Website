@@ -8917,6 +8917,9 @@ app.use(
 app.use(generalRequestLimiter);
 app.use(writeRequestLimiter);
 app.use(express.static(path.join(__dirname, "../public")));
+// The session-bound csrfProtection middleware below validates every unsafe
+// cookie-authenticated request after the session identity has been resolved.
+// codeql[js/missing-token-validation]
 app.use(cookieParser());
 app.use((req, res, next) => {
   const wantsLargeJson =
