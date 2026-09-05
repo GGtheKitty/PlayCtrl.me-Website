@@ -116,6 +116,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_invite_used_by
     ON invite_codes(used_by);
 
+  CREATE TABLE IF NOT EXISTS invite_referral_penalties (
+    banned_user_id TEXT PRIMARY KEY,
+    inviter_user_id TEXT NOT NULL,
+    invite_code_hash TEXT NOT NULL,
+    strike_id TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(banned_user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(inviter_user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(invite_code_hash) REFERENCES invite_codes(code_hash) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_invite_referral_penalties_inviter
+    ON invite_referral_penalties(inviter_user_id, created_at DESC);
+
   CREATE TABLE IF NOT EXISTS api_keys (
     user_id TEXT PRIMARY KEY,
     key_hash TEXT NOT NULL,
@@ -536,6 +550,12 @@ addColumnIfMissing("users", "custom_background_updated_at", "INTEGER");
 addColumnIfMissing("users", "has_supporter_badge", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("users", "discoverable", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("users", "invited_at", "INTEGER");
+addColumnIfMissing("invite_codes", "code_plain", "TEXT");
+addColumnIfMissing("invite_codes", "source", "TEXT NOT NULL DEFAULT 'admin'");
+addColumnIfMissing("invite_codes", "revoked_at", "INTEGER");
+addColumnIfMissing("invite_codes", "revoked_reason", "TEXT");
+addColumnIfMissing("invite_codes", "deleted_at", "INTEGER");
+addColumnIfMissing("invite_codes", "deleted_by", "TEXT");
 addColumnIfMissing("users", "allow_toast", "INTEGER NOT NULL DEFAULT 1");
 addColumnIfMissing("users", "allow_popup", "INTEGER NOT NULL DEFAULT 1");
 addColumnIfMissing("users", "allow_open_url", "INTEGER NOT NULL DEFAULT 1");

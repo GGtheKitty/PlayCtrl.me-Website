@@ -5,6 +5,7 @@ function createNotificationService({
   normalizeControlLinkDisplayName,
   logEvent,
   constants,
+  moderationHooks = {},
 }) {
   const {
     ADMIN_REPORT_QUEUE_KIND,
@@ -706,6 +707,15 @@ function createNotificationService({
       row.createdByUserId,
     );
 
+    if (row.strikeDelta > 0 && typeof moderationHooks.onPositiveStrike === "function") {
+      moderationHooks.onPositiveStrike({
+        userId: row.userId,
+        strikeDelta: row.strikeDelta,
+        strikeId: row.id,
+        createdAt: row.createdAt,
+      });
+    }
+
     return row;
   }
 
@@ -751,6 +761,15 @@ function createNotificationService({
         strikeCount: Number(strikeCount || MAX_USER_STRIKES),
       },
     });
+
+    if (typeof moderationHooks.onUserBanned === "function") {
+      moderationHooks.onUserBanned({
+        userId,
+        bannedByUserId: actorUserId,
+        req,
+        createdAt,
+      });
+    }
 
     return {
       ok: true,

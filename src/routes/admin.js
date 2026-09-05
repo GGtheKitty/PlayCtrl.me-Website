@@ -12,6 +12,7 @@ function registerAdminRoutes(app, deps) {
     NOTIFICATION_MENU_LIMIT,
     RESPONSES_DIR,
     REPORT_MEDIA_BACKUPS_DIR,
+    applyInviteBanConsequences,
     appendHostToFile,
     broadcastNotificationToAllUsers,
     clearCustomSiteAvatar,
@@ -21,19 +22,19 @@ function registerAdminRoutes(app, deps) {
     clearCustomCommunityGroupBanner,
     countCommandSenderBlocks,
     countReports,
+    createInviteCodes,
     db,
+    deleteUnclaimedInvite,
     deleteUploadedFiles,
     escapeHtml,
     formatBytesCompact,
     formatCountLabel,
-    genInviteCode,
     getAdminCommandActivityDatasets,
     getAllowSet,
     getBlockSet,
     getNotificationSummaryForUser,
     getPreferredDisplayName,
     getUserStrikeStatesByUserIds,
-    inviteHash,
     isEnrollmentOpen,
     isManagedPathInDir,
     listAllUploadedFilesForAdmin,
@@ -70,38 +71,6 @@ function registerAdminRoutes(app, deps) {
     tryJson,
     wantsJson,
   } = deps;
-
-  function renderGeneratedInviteCodesPage(res, codes) {
-    const items = (Array.isArray(codes) ? codes : [])
-      .map((code) => "<li><code>" + escapeHtml(code) + "</code></li>")
-      .join("");
-
-    return res.status(200).type("html").send(
-      '<!doctype html>' +
-        '<html lang="en">' +
-        '<head>' +
-        '<meta charset="utf-8" />' +
-        '<meta name="viewport" content="width=device-width, initial-scale=1" />' +
-        '<title>Invites Generated</title>' +
-        '<link rel="stylesheet" href="/css/main.css" />' +
-        '</head>' +
-        '<body>' +
-        '<div class="wrap">' +
-        '<main class="content">' +
-        '<div class="card">' +
-        '<div class="cardHd">Invite Codes Generated</div>' +
-        '<div class="cardBd">' +
-        '<p>Copy these now. You will not be able to view them again.</p>' +
-        '<ol>' + items + '</ol>' +
-        '<p><a class="link" href="/admin/invites">Back to Invites</a></p>' +
-        '</div>' +
-        '</div>' +
-        '</main>' +
-        '</div>' +
-        '</body>' +
-        '</html>',
-    );
-  }
 
   function getMediaResolverFlash(req) {
     const errorKey = String(req.query?.error || "").trim().toLowerCase();
@@ -2888,23 +2857,106 @@ app.get("/admin/logs", requireDiscord, requireAdmin, (req, res) => {
   });
 });
 
+function adminBansReturnPath(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "/admin/bans";
+
+  try {
+    const parsed = new URL(raw, "http://playctrl.local");
+    if (
+      parsed.origin !== "http://playctrl.local" ||
+      parsed.pathname !== "/admin/bans"
+    ) {
+      return "/admin/bans";
+    }
+    return parsed.pathname + parsed.search;
+  } catch {
+    return "/admin/bans";
+  }
+}
+
 app.get("/admin/bans", requireDiscord, requireAdmin, (req, res) => {
+  const PAGE_SIZE = 50;
+  const requestedPage = Math.max(1, parseIntSafe(req.query.page, 1));
+  const q = String(req.query.q || "").trim().slice(0, 100);
+  const requestedStatus = String(req.query.status || "all").trim();
+  const status = ["all", "banned", "active"].includes(requestedStatus)
+    ? requestedStatus
+    : "all";
+  const where = [];
+  const args = {};
+
+  if (q) {
+    const escapedQuery = q.replace(/[\\%_]/g, "\\$&");
+    where.push(`
+      (
+        u.discord_id LIKE @q ESCAPE '\\' OR
+        u.username LIKE @q ESCAPE '\\' OR
+        u.global_name LIKE @q ESCAPE '\\'
+      )
+    `);
+    args.q = `%${escapedQuery}%`;
+  }
+
+  if (status === "banned") where.push("b.discord_id IS NOT NULL");
+  if (status === "active") where.push("b.discord_id IS NULL");
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const fromSql = `
+    FROM users u
+    LEFT JOIN bans b ON b.discord_id = u.discord_id
+    ${whereSql}
+  `;
+  const total = Number(
+    db.prepare(`SELECT COUNT(*) AS n ${fromSql}`).get(args)?.n || 0,
+  );
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const page = Math.min(requestedPage, pages);
+  const offset = (page - 1) * PAGE_SIZE;
+
   res.locals.users = db
     .prepare(
       `
-    SELECT
-      u.discord_id, u.username, u.global_name, u.avatar,
-      b.discord_id AS banned, b.reason, b.banned_by, b.created_at AS banned_at
-    FROM users u
-    LEFT JOIN bans b ON b.discord_id = u.discord_id
-    ORDER BY (b.discord_id IS NOT NULL) DESC, u.created_at DESC
-    LIMIT 2000
-  `,
+        SELECT
+          u.discord_id, u.username, u.global_name,
+          b.discord_id AS banned, b.reason, b.banned_by, b.created_at AS banned_at
+        ${fromSql}
+        ORDER BY
+          (b.discord_id IS NOT NULL) DESC,
+          CASE
+            WHEN b.discord_id IS NOT NULL THEN b.created_at
+            ELSE u.created_at
+          END DESC,
+          u.discord_id ASC
+        LIMIT ${PAGE_SIZE} OFFSET ${offset}
+      `,
     )
-    .all();
+    .all(args);
+
+  function bansPageUrl(nextPage) {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (status !== "all") params.set("status", status);
+    params.set("page", String(Math.max(1, Math.min(nextPage, pages))));
+    return `/admin/bans?${params.toString()}`;
+  }
+
+  const returnParams = new URLSearchParams();
+  if (q) returnParams.set("q", q);
+  if (status !== "all") returnParams.set("status", status);
+  if (page > 1) returnParams.set("page", String(page));
+
+  res.locals.q = q;
+  res.locals.status = status;
+  res.locals.total = total;
+  res.locals.page = page;
+  res.locals.pages = pages;
+  res.locals.prevUrl = bansPageUrl(page - 1);
+  res.locals.nextUrl = bansPageUrl(page + 1);
+  res.locals.returnTo = `/admin/bans${returnParams.size ? `?${returnParams}` : ""}`;
 
   renderWithLayout(res, "pages/admin/bans/bans_main", {
-    title: "PlayCtrl.me",
+    title: "Bans",
   });
 });
 
@@ -2916,6 +2968,10 @@ app.post("/admin/bans/ban", requireDiscord, requireAdmin, (req, res) => {
 
   if (!/^\d{10,20}$/.test(targetId))
     return res.status(400).send("Bad discord id");
+
+  const wasBanned = !!db
+    .prepare(`SELECT discord_id FROM bans WHERE discord_id=? LIMIT 1`)
+    .get(targetId);
 
   db.prepare(
     `
@@ -2936,7 +2992,16 @@ app.post("/admin/bans/ban", requireDiscord, requireAdmin, (req, res) => {
     payload: { reason: reason || null },
   });
 
-  res.redirect("/admin/bans");
+  if (!wasBanned && typeof applyInviteBanConsequences === "function") {
+    applyInviteBanConsequences({
+      userId: targetId,
+      bannedByUserId: req.user.discord_id,
+      req,
+      createdAt: Date.now(),
+    });
+  }
+
+  res.redirect(adminBansReturnPath(req.body?.return_to));
 });
 
 app.post("/admin/bans/unban", requireDiscord, requireAdmin, (req, res) => {
@@ -2954,22 +3019,114 @@ app.post("/admin/bans/unban", requireDiscord, requireAdmin, (req, res) => {
     payload: {},
   });
 
-  res.redirect("/admin/bans");
+  res.redirect(adminBansReturnPath(req.body?.return_to));
 });
 
 app.get("/admin/invites", requireDiscord, requireAdmin, (req, res) => {
-  res.locals.rows = db
+  const OPEN_PAGE_SIZE = 100;
+  const CLAIMED_PAGE_SIZE = 100;
+  const stats = db
     .prepare(
       `
-    SELECT created_at, created_by, used_at, used_by
-    FROM invite_codes
-    ORDER BY created_at DESC
-    LIMIT 500
-  `,
+        SELECT
+          SUM(CASE WHEN used_at IS NULL AND revoked_at IS NULL AND deleted_at IS NULL THEN 1 ELSE 0 END) AS open_count,
+          SUM(CASE WHEN used_at IS NOT NULL THEN 1 ELSE 0 END) AS claimed_count,
+          SUM(CASE WHEN used_at IS NULL AND (revoked_at IS NOT NULL OR deleted_at IS NOT NULL) THEN 1 ELSE 0 END) AS removed_count
+        FROM invite_codes
+      `,
+    )
+    .get();
+  const inviteStats = {
+    open: Number(stats?.open_count || 0),
+    claimed: Number(stats?.claimed_count || 0),
+    removed: Number(stats?.removed_count || 0),
+  };
+  const openPages = Math.max(1, Math.ceil(inviteStats.open / OPEN_PAGE_SIZE));
+  const claimedPages = Math.max(
+    1,
+    Math.ceil(inviteStats.claimed / CLAIMED_PAGE_SIZE),
+  );
+  const openPage = Math.min(
+    openPages,
+    Math.max(1, parseIntSafe(req.query.open_page, 1)),
+  );
+  const claimedPage = Math.min(
+    claimedPages,
+    Math.max(1, parseIntSafe(req.query.claimed_page, 1)),
+  );
+  const openOffset = (openPage - 1) * OPEN_PAGE_SIZE;
+  const claimedOffset = (claimedPage - 1) * CLAIMED_PAGE_SIZE;
+
+  res.locals.openInvites = db
+    .prepare(
+      `
+        SELECT
+          i.code_hash, i.code_plain, i.source, i.created_at, i.created_by,
+          creator.username AS creator_username,
+          creator.global_name AS creator_global_name
+        FROM invite_codes i
+        LEFT JOIN users creator ON creator.discord_id=i.created_by
+        WHERE i.used_at IS NULL
+          AND i.revoked_at IS NULL
+          AND i.deleted_at IS NULL
+        ORDER BY i.created_at DESC
+        LIMIT ${OPEN_PAGE_SIZE} OFFSET ${openOffset}
+      `,
+    )
+    .all();
+
+  res.locals.claimedInvites = db
+    .prepare(
+      `
+        SELECT
+          i.code_hash, i.code_plain, i.source, i.created_at, i.created_by,
+          i.used_at, i.used_by,
+          creator.username AS creator_username,
+          creator.global_name AS creator_global_name,
+          claimant.username AS claimant_username,
+          claimant.global_name AS claimant_global_name
+        FROM invite_codes i
+        LEFT JOIN users creator ON creator.discord_id=i.created_by
+        LEFT JOIN users claimant ON claimant.discord_id=i.used_by
+        WHERE i.used_at IS NOT NULL
+        ORDER BY i.used_at DESC
+        LIMIT ${CLAIMED_PAGE_SIZE} OFFSET ${claimedOffset}
+      `,
+    )
+    .all();
+
+  res.locals.removedInvites = db
+    .prepare(
+      `
+        SELECT
+          i.code_hash, i.code_plain, i.source, i.created_at, i.created_by,
+          i.revoked_at, i.revoked_reason, i.deleted_at,
+          creator.username AS creator_username,
+          creator.global_name AS creator_global_name
+        FROM invite_codes i
+        LEFT JOIN users creator ON creator.discord_id=i.created_by
+        WHERE i.used_at IS NULL
+          AND (i.revoked_at IS NOT NULL OR i.deleted_at IS NOT NULL)
+        ORDER BY COALESCE(i.deleted_at, i.revoked_at) DESC
+        LIMIT 100
+      `,
     )
     .all();
 
   res.locals.enrollmentOpen = isEnrollmentOpen();
+  res.locals.inviteStats = inviteStats;
+  res.locals.openPage = openPage;
+  res.locals.openPages = openPages;
+  res.locals.claimedPage = claimedPage;
+  res.locals.claimedPages = claimedPages;
+  res.locals.invitePageUrl = (nextOpenPage, nextClaimedPage) => {
+    const params = new URLSearchParams();
+    if (nextOpenPage > 1) params.set("open_page", String(nextOpenPage));
+    if (nextClaimedPage > 1) params.set("claimed_page", String(nextClaimedPage));
+    return `/admin/invites${params.size ? `?${params}` : ""}`;
+  };
+  res.locals.generatedCount = Math.max(0, Number(req.query?.generated || 0) || 0);
+  res.locals.deleted = String(req.query?.deleted || "") === "1";
 
   renderWithLayout(res, "pages/admin/invites/inv_main", {
     title: "Invites",
@@ -2981,44 +3138,38 @@ app.post("/admin/invites/new", requireDiscord, requireAdmin, (req, res) => {
   if (!Number.isFinite(count)) count = 1;
   count = Math.max(1, Math.min(50, Math.floor(count)));
 
-  const now = Date.now();
   const createdBy = req.user.discord_id;
-
-  const insert = db.prepare(`
-    INSERT INTO invite_codes (code_hash, created_at, created_by)
-    VALUES (?, ?, ?)
-  `);
-
-  const codes = [];
-
-  const tx = db.transaction(() => {
-    for (let i = 0; i < count; i++) {
-      let code, hash;
-      for (let tries = 0; tries < 10; tries++) {
-        code = genInviteCode();
-        hash = inviteHash(code);
-        try {
-          insert.run(hash, now, createdBy);
-          codes.push(code);
-          break;
-        } catch (e) {
-          if (!String(e?.message || "").includes("UNIQUE")) throw e;
-        }
-      }
-    }
+  const { codes } = createInviteCodes({
+    createdBy,
+    count,
+    source: "admin",
   });
-
-  tx();
 
   logEvent({
     type: "invite_generated",
     actorUserId: createdBy,
     targetUserId: null,
     req,
-    payload: { count: codes.length },
+    payload: { count: codes.length, source: "admin" },
   });
 
-  return renderGeneratedInviteCodesPage(res, codes);
+  return res.redirect(`/admin/invites?generated=${codes.length}`);
+});
+
+app.post("/admin/invites/delete", requireDiscord, requireAdmin, (req, res) => {
+  const codeHash = String(req.body?.code_hash || "").trim();
+  const deleted = deleteUnclaimedInvite(codeHash, req.user.discord_id);
+  if (!deleted) return res.status(404).send("Invite not found or already claimed.");
+
+  logEvent({
+    type: "invite_deleted",
+    actorUserId: req.user.discord_id,
+    targetUserId: null,
+    req,
+    payload: { codeHash },
+  });
+
+  return res.redirect("/admin/invites?deleted=1");
 });
 
 app.post(

@@ -4,6 +4,20 @@
     const s = document.getElementById("enrollStatus");
     if (!t) return;
 
+    document.addEventListener("click", async (event) => {
+      const copyButton = event.target.closest("[data-copy]");
+      if (!copyButton) return;
+      const code = copyButton.getAttribute("data-copy") || "";
+      try {
+        await navigator.clipboard.writeText(code);
+        const previous = copyButton.textContent;
+        copyButton.textContent = "Copied";
+        setTimeout(() => { copyButton.textContent = previous; }, 900);
+      } catch {
+        window.prompt("Copy this invite code:", code);
+      }
+    });
+
     function setStatus(msg) {
       if (s) s.textContent = msg || "";
     }

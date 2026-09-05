@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="/css/admin_invites.css" />
+</head>
+<body>
+  <% const errorMessages = { invites_strikes: "You cannot generate or share invites while you have active strikes.", invites_limit: "You have used all 3 invites for this week.", invite_failed: "The invite could not be generated. Please try again." }; %>
+  <div class="invitePageHead">
+    <div><h1>Your invites</h1><p class="muted">Invite people you trust. You are accountable for accounts that join through your codes.</p></div>
+    <a class="btn" href="/profile">Back to profile</a>
+  </div>
+
+  <% if (inviteFlash) { %><div class="inviteNotice inviteNotice--success">Invite created: <button class="inviteCode" type="button" data-copy="<%= inviteFlash %>"><%= inviteFlash %></button></div><% } %>
+  <% if (inviteError) { %><div class="inviteNotice inviteNotice--error"><%= errorMessages[inviteError] || errorMessages.invite_failed %></div><% } %>
+
+  <section class="inviteStats" aria-label="Weekly invite allowance">
+    <div class="inviteStat"><strong><%= allowance.remaining %></strong><span>Remaining this week</span></div>
+    <div class="inviteStat"><strong><%= allowance.generatedThisWeek %></strong><span>Generated this week</span></div>
+    <div class="inviteStat"><strong><%= allowance.strikeCount %></strong><span>Active strikes</span></div>
+  </section>
+
+  <section class="card">
+    <div class="cardHd">Weekly allowance</div>
+    <div class="cardBd">
+      <% if (allowance.strikeCount > 0) { %>
+        <p>You currently have active strikes, so invite generation is disabled. Any unclaimed invites you created have been revoked.</p>
+      <% } else if (allowance.remaining > 0) { %>
+        <form method="POST" action="/profile/invites/new"><button type="submit">Generate an invite</button></form>
+      <% } else { %>
+        <p>You have used this week's allowance.</p>
+      <% } %>
+      <p class="muted">Allowance resets Monday at 00:00 UTC (<%= new Date(allowance.weekEnd).toLocaleString() %>). If someone who joins with your invite is banned, your account receives one strike.</p>
+    </div>
+  </section>
+
+  <section class="inviteSection">
+    <div class="inviteSectionHead"><div><h2>Invite history</h2><p class="muted">Codes are one-time use.</p></div></div>
+    <div class="inviteTableWrap"><table class="inviteTable">
+      <thead><tr><th>Code</th><th>Status</th><th>Created</th><th>Claimed by</th></tr></thead>
+      <tbody>
+        <% for (const row of invites) { const status = row.used_at ? "Claimed" : row.deleted_at ? "Deleted" : row.revoked_at ? "Revoked" : "Available"; %><tr>
+          <td><% if (row.code_plain) { %><button class="inviteCode" type="button" data-copy="<%= row.code_plain %>"><%= row.code_plain %></button><% } else { %><span class="muted">Unavailable</span><% } %></td>
+          <td><%= status %><% if (row.revoked_reason) { %><div class="inviteId"><%= row.revoked_reason %></div><% } %></td>
+          <td><%= new Date(row.created_at).toLocaleString() %></td>
+          <td><%= row.claimant_global_name || row.claimant_username || row.used_by || "—" %></td>
+        </tr><% } %>
+        <% if (!invites.length) { %><tr><td colspan="4" class="inviteEmpty">You have not generated any invites yet.</td></tr><% } %>
+      </tbody>
+    </table></div>
+  </section>
+
+  <script>
+    document.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-copy]");
+      if (!button) return;
+      const code = button.getAttribute("data-copy") || "";
+      try {
+        await navigator.clipboard.writeText(code);
+        const previous = button.textContent;
+        button.textContent = "Copied";
+        setTimeout(() => { button.textContent = previous; }, 900);
+      } catch { window.prompt("Copy this invite code:", code); }
+    });
+  </script>
+</body>
+</html>

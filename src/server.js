@@ -26,6 +26,7 @@ const {
   createMediaUrlResolverService,
 } = require("./services/media_url_resolvers");
 const { createNotificationService } = require("./services/notifications");
+const { createInviteService } = require("./services/invites");
 const { parseBearerToken } = require("./services/http_authorization");
 const { normalizeHost } = require("./services/host_normalization");
 const {
@@ -915,6 +916,15 @@ function banDiscordIdSystem(targetId, req, payload = {}) {
       payload,
     });
   } catch {}
+
+  if (typeof moderationHooks.onUserBanned === "function") {
+    moderationHooks.onUserBanned({
+      userId: targetId,
+      bannedByUserId: "system",
+      req,
+      createdAt: Date.now(),
+    });
+  }
 }
 
 function escapeHtml(s) {
@@ -2823,6 +2833,15 @@ function banUserSilently(db, logEvent, discordId, req, details = {}) {
     req,
     payload: { reason: null, auto: true, ...details },
   });
+
+  if (typeof moderationHooks.onUserBanned === "function") {
+    moderationHooks.onUserBanned({
+      userId: discordId,
+      bannedByUserId: "system",
+      req,
+      createdAt: now,
+    });
+  }
 }
 
 function enforceUrlPolicy({ db, logEvent }, req, res, rawUrl) {
@@ -3334,6 +3353,11 @@ function getRequestOrigin(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+const moderationHooks = {
+  onPositiveStrike: null,
+  onUserBanned: null,
+};
+
 const {
   broadcastNotificationToAllUsers,
   clearAllNotificationsForUser,
@@ -3373,6 +3397,7 @@ const {
   tryJson,
   normalizeControlLinkDisplayName,
   logEvent,
+  moderationHooks,
   constants: {
     ADMIN_REPORT_QUEUE_KIND,
     ADMIN_REPORT_QUEUE_SOURCE_ID,
@@ -3390,6 +3415,28 @@ const {
     REPORT_SUBJECT_TYPE_MAX_LEN,
   },
 });
+
+const inviteService = createInviteService({
+  db,
+  crypto,
+  genInviteCode,
+  inviteHash,
+  getUserStrikeCount,
+  insertUserStrikeEntry,
+  createStrikeNotification,
+  ensureUserBannedForStrikes,
+  maxUserStrikes: MAX_USER_STRIKES,
+});
+
+moderationHooks.onPositiveStrike = ({ userId }) => {
+  inviteService.revokeOutstandingInvitesForUser(userId);
+};
+moderationHooks.onUserBanned = ({ userId, bannedByUserId, req, createdAt }) => {
+  inviteService.penalizeInviterForBannedInvitee(userId, bannedByUserId, {
+    req,
+    now: createdAt,
+  });
+};
 
 function createControlLinkReport({
   ownerUserId,
@@ -9786,14 +9833,14 @@ app.post("/invite/redeem", requireDiscord, (req, res) => {
   const inv = db
     .prepare(
       `
-    SELECT code_hash, used_at
+    SELECT code_hash, created_by, used_at, revoked_at, deleted_at
     FROM invite_codes
     WHERE code_hash = ?
   `,
     )
     .get(codeHash);
 
-  if (!inv || inv.used_at) {
+  if (!inv || inv.used_at || inv.revoked_at || inv.deleted_at) {
     return res
       .status(403)
       .type("html")
@@ -9815,7 +9862,10 @@ app.post("/invite/redeem", requireDiscord, (req, res) => {
         `
       UPDATE invite_codes
       SET used_at = ?, used_by = ?
-      WHERE code_hash = ? AND used_at IS NULL
+      WHERE code_hash = ?
+        AND used_at IS NULL
+        AND revoked_at IS NULL
+        AND deleted_at IS NULL
     `,
       )
       .run(now, req.user.discord_id, codeHash);
@@ -9839,7 +9889,7 @@ app.post("/invite/redeem", requireDiscord, (req, res) => {
       actorUserId: req.user.discord_id,
       targetUserId: req.user.discord_id,
       req,
-      payload: {},
+      payload: { invitedByUserId: String(inv.created_by || "").trim() || null },
     });
 
     return res.redirect("/profile");
@@ -9856,6 +9906,44 @@ app.post("/invite/redeem", requireDiscord, (req, res) => {
           body: `<p>Something went wrong redeeming that invite code. Try again.</p><p><a href="/invite">Back</a></p>`,
         }),
       );
+  }
+});
+
+app.get("/profile/invites", requireDiscord, requireNotBanned, (req, res) => {
+  const userId = String(req.user.discord_id || "").trim();
+  res.locals.allowance = inviteService.getUserInviteAllowance(userId);
+  res.locals.invites = inviteService.listUserInvites(userId);
+  res.locals.inviteFlash = String(req.query?.invite || "").trim();
+  res.locals.inviteError = String(req.query?.error || "").trim();
+
+  renderWithLayout(res, "pages/profile/invites", {
+    title: "Your Invites",
+  });
+});
+
+app.post("/profile/invites/new", requireDiscord, requireNotBanned, (req, res) => {
+  const userId = String(req.user.discord_id || "").trim();
+  try {
+    const result = inviteService.createCodes({
+      createdBy: userId,
+      count: 1,
+      source: "user",
+      enforceUserAllowance: true,
+    });
+    const code = result.codes[0] || "";
+
+    logEvent({
+      type: "invite_generated",
+      actorUserId: userId,
+      targetUserId: null,
+      req,
+      payload: { count: 1, source: "user" },
+    });
+
+    return res.redirect(`/profile/invites?invite=${encodeURIComponent(code)}`);
+  } catch (error) {
+    const code = String(error?.code || "invite_failed").toLowerCase();
+    return res.redirect(`/profile/invites?error=${encodeURIComponent(code)}`);
   }
 });
 
@@ -12415,6 +12503,7 @@ registerAdminRoutes(app, {
   RESPONSES_DIR,
   REPORTS_PAGE_SIZE,
   REPORT_MEDIA_BACKUPS_DIR,
+  applyInviteBanConsequences: moderationHooks.onUserBanned,
   appendHostToFile,
   broadcastNotificationToAllUsers,
   clearCustomSiteAvatar,
@@ -12424,19 +12513,19 @@ registerAdminRoutes(app, {
   clearCustomCommunityGroupBanner,
   countCommandSenderBlocks,
   countReports,
+  createInviteCodes: inviteService.createCodes,
   db,
+  deleteUnclaimedInvite: inviteService.deleteUnclaimedInvite,
   deleteUploadedFiles,
   escapeHtml,
   formatBytesCompact,
   formatCountLabel,
-  genInviteCode,
   getAdminCommandActivityDatasets,
   getAllowSet,
   getBlockSet,
   getNotificationSummaryForUser,
   getPreferredDisplayName,
   getUserStrikeStatesByUserIds,
-  inviteHash,
   isEnrollmentOpen,
   isManagedPathInDir,
   listAllUploadedFilesForAdmin,
