@@ -1091,7 +1091,7 @@ app.post(
       const msg = e?.message || "Failed";
       if (wantsJson(req))
         return res.status(400).json({ ok: false, message: msg });
-      return res.status(400).type("html").send(msg);
+      return res.status(400).type("text/plain").send(msg);
     }
   },
 );
