@@ -801,7 +801,7 @@ if (!API_KEY_HASH_PEPPER && process.env.NODE_ENV === "production") {
 }
 const {
   hashApiKey,
-  hashLegacyApiKey,
+  legacyApiKeyLookupDigest,
   isCurrentApiKeyHash,
 } = createApiKeyHasher({
   pepper: API_KEY_HASH_PEPPER || CLIENT_PAIRING_ENCRYPTION_KEY,
@@ -8741,7 +8741,7 @@ function requireApiKey(req, res, next) {
   if (!raw) return res.status(401).json({ ok: false, code: "NO_API_KEY" });
 
   const key_hash = hashApiKey(raw);
-  const legacyKeyHash = hashLegacyApiKey(raw);
+  const legacyKeyHash = legacyApiKeyLookupDigest(raw);
 
   const row = db
     .prepare(

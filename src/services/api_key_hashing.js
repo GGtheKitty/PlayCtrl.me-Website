@@ -3,6 +3,30 @@
 const crypto = require("crypto");
 
 const API_KEY_HASH_PREFIX = "hmac-sha256-v1:";
+const API_KEY_PREFIX = "pc_";
+const API_KEY_RANDOM_LENGTH = 43;
+
+function isGeneratedApiKey(value) {
+  const apiKey = String(value || "");
+  if (
+    apiKey.length !== API_KEY_PREFIX.length + API_KEY_RANDOM_LENGTH ||
+    !apiKey.startsWith(API_KEY_PREFIX)
+  ) {
+    return false;
+  }
+
+  for (let index = API_KEY_PREFIX.length; index < apiKey.length; index += 1) {
+    const code = apiKey.charCodeAt(index);
+    const isDigit = code >= 48 && code <= 57;
+    const isUppercase = code >= 65 && code <= 90;
+    const isLowercase = code >= 97 && code <= 122;
+    if (!isDigit && !isUppercase && !isLowercase && code !== 45 && code !== 95) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function createApiKeyHasher({ pepper } = {}) {
   const secret = String(pepper || "");
@@ -18,13 +42,15 @@ function createApiKeyHasher({ pepper } = {}) {
     return `${API_KEY_HASH_PREFIX}${digest}`;
   }
 
-  function hashLegacyApiKey(rawValue) {
-    // Compatibility only: a successful match is immediately replaced with
-    // the keyed format. Existing API keys cannot otherwise be migrated
-    // because their cleartext values were never stored.
-    // lgtm[js/insufficient-password-hash]
+  function legacyApiKeyLookupDigest(rawValue) {
+    if (!isGeneratedApiKey(rawValue)) return null;
+
+    // Existing 256-bit random API keys cannot be migrated before their next
+    // use because their cleartext values were never stored. A successful
+    // compatibility lookup is immediately replaced with the keyed format.
     return crypto
       .createHash("sha256")
+      // codeql[js/insufficient-password-hash] High-entropy API key migration.
       .update(String(rawValue || ""), "utf8")
       .digest("hex");
   }
@@ -35,7 +61,7 @@ function createApiKeyHasher({ pepper } = {}) {
 
   return {
     hashApiKey,
-    hashLegacyApiKey,
+    legacyApiKeyLookupDigest,
     isCurrentApiKeyHash,
   };
 }
@@ -43,4 +69,5 @@ function createApiKeyHasher({ pepper } = {}) {
 module.exports = {
   API_KEY_HASH_PREFIX,
   createApiKeyHasher,
+  isGeneratedApiKey,
 };
