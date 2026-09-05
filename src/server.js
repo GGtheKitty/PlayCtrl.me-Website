@@ -281,8 +281,8 @@ const COMMUNITY_GROUP_COMMAND_OPTIONS = Object.freeze([
   {
     key: "write_for_me",
     field: "allow_write_for_me",
-    label: "Write For Me",
-    description: "Allow typed-text automation prompts.",
+    label: "Writing Prompt",
+    description: "Allow writing prompts that type submitted text.",
   },
 ]);
 const PAIR_CODE_RESET_COOLDOWN_MS = Number(
@@ -5840,7 +5840,7 @@ const CONTROL_LINK_COMMAND_HISTORY_TYPES = Object.freeze({
   command_webcam_capture: "Webcam Capture",
   command_play_sound: "Play Sound Effect",
   command_play_sound_loop: "Play Sound Loop",
-  command_write_for_me: "Write For Me",
+  command_write_for_me: "Writing Prompt",
 });
 const CONTROL_LINK_HISTORY_EVENT_TYPE_BY_COMMAND_TYPE = Object.freeze({
   popup: "command_message",

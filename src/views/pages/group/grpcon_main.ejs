@@ -292,7 +292,7 @@
                     >
                       Play Sound Effect
                     </button>
-                    <button class="cmdBtn" type="button" data-cmd="write_for_me" data-tpl="tpl_cmd_write_for_me" <%= isCommandVisible("allow_write_for_me") ? "" : "hidden" %>>Write For Me</button>
+                    <button class="cmdBtn" type="button" data-cmd="write_for_me" data-tpl="tpl_cmd_write_for_me" <%= isCommandVisible("allow_write_for_me") ? "" : "hidden" %>>Writing Prompt</button>
                 </div>
 
                 <div
@@ -472,12 +472,12 @@
                   <form class="cmdForm" method="POST"
                         action="/api/group/<%= encodeURIComponent(groupKey) %>/write_for_me"
                         data-cmd="write_for_me">
-                    <textarea name="message" maxlength="4000" data-write-for-me-message="1" placeholder="Text to type on their computer..." style="margin-top:8px;"></textarea>
+                    <textarea name="message" maxlength="4000" data-write-for-me-message="1" placeholder="Text for the writing prompt..." style="margin-top:8px;"></textarea>
 
                     <label for="times">Times:</label>
                     <input type="number" id="times" name="times" min="1" max="500" value="3">
 
-                    <div class="muted" style="margin-top:8px;">Sends a typing prompt to the client to type this text.</div>
+                    <div class="muted" style="margin-top:8px;">Sends a writing prompt that types this text on the client.</div>
                     <div style="margin-top:10px;"><button type="submit">Send</button></div>
                   </form>
                 </template>

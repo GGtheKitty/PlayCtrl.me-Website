@@ -579,7 +579,7 @@
                     data-available-whitelisted="<%= previewModeAttr("whitelisted", standardPreview.canWriteForMe, whitelistedPreview.canWriteForMe, canWriteForMe) %>"
                     <%= previewVisibleByDefault(standardPreview.canWriteForMe, whitelistedPreview.canWriteForMe, canWriteForMe) ? "" : "hidden" %>
                   >
-                    Write For Me
+                    Writing Prompt
                   </button>
                 <% } %>
 
@@ -1052,7 +1052,7 @@
                     name="message"
                     maxlength="4000"
                     data-write-for-me-message="1"
-                    placeholder="Text to type on their computer..."
+                    placeholder="Text for the writing prompt..."
                     style="margin-top:8px;"
                   ></textarea>
 
@@ -1060,7 +1060,7 @@
                   <input type="number" id="times" name="times" min="1" max="500" value="3">
 
                   <div class="muted" style="margin-top:8px;">
-                    Sends a typing prompt to the client to type this text.
+                    Sends a writing prompt that types this text on the client.
                   </div>
 
                   <div style="margin-top:10px;">
