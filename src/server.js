@@ -19,6 +19,10 @@ const {
 const { createAdminActivityService } = require("./services/admin_activity");
 const { createApiKeyHasher } = require("./services/api_key_hashing");
 const {
+  buildCorsOriginAllowlist,
+  normalizeTrustedOrigin,
+} = require("./services/cors_configuration");
+const {
   createMediaUrlResolverService,
 } = require("./services/media_url_resolvers");
 const { createNotificationService } = require("./services/notifications");
@@ -39,9 +43,14 @@ const { registerDiscoveryRoutes } = require("./routes/discovery");
 const { registerProfileRoutes } = require("./routes/profile");
 
 const PORT = process.env.PORT || 8080;
-const SITE_ORIGIN = String(process.env.SITE_ORIGIN || "https://playctrl.me")
-  .trim()
-  .replace(/\/+$/, "");
+const SITE_ORIGIN = normalizeTrustedOrigin(
+  process.env.SITE_ORIGIN || "https://playctrl.me",
+);
+if (!SITE_ORIGIN) throw new Error("SITE_ORIGIN must be an HTTP(S) origin");
+const CORS_ALLOWED_ORIGINS = buildCorsOriginAllowlist(
+  SITE_ORIGIN,
+  process.env.CORS_ALLOWED_ORIGINS,
+);
 const INDEXABLE_ROBOTS_VALUE = "index, follow";
 const NOINDEX_ROBOTS_VALUE =
   "noindex, nofollow, noarchive, nosnippet, noimageindex";
@@ -8886,13 +8895,14 @@ app.set("views", path.join(__dirname, "./views"));
 app.set("trust proxy", 1);
 app.use(
   cors({
-    origin: true,
+    origin: CORS_ALLOWED_ORIGINS,
     credentials: true,
     allowedHeaders: [
       "Content-Type",
       "Authorization",
       "X-Device-Id",
       "X-Requested-With",
+      "X-CSRF-Token",
     ],
     exposedHeaders: [
       "RateLimit",
@@ -9564,8 +9574,6 @@ function consumePairAttempt(req) {
     retryAfterMs: Math.max(1000, PAIR_ATTEMPT_WINDOW_MS - (now - bucket.startedAt)),
   };
 }
-
-app.options("/api/pair", cors());
 
 app.post("/api/pair", (req, res) => {
   try {
