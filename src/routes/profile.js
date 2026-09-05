@@ -1087,11 +1087,11 @@ app.post(
 
       if (wantsJson(req)) return res.json({ ok: true });
       return res.redirect("/profile");
-    } catch (e) {
-      const msg = e?.message || "Failed";
+    } catch {
+      const message = "Could not update that list.";
       if (wantsJson(req))
-        return res.status(400).json({ ok: false, message: msg });
-      return res.status(400).type("text/plain").send(msg);
+        return res.status(400).json({ ok: false, message });
+      return res.status(400).type("text/plain").send(message);
     }
   },
 );

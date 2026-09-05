@@ -19,10 +19,11 @@ function collectRoutes() {
   return { app, routes };
 }
 
-test("list update exception text is never served as HTML", () => {
+test("list update exceptions are replaced with a safe public message", () => {
   const { app, routes } = collectRoutes();
   const attackerControlledMessage = '<img src=x onerror="alert(1)">';
   const passThrough = (_req, _res, next) => next();
+  let respondWithJson = false;
 
   registerProfileRoutes(app, {
     requireDiscord: passThrough,
@@ -30,7 +31,7 @@ test("list update exception text is never served as HTML", () => {
     setUserItem() {
       throw new Error(attackerControlledMessage);
     },
-    wantsJson: () => false,
+    wantsJson: () => respondWithJson,
   });
 
   const route = routes.find(
@@ -59,11 +60,27 @@ test("list update exception text is never served as HTML", () => {
       this.body = value;
       return this;
     },
+    json(value) {
+      this.body = value;
+      return this;
+    },
   };
 
   route.handlers.at(-1)(req, res);
 
   assert.equal(res.statusCode, 400);
   assert.equal(res.contentType, "text/plain");
-  assert.equal(res.body, attackerControlledMessage);
+  assert.equal(res.body, "Could not update that list.");
+  assert.doesNotMatch(res.body, /<img|onerror|alert/);
+
+  respondWithJson = true;
+  const jsonRes = { ...res, statusCode: 200, contentType: "", body: null };
+  route.handlers.at(-1)(req, jsonRes);
+
+  assert.equal(jsonRes.statusCode, 400);
+  assert.deepEqual(jsonRes.body, {
+    ok: false,
+    message: "Could not update that list.",
+  });
+  assert.doesNotMatch(JSON.stringify(jsonRes.body), /<img|onerror|alert/);
 });
