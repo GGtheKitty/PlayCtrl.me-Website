@@ -13,6 +13,7 @@
       <% if (user) { %>
       <div class="navDesktop" style="display:flex;align-items:center;gap:10px;">
         <% if (isAdmin) { %><a class="btn btn--ghost" href="/admin">Admin</a><% } %>
+        <a class="btn btn--ghost" href="/chat">Chat</a>
         <a class="btn btn--ghost" href="/favorites">Favorites</a>
         <a class="btn btn--ghost" href="/discover">Discover</a>
         <a class="btn btn--ghost" href="/profile">Profile</a>
@@ -36,6 +37,7 @@
 
             <button class="ddLink" role="menuitem" onclick="location.href='/profile'">Profile</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/discover'">Discover</button>
+            <button class="ddLink" role="menuitem" onclick="location.href='/chat'">Public Chat</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/favorites'">Favorites</button>
             <button class="ddLink" role="menuitem" onclick="location.href='/notifications'">Notifications</button>
             <% if (isAdmin) { %>
@@ -112,15 +114,5 @@
       <% } %>
     </div>
 
-    <a
-      class="topbarDiscordTab"
-      href="https://discord.gg/GDKYvcS8RZ"
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label="Join our community Discord"
-    >
-      <img class="topbarDiscordTabIcon" src="/discord_logo.webp" alt="" />
-      <span>Join our community Discord!</span>
-    </a>
   </header>
 </div>

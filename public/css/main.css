@@ -345,7 +345,6 @@ a:hover {
     position: sticky;
     top: 10px;
     z-index: 20;
-    padding-bottom: 42px;
     margin-bottom: 8px;
 }
 
@@ -362,50 +361,6 @@ a:hover {
     position: relative;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-}
-
-.topbarDiscordTab {
-    position: absolute;
-    right: 52px;
-    top: calc(100% - 1px);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    max-width: calc(100% - 36px);
-    padding: 8px 11px 9px 10px;
-    border: 1px solid rgba(122, 134, 255, .42);
-    border-top: 0;
-    border-radius: 0 0 16px 16px;
-    background:
-        linear-gradient(180deg, rgba(106, 116, 232, .32), rgba(78, 88, 196, .16)),
-        rgba(18, 18, 32, .96);
-    box-shadow: 0 14px 28px rgba(0, 0, 0, .28);
-    color: rgba(255, 255, 255, .95);
-    font-size: 13px;
-    font-weight: 900;
-    letter-spacing: .01em;
-    white-space: nowrap;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    transition: background .16s ease, border-color .16s ease, transform .06s ease;
-}
-
-.topbarDiscordTab:hover {
-    background:
-        linear-gradient(180deg, rgba(110, 122, 246, .38), rgba(88, 101, 242, .22)),
-        rgba(18, 18, 32, .98);
-    border-color: rgba(140, 151, 255, .55);
-}
-
-.topbarDiscordTab:active {
-    transform: translateY(1px);
-}
-
-.topbarDiscordTabIcon {
-    width: 16px;
-    height: 16px;
-    object-fit: contain;
-    flex: 0 0 auto;
 }
 
 .brand {
@@ -1676,24 +1631,7 @@ hr {
     .topbarWrap {
         position: sticky;
         top: 10px;
-        padding-bottom: 42px;
         margin-bottom: 8px;
-    }
-
-    .topbarDiscordTab {
-        right: 52px;
-        left: auto;
-        max-width: calc(100% - 36px);
-        justify-content: flex-start;
-        text-align: left;
-        white-space: nowrap;
-        gap: 6px;
-        padding: 8px 11px 9px 10px;
-        background:
-            linear-gradient(180deg, rgba(106, 116, 232, .32), rgba(78, 88, 196, .16)),
-            rgba(18, 18, 32, .96);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
     }
 
     /* hide the desktop nav buttons + dropdown */

@@ -40,6 +40,27 @@ test("normalizes trusted origins before exact matching", () => {
     normalizeTrustedOrigin("http://LOCALHOST:8080/"),
     "http://localhost:8080",
   );
+  assert.equal(
+    normalizeTrustedOrigin("TAURI://LOCALHOST"),
+    "tauri://localhost",
+  );
+});
+
+test("allows exact Tauri application origins", () => {
+  const allowlist = buildCorsOriginAllowlist("https://playctrl.me", [
+    "http://localhost:1420",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+  ]);
+
+  assert.deepEqual(allowlist, [
+    "https://playctrl.me",
+    "http://localhost:1420",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+  ]);
 });
 
 test("fails closed when no valid origin is configured", () => {

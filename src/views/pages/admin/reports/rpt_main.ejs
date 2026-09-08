@@ -54,6 +54,7 @@
             <% const meta = item.meta || {}; %>
             <% const isCommandHistoryReport = meta.source === "command_history"; %>
             <% const isGroupChatMessageReport = meta.sourceKind === "group_chat_message"; %>
+            <% const isPublicChatMessageReport = meta.sourceKind === "public_chat_message"; %>
             <% const isCommunityGroupReport = item.subjectType === "community_group"; %>
             <article class="reportAdminItem">
               <div class="reportAdminTop">
@@ -124,6 +125,12 @@
                     <span class="reportAdminIdChip">Message ID: <span class="mono"><%= meta.messageId %></span></span>
                   <% } %>
                 <% } %>
+                <% if (isPublicChatMessageReport) { %>
+                  <span class="reportAdminIdChip">Source: <span class="mono">Public chat</span></span>
+                  <% if (meta.messageId) { %>
+                    <span class="reportAdminIdChip">Message ID: <span class="mono"><%= meta.messageId %></span></span>
+                  <% } %>
+                <% } %>
                 <% if (isCommunityGroupReport) { %>
                   <span class="reportAdminIdChip">Group key: <span class="mono"><%= meta.groupKey || item.subjectId %></span></span>
                   <% if (meta.ownerUserId) { %>
@@ -149,6 +156,13 @@
               <% if (isGroupChatMessageReport && meta.messageBody) { %>
                 <div class="reportAdminDetails">
                   <strong>Reported group message:</strong><br>
+                  <%= meta.messageBody %>
+                </div>
+              <% } %>
+
+              <% if (isPublicChatMessageReport && meta.messageBody) { %>
+                <div class="reportAdminDetails">
+                  <strong>Reported public chat message:</strong><br>
                   <%= meta.messageBody %>
                 </div>
               <% } %>
@@ -187,6 +201,9 @@
                 <% } %>
                 <% if (item.reporterAdminUrl) { %>
                   <a class="reportAdminActionLink" href="<%= item.reporterAdminUrl %>">View reporter</a>
+                <% } %>
+                <% if (isPublicChatMessageReport) { %>
+                  <a class="reportAdminActionLink" href="/chat">Open public chat</a>
                 <% } %>
               </div>
             </article>

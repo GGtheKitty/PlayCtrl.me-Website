@@ -6,9 +6,23 @@ function normalizeTrustedOrigin(rawOrigin) {
 
   try {
     const parsed = new URL(value);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    if (!["https:", "http:", "tauri:"].includes(parsed.protocol)) return null;
     if (parsed.username || parsed.password) return null;
-    if (parsed.pathname !== "/" || parsed.search || parsed.hash) return null;
+    if (
+      (parsed.pathname !== "/" && parsed.pathname !== "") ||
+      parsed.search ||
+      parsed.hash
+    ) return null;
+    if (!parsed.hostname) return null;
+
+    // Node serializes origins for non-special URL schemes as "null". Preserve
+    // Tauri's authority so it can still be matched as an exact CORS origin.
+    if (parsed.protocol === "tauri:") {
+      const authority = parsed.port
+        ? `${parsed.hostname.toLowerCase()}:${parsed.port}`
+        : parsed.hostname.toLowerCase();
+      return `${parsed.protocol}//${authority}`;
+    }
     return parsed.origin;
   } catch {
     return null;

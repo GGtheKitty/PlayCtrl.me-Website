@@ -1,0 +1,363 @@
+<script>
+(() => {
+  const viewerUserId = <%- inlineScriptJson(String(user?.discord_id || "")) %>;
+  const viewerIsAdmin = <%- inlineScriptJson(!!viewerIsChatAdmin) %>;
+  let messages = <%- inlineScriptJson(Array.isArray(chatMessages) ? chatMessages : []) %>;
+  let viewerMute = <%- inlineScriptJson(chatMute || null) %>;
+  let pollTimer = null;
+  let activeReportMessageId = "";
+  let activeMuteUserId = "";
+
+  const list = document.getElementById("chatMessageList");
+  const empty = document.getElementById("chatEmpty");
+  const composer = document.getElementById("chatComposer");
+  const input = document.getElementById("chatMessageInput");
+  const sendButton = document.getElementById("chatSendButton");
+  const characterCount = document.getElementById("chatCharacterCount");
+  const connectionStatus = document.getElementById("chatConnectionStatus");
+  const muteNotice = document.getElementById("chatMuteNotice");
+  const reportDialog = document.getElementById("chatReportDialog");
+  const reportForm = document.getElementById("chatReportForm");
+  const reportPreview = document.getElementById("chatReportPreview");
+  const reportStatus = document.getElementById("chatReportStatus");
+  const muteDialog = document.getElementById("chatMuteDialog");
+  const muteForm = document.getElementById("chatMuteForm");
+
+  function formatTime(value) {
+    const date = new Date(Number(value || 0));
+    return Number.isFinite(date.getTime())
+      ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)
+      : "";
+  }
+
+  function muteLabel(mute) {
+    if (!mute) return "";
+    if (mute.expires_at == null) return "You are permanently muted in public chat.";
+    const date = new Date(Number(mute.expires_at));
+    return "You are muted in public chat until " + date.toLocaleString() + ".";
+  }
+
+  function syncComposer() {
+    const isMuted = !!viewerMute;
+    input.disabled = isMuted;
+    sendButton.disabled = isMuted || !input.value.trim();
+    input.placeholder = isMuted ? "You are muted in public chat" : "Message public chat";
+    muteNotice.hidden = !isMuted;
+    muteNotice.textContent = muteLabel(viewerMute) + (viewerMute?.reason ? " Reason: " + viewerMute.reason : "");
+  }
+
+  function createIcon(src, alt) {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = alt || "";
+    img.setAttribute("aria-hidden", "true");
+    return img;
+  }
+
+  function makeAction(label, className, handler, iconSrc) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "publicChatAction " + (className || "");
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.appendChild(createIcon(iconSrc, ""));
+    button.addEventListener("click", handler);
+    return button;
+  }
+
+  function openReport(message) {
+    activeReportMessageId = String(message.id || "");
+    reportForm.reset();
+    reportStatus.textContent = "";
+    reportPreview.textContent = message.author_display_name + ': "' + message.body + '"';
+    reportDialog.showModal();
+  }
+
+  function openMute(message) {
+    if (!muteDialog || !muteForm) return;
+    activeMuteUserId = String(message.author_user_id || "");
+    muteForm.reset();
+    document.getElementById("chatMuteTarget").textContent = "Mute " + message.author_display_name + " from public chat.";
+    document.getElementById("chatMuteStatus").textContent = "";
+    muteDialog.showModal();
+  }
+
+  function render({ preserveScroll = false } = {}) {
+    const wasNearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+    const previousScrollTop = list.scrollTop;
+    list.replaceChildren();
+    empty.hidden = messages.length > 0;
+
+    for (const message of messages) {
+      const row = document.createElement("article");
+      row.className = "publicChatMessage";
+      row.dataset.messageId = String(message.id || "");
+
+      const avatar = document.createElement("img");
+      avatar.className = "publicChatAvatar";
+      avatar.src = message.author_avatar_url || "/default-avatar.svg";
+      avatar.alt = "";
+      avatar.loading = "lazy";
+      avatar.addEventListener("error", () => { avatar.src = "/default-avatar.svg"; }, { once: true });
+
+      const content = document.createElement("div");
+      content.className = "publicChatMessageContent";
+      const meta = document.createElement("div");
+      meta.className = "publicChatMessageMeta";
+      const name = document.createElement("strong");
+      name.textContent = message.author_display_name || "Member";
+      meta.appendChild(name);
+      if (message.author_is_admin) {
+        const badge = document.createElement("span");
+        badge.className = "publicChatRoleBadge";
+        badge.textContent = "Admin";
+        meta.appendChild(badge);
+      }
+      if (viewerIsAdmin && message.author_is_muted) {
+        const badge = document.createElement("span");
+        badge.className = "publicChatRoleBadge publicChatRoleBadge--muted";
+        badge.textContent = "Muted";
+        meta.appendChild(badge);
+      }
+      const time = document.createElement("time");
+      time.dateTime = new Date(Number(message.created_at || 0)).toISOString();
+      time.textContent = formatTime(message.created_at);
+      meta.appendChild(time);
+
+      const body = document.createElement("p");
+      body.textContent = typeof message.display_body === "string"
+        ? message.display_body
+        : (message.body || "");
+      content.appendChild(meta);
+      if (body.textContent) content.appendChild(body);
+
+      const imageUrls = Array.isArray(message.image_urls) ? message.image_urls : [];
+      const videoUrls = Array.isArray(message.video_urls) ? message.video_urls : [];
+      if (imageUrls.length || videoUrls.length) {
+        const embeds = document.createElement("div");
+        embeds.className = "publicChatEmbeds";
+        for (const imageUrl of imageUrls) {
+          const link = document.createElement("a");
+          link.className = "publicChatImageLink";
+          link.href = imageUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer nofollow";
+          link.title = "Open image";
+
+          const image = document.createElement("img");
+          image.className = "publicChatImage";
+          image.src = imageUrl;
+          image.alt = "Image shared by " + (message.author_display_name || "member");
+          image.loading = "lazy";
+          image.decoding = "async";
+          image.referrerPolicy = "no-referrer";
+          image.addEventListener("error", () => {
+            link.classList.add("publicChatImageLink--failed");
+            link.replaceChildren(document.createTextNode("Open image"));
+          }, { once: true });
+          link.appendChild(image);
+          embeds.appendChild(link);
+        }
+        for (const videoUrl of videoUrls) {
+          const videoShell = document.createElement("div");
+          videoShell.className = "publicChatVideoShell";
+
+          const video = document.createElement("video");
+          video.className = "publicChatVideo";
+          video.src = videoUrl;
+          video.controls = true;
+          video.preload = "metadata";
+          video.playsInline = true;
+          video.setAttribute("controlsList", "nodownload");
+          video.addEventListener("error", () => {
+            const fallback = document.createElement("a");
+            fallback.className = "publicChatVideoFallback";
+            fallback.href = videoUrl;
+            fallback.target = "_blank";
+            fallback.rel = "noopener noreferrer nofollow";
+            fallback.textContent = "Open video";
+            videoShell.replaceChildren(fallback);
+          }, { once: true });
+          videoShell.appendChild(video);
+          embeds.appendChild(videoShell);
+        }
+        content.appendChild(embeds);
+      }
+      row.append(avatar, content);
+
+      const isOwn = String(message.author_user_id || "") === viewerUserId;
+      const actions = document.createElement("div");
+      actions.className = "publicChatActions";
+      if (!isOwn) {
+        actions.appendChild(makeAction("Report message", "", () => openReport(message), "/icons/group-chat-report.svg"));
+      }
+      if (isOwn || viewerIsAdmin) {
+        actions.appendChild(makeAction(isOwn ? "Delete your message" : "Delete message", "publicChatAction--danger", () => deleteMessage(message), "/icons/group-chat-delete.svg"));
+      }
+      if (viewerIsAdmin && !message.author_is_admin) {
+        const moderationButton = document.createElement("button");
+        moderationButton.type = "button";
+        moderationButton.className = "publicChatModerationButton";
+        moderationButton.textContent = message.author_is_muted ? "Unmute" : "Mute";
+        moderationButton.addEventListener("click", () => message.author_is_muted ? unmuteUser(message) : openMute(message));
+        actions.appendChild(moderationButton);
+      }
+      if (actions.childElementCount) {
+        row.appendChild(actions);
+      }
+      list.appendChild(row);
+    }
+
+    if (!preserveScroll || wasNearBottom) list.scrollTop = list.scrollHeight;
+    else list.scrollTop = previousScrollTop;
+  }
+
+  async function request(url, options = {}) {
+    const response = await fetch(url, {
+      credentials: "include",
+      ...options,
+      headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest", ...(options.headers || {}) },
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) {
+      const error = new Error(data?.message || "Something went wrong.");
+      error.data = data;
+      throw error;
+    }
+    return data;
+  }
+
+  async function refresh() {
+    if (document.hidden) return;
+    try {
+      const data = await request("/api/chat/messages");
+      const changed = JSON.stringify(data.messages) !== JSON.stringify(messages);
+      messages = Array.isArray(data.messages) ? data.messages : [];
+      viewerMute = data.mute || null;
+      connectionStatus.textContent = "Live";
+      connectionStatus.classList.remove("isOffline");
+      syncComposer();
+      if (changed) render({ preserveScroll: true });
+    } catch {
+      connectionStatus.textContent = "Reconnecting";
+      connectionStatus.classList.add("isOffline");
+    }
+  }
+
+  async function deleteMessage(message) {
+    const isOwn = String(message.author_user_id || "") === viewerUserId;
+    if (!window.confirm(isOwn ? "Delete your message?" : "Delete this public chat message?")) return;
+    try {
+      const data = await request("/api/chat/messages/" + encodeURIComponent(message.id), { method: "DELETE" });
+      messages = Array.isArray(data.messages) ? data.messages : messages.filter((item) => item.id !== message.id);
+      render({ preserveScroll: true });
+    } catch (error) {
+      window.alert(error.message);
+    }
+  }
+
+  async function unmuteUser(message) {
+    if (!window.confirm("Unmute " + message.author_display_name + "?")) return;
+    try {
+      const data = await request("/api/chat/mutes/" + encodeURIComponent(message.author_user_id), { method: "DELETE" });
+      messages = Array.isArray(data.messages) ? data.messages : messages;
+      render({ preserveScroll: true });
+    } catch (error) {
+      window.alert(error.message);
+    }
+  }
+
+  composer.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = input.value.trim();
+    if (!body || viewerMute) return;
+    sendButton.disabled = true;
+    connectionStatus.textContent = "Sending";
+    try {
+      const data = await request("/api/chat/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: new URLSearchParams({ body }).toString(),
+      });
+      messages = Array.isArray(data.messages) ? data.messages : messages;
+      viewerMute = data.mute || null;
+      input.value = "";
+      characterCount.textContent = "0 / 500";
+      render();
+      connectionStatus.textContent = "Live";
+    } catch (error) {
+      viewerMute = error.data?.mute || viewerMute;
+      syncComposer();
+      connectionStatus.textContent = error.message;
+    } finally {
+      syncComposer();
+    }
+  });
+
+  input.addEventListener("input", () => {
+    characterCount.textContent = input.value.length + " / 500";
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    syncComposer();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      composer.requestSubmit();
+    }
+  });
+
+  reportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(reportForm);
+    reportStatus.textContent = "Sending report...";
+    try {
+      const data = await request("/api/chat/messages/" + encodeURIComponent(activeReportMessageId) + "/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: new URLSearchParams(formData).toString(),
+      });
+      reportStatus.textContent = data.message;
+      window.setTimeout(() => reportDialog.close(), 900);
+    } catch (error) {
+      reportStatus.textContent = error.message;
+    }
+  });
+
+  if (muteForm) {
+    muteForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(muteForm);
+      const status = document.getElementById("chatMuteStatus");
+      status.textContent = "Applying mute...";
+      try {
+        const data = await request("/api/chat/mutes/" + encodeURIComponent(activeMuteUserId), {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: new URLSearchParams(formData).toString(),
+        });
+        messages = Array.isArray(data.messages) ? data.messages : messages;
+        render({ preserveScroll: true });
+        status.textContent = data.message;
+        window.setTimeout(() => muteDialog.close(), 700);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    });
+  }
+
+  document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+    button.addEventListener("click", () => button.closest("dialog")?.close());
+  });
+  document.querySelectorAll("dialog").forEach((dialog) => {
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+  });
+
+  render();
+  syncComposer();
+  pollTimer = window.setInterval(refresh, 3000);
+  window.addEventListener("beforeunload", () => window.clearInterval(pollTimer));
+})();
+</script>

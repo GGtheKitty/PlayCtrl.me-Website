@@ -269,6 +269,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_group_message_board_author_created
     ON group_message_board(author_user_id, created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS public_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author_user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(author_user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_public_chat_messages_created
+    ON public_chat_messages(created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_public_chat_messages_author_created
+    ON public_chat_messages(author_user_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS public_chat_mutes (
+    user_id TEXT PRIMARY KEY,
+    muted_by_user_id TEXT NOT NULL,
+    reason TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+    FOREIGN KEY(muted_by_user_id) REFERENCES users(discord_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_public_chat_mutes_expires
+    ON public_chat_mutes(expires_at);
+
   CREATE TABLE IF NOT EXISTS web_cmd_cooldowns (
     user_id TEXT PRIMARY KEY,
     next_allowed_at_ms INTEGER NOT NULL DEFAULT 0,

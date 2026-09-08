@@ -42,15 +42,25 @@ const { registerCommandRoutes } = require("./routes/commands");
 const { registerControlLinkRoutes } = require("./routes/control_links");
 const { registerDiscoveryRoutes } = require("./routes/discovery");
 const { registerProfileRoutes } = require("./routes/profile");
+const { registerChatRoutes } = require("./routes/chat");
 
 const PORT = process.env.PORT || 8080;
 const SITE_ORIGIN = normalizeTrustedOrigin(
   process.env.SITE_ORIGIN || "https://playctrl.me",
 );
 if (!SITE_ORIGIN) throw new Error("SITE_ORIGIN must be an HTTP(S) origin");
+const CLIENT_APP_ORIGINS = Object.freeze([
+  "http://localhost:1420",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+  "tauri://localhost",
+]);
 const CORS_ALLOWED_ORIGINS = buildCorsOriginAllowlist(
   SITE_ORIGIN,
-  process.env.CORS_ALLOWED_ORIGINS,
+  [
+    ...CLIENT_APP_ORIGINS,
+    ...String(process.env.CORS_ALLOWED_ORIGINS || "").split(","),
+  ],
 );
 const INDEXABLE_ROBOTS_VALUE = "index, follow";
 const NOINDEX_ROBOTS_VALUE =
@@ -12475,6 +12485,20 @@ registerDiscoveryRoutes({ app, api }, {
   siteAvatarUrl,
   setCustomCommunityGroupAvatar,
   setCustomCommunityGroupBanner,
+});
+
+registerChatRoutes(app, {
+  createUserReport,
+  db,
+  getPreferredDisplayName,
+  isAdmin,
+  logEvent,
+  renderWithLayout,
+  requireDiscord,
+  requireNotBanned,
+  siteAvatarUrl,
+  reportReasonByKey: GROUP_CHAT_REPORT_REASON_BY_KEY,
+  reportReasonOptions: GROUP_CHAT_REPORT_REASON_OPTIONS,
 });
 
 app.get("/download/client", requireDiscord, requireNotBanned, (req, res) => {

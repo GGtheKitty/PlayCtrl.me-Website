@@ -1,0 +1,106 @@
+<section class="publicChatPage">
+  <header class="publicChatHeader">
+    <div>
+      <h1>Public Chat</h1>
+    </div>
+  </header>
+
+  <div class="publicChatWorkspace">
+    <div class="publicChatToolbar">
+      <div>
+        <strong>Lobby</strong>
+        <span id="chatConnectionStatus" class="publicChatStatus" role="status">Live</span>
+      </div>
+    </div>
+
+    <div id="chatMuteNotice" class="publicChatMuteNotice" <%= chatMute ? "" : "hidden" %>></div>
+
+    <div
+      id="chatMessageList"
+      class="publicChatMessages"
+      aria-label="Public chat messages"
+      aria-live="polite"
+    ></div>
+
+    <div id="chatEmpty" class="publicChatEmpty" hidden>
+      No messages yet. Start the conversation.
+    </div>
+
+    <form id="chatComposer" class="publicChatComposer">
+      <label class="srOnly" for="chatMessageInput">Message public chat</label>
+      <div class="publicChatInputStack">
+        <textarea
+          id="chatMessageInput"
+          name="body"
+          maxlength="500"
+          rows="1"
+          placeholder="Message public chat"
+          autocomplete="off"
+        ></textarea>
+        <div class="publicChatComposerMeta">
+          <span>Enter to send, Shift+Enter for a new line</span>
+          <span id="chatCharacterCount">0 / 500</span>
+        </div>
+      </div>
+      <button id="chatSendButton" class="boardPostBtn publicChatSend" type="submit">Send</button>
+    </form>
+  </div>
+</section>
+
+<dialog id="chatReportDialog" class="publicChatDialog">
+  <form id="chatReportForm" method="dialog">
+    <div class="publicChatDialogHeader">
+      <div>
+        <div class="publicChatDialogEyebrow">Moderation report</div>
+        <h2>Report message</h2>
+      </div>
+      <button class="publicChatIconButton" type="button" data-close-dialog aria-label="Close" title="Close">&times;</button>
+    </div>
+    <p id="chatReportPreview" class="publicChatDialogPreview"></p>
+    <label for="chatReportReason">Reason</label>
+    <select id="chatReportReason" name="reason" required>
+      <option value="">Select a reason</option>
+      <% (chatReportReasonOptions || []).forEach((option) => { %>
+        <option value="<%= option.key %>"><%= option.label %></option>
+      <% }) %>
+    </select>
+    <label for="chatReportDetails">Additional details <span>(optional)</span></label>
+    <textarea id="chatReportDetails" name="details" maxlength="1000" rows="4"></textarea>
+    <div id="chatReportStatus" class="publicChatDialogStatus" role="status"></div>
+    <div class="publicChatDialogActions">
+      <button class="btn btn--ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn" type="submit">Send report</button>
+    </div>
+  </form>
+</dialog>
+
+<% if (viewerIsChatAdmin) { %>
+  <dialog id="chatMuteDialog" class="publicChatDialog">
+    <form id="chatMuteForm" method="dialog">
+      <div class="publicChatDialogHeader">
+        <div>
+          <div class="publicChatDialogEyebrow">Admin action</div>
+          <h2>Mute member</h2>
+        </div>
+        <button class="publicChatIconButton" type="button" data-close-dialog aria-label="Close" title="Close">&times;</button>
+      </div>
+      <p id="chatMuteTarget" class="publicChatDialogPreview"></p>
+      <label for="chatMuteDuration">Duration</label>
+      <select id="chatMuteDuration" name="duration">
+        <option value="1h">1 hour</option>
+        <option value="24h" selected>24 hours</option>
+        <option value="7d">7 days</option>
+        <option value="permanent">Permanent</option>
+      </select>
+      <label for="chatMuteReason">Reason <span>(optional)</span></label>
+      <textarea id="chatMuteReason" name="reason" maxlength="300" rows="3"></textarea>
+      <div id="chatMuteStatus" class="publicChatDialogStatus" role="status"></div>
+      <div class="publicChatDialogActions">
+        <button class="btn btn--ghost" type="button" data-close-dialog>Cancel</button>
+        <button class="btn" type="submit">Mute member</button>
+      </div>
+    </form>
+  </dialog>
+<% } %>
+
+<%- include("chat_scripts") %>
